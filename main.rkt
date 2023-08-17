@@ -36,19 +36,32 @@
 
 (define-syntax-parse-rule
   (define-json-rpc-endpoint rpc-name:id
-    ((~datum ->) contract? ... return-contract?))
+    ((~datum ->) contract? ... return-contract?)
+    (~optional (~seq #:result-transform result-transform)))
   #:with rpc-endpoint-name (format-id #'rpc-name
                                       "~a"
                                       (->kebab-case (syntax->datum #'rpc-name)))
   #:with (arg ...) (generate-temporaries #'(contract? ...))
   #:with rpc-endpoint-str #`#,(symbol->string
                                (syntax->datum #'rpc-name))
+  #:with result-fn (or (attribute result-transform)
+                       #'(lambda (x) x))
   (begin
     (define/contract (rpc-endpoint-name arg ... #:id [id 0])
       (->* (contract? ...)
            (#:id (or/c string? integer?))
            return-contract?)
-      (call-with-params rpc-endpoint-str id (list arg ...)))))
+      (define response
+        (call-with-params rpc-endpoint-str id (list arg ...)))
+      (hash-update
+       response
+       'result
+       result-fn
+       (lambda ()
+         (error 'rpc-endpoint-name
+                "Expected key 'result' in response"
+                response)))
+      response)))
 
 (define-json-rpc-endpoint web3_clientVersion
   (-> jsexpr?))
@@ -68,6 +81,24 @@
 (define-json-rpc-endpoint eth_protocolVersion
   (-> jsexpr?))
 
+(define-json-rpc-endpoint eth_coinbase
+  (-> jsexpr?))
+
+(define-json-rpc-endpoint eth_chainId
+  (-> jsexpr?))
+
+(define-json-rpc-endpoint eth_mining
+  (-> jsexpr?))
+
+(define-json-rpc-endpoint eth_hashrate
+  (-> jsexpr?))
+
+(define-json-rpc-endpoint eth_gasPrice
+  (-> jsexpr?))
+
+(define-json-rpc-endpoint eth_blockNumber
+  (-> jsexpr?))
+
 (module+ test
   (define (check-response-with-result-type type-pred? fn . args)
     (define response
@@ -81,6 +112,12 @@
   (check-response-with-result-type boolean? net-listening)
   (check-response-with-result-type string? net-peer-count)
   (check-response-with-result-type string? eth-protocol-version)
+  (check-response-with-result-type string? eth-coinbase)
+  (check-response-with-result-type string? eth-chain-id)
+  (check-response-with-result-type boolean? eth-mining)
+  (check-response-with-result-type string? eth-hashrate)
+  (check-response-with-result-type string? eth-gas-price)
+  (check-response-with-result-type string? eth-block-number)
   
   )
 
