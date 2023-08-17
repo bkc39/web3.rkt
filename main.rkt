@@ -4,7 +4,12 @@
          net/uri-codec
          racket/contract
          racket/port
-         json)
+
+         syntax/parse/define
+         json
+         (for-syntax casemate
+                     racket/base
+                     racket/syntax))
 
 (module+ test
   (require rackunit))
@@ -29,33 +34,41 @@
      #:data (jsexpr->bytes post-data)))
   (bytes->jsexpr (port->bytes in)))
 
-(define/contract (web3-clientVersion)
-  (-> jsexpr?)
-  (call-with-params "web3_clientVersion" 67 '()))
+(define-syntax-parse-rule
+  (define-json-rpc-endpoint rpc-name:id
+    ((~datum ->) contract? ... return-contract?))
+  #:with rpc-endpoint-name (format-id #'rpc-name
+                                      "~a"
+                                      (->kebab-case (syntax->datum #'rpc-name)))
+  #:with (arg ...) (generate-temporaries #'(contract? ...))
+  #:with rpc-endpoint-str #`#,(symbol->string
+                               (syntax->datum #'rpc-name))
+  (begin
+    (define/contract (rpc-endpoint-name arg ... #:id [id 0])
+      (->* (contract? ...)
+           (#:id (or/c string? integer?))
+           return-contract?)
+      (call-with-params rpc-endpoint-str id (list arg ...)))))
 
-(define/contract (web3-sha3 data)
-  (-> string? jsexpr?)
-  (call-with-params "web3_sha3" 67 (list data)))
+(define-json-rpc-endpoint web3_clientVersion
+  (-> jsexpr?))
 
-(define/contract (net-version)
-  (-> jsexpr?)
-  (call-with-params "net_version" 67 '()))
+(define-json-rpc-endpoint web3_sha3
+  (-> string? jsexpr?))
 
-(define/contract (net-listening)
-  (-> jsexpr?)
-  (call-with-params "net_listening" 67 '()))
+(define-json-rpc-endpoint net_version
+  (-> jsexpr?))
 
-(define/contract (net-peerCount)
-  (-> jsexpr?)
-  (call-with-params "net_peerCount" 67 '()))
+(define-json-rpc-endpoint net_listening
+  (-> jsexpr?))
 
-(define/contract (eth-protocolVersion)
-  (-> jsexpr?)
-  (call-with-params "eth_protocolVersion" 67 '()))
+(define-json-rpc-endpoint net_peerCount
+  (-> jsexpr?))
+
+(define-json-rpc-endpoint eth_protocolVersion
+  (-> jsexpr?))
 
 (module+ test
-  (check-pred jsexpr? (web3-clientVersion))
-
   (define (check-response-with-result-type type-pred? fn . args)
     (define response
       (apply fn args))
@@ -66,8 +79,8 @@
   (check-response-with-result-type string? net-version)
   (check-response-with-result-type string? net-version)
   (check-response-with-result-type boolean? net-listening)
-  (check-response-with-result-type string? net-peerCount)
-  (check-response-with-result-type string? eth-protocolVersion)
+  (check-response-with-result-type string? net-peer-count)
+  (check-response-with-result-type string? eth-protocol-version)
   
   )
 
