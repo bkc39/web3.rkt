@@ -45,13 +45,13 @@
   (-> jsexpr?)
   (call-with-params "net_listening" 67 '()))
 
-(define/contract (net-listening)
-  (-> jsexpr?)
-  (call-with-params "net_listening" 67 '()))
+;; (define/contract (net-listening)
+;;   (-> jsexpr?)
+;;   (call-with-params "net_listening" 67 '()))
 
-(define/contract (net-peerCount)
+[define/contract (net-peerCount)
   (-> jsexpr?)
-  (call-with-params "net_peerCount" 67 '()))
+  (call-with-params "net_peerCount" 67 '())]
 
 (module+ test
   (check-pred jsexpr? (web3-clientVersion))
