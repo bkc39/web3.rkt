@@ -49,6 +49,10 @@
   (-> jsexpr?)
   (call-with-params "net_peerCount" 67 '()))
 
+(define/contract (eth-protocolVersion)
+  (-> jsexpr?)
+  (call-with-params "eth_protocolVersion" 67 '()))
+
 (module+ test
   (check-pred jsexpr? (web3-clientVersion))
 
@@ -63,9 +67,7 @@
   (check-response-with-result-type string? net-version)
   (check-response-with-result-type boolean? net-listening)
   (check-response-with-result-type string? net-peerCount)
-
-  
-  
+  (check-response-with-result-type string? eth-protocolVersion)
   
   )
 
