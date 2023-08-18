@@ -102,7 +102,6 @@
   (string-append "0x"
                  (number->string n 16)))
 
-
 (define-json-rpc-endpoint web3_clientVersion
   (-> jsonrpc-response-payload?))
 
@@ -220,8 +219,4 @@
    [eth-get-balance vitalik.eth "pending" =>? number?]
    [eth-get-balance vitalik.eth "finalized" =>? number?]
    [eth-get-balance vitalik.eth "safe" =>? number?]
-   [eth-get-storage-at storage-contract-addr #x0 "latest" =>? string?]
-
-   )
-  )    
-
+   [eth-get-storage-at storage-contract-addr #x0 "latest" =>? string?]))
