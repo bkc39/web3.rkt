@@ -1,21 +1,43 @@
 #lang racket/base
 
-(require net/http-client
-         net/uri-codec
-         racket/contract
-         racket/port
-
-         syntax/parse/define
-         json
-         (for-syntax casemate
-                     racket/base
-                     racket/syntax))
+(require
+ json
+ net/http-client
+ net/uri-codec
+ racket/contract
+ racket/port
+ syntax/parse/define
+ racket/string)
+(require
+ (for-syntax
+  casemate
+  racket/base
+  racket/syntax))
 
 (module+ test
   (require rackunit))
 
 (define base-url
   "eth.llamarpc.com")
+
+(define (hash-has-keys? h ks)
+  (-> hash? (listof symbol?) boolean?)
+  (for/and ([k (in-list ks)])
+    (hash-has-key? h k)))
+
+(struct jsonrpc-response-payload (id jsonrpc result))
+
+(define (jsexpr->jsonrpc-response-payload jsexpr)
+  (-> (and/c jsexpr? hash?) jsonrpc-response-payload?)
+  ;; (printf "~a~n" jsexpr)
+  (for ([k (in-list '(id jsonrpc result))])
+    (unless (hash-has-key? jsexpr k)
+      (raise-argument-error 'jsexpr->jsonrpc-response-payload
+                            "expected key: ~a in ~a"
+                            k jsexpr)))
+  (jsonrpc-response-payload (hash-ref jsexpr 'id)
+                            (hash-ref jsexpr 'jsonrpc)
+                            (hash-ref jsexpr 'result)))
 
 (define (call-with-params method-name id params)
   (define jsonrpc-version "2.0")
@@ -32,93 +54,174 @@
      #:ssl? #t
      #:headers '("Content-Type: application/json")
      #:data (jsexpr->bytes post-data)))
-  (bytes->jsexpr (port->bytes in)))
+  ((compose1 jsexpr->jsonrpc-response-payload
+             bytes->jsexpr
+             port->bytes)
+   in))
+
+(begin-for-syntax
+  (define-syntax-class jsonrpc-input-spec
+    (pattern [contract?:expr ->param:expr])
+    (pattern contract?:expr
+             #:attr ->param #'(lambda (x) x))))
 
 (define-syntax-parse-rule
   (define-json-rpc-endpoint rpc-name:id
-    ((~datum ->) contract? ... return-contract?)
+    ((~datum ->) p:jsonrpc-input-spec ... return-contract?)
     (~optional (~seq #:result-transform result-transform)))
   #:with rpc-endpoint-name (format-id #'rpc-name
                                       "~a"
                                       (->kebab-case (syntax->datum #'rpc-name)))
-  #:with (arg ...) (generate-temporaries #'(contract? ...))
+  #:with (arg ...) (generate-temporaries #'(p ...))
   #:with rpc-endpoint-str #`#,(symbol->string
                                (syntax->datum #'rpc-name))
   #:with result-fn (or (attribute result-transform)
                        #'(lambda (x) x))
   (begin
     (define/contract (rpc-endpoint-name arg ... #:id [id 0])
-      (->* (contract? ...)
+      (->* (p.contract? ...)
            (#:id (or/c string? integer?))
            return-contract?)
       (define response
-        (call-with-params rpc-endpoint-str id (list arg ...)))
-      (hash-update
-       response
-       'result
-       result-fn
-       (lambda ()
-         (error 'rpc-endpoint-name
-                "Expected key 'result' in response"
-                response)))
-      response)))
+        (call-with-params rpc-endpoint-str id (list (p.->param arg) ...)))
+      (struct-copy
+       jsonrpc-response-payload response
+       [result (result-fn (jsonrpc-response-payload-result response))]))))
+
+(define/contract (hex-string->number hex-string)
+  (-> string? number?)
+  (cond
+    [(string-prefix? hex-string "0x")
+     (string->number
+      (substring hex-string 2 (string-length hex-string))
+      16)]
+    [else
+     (string->number hex-string)]))
+
+(define (number->hex-string n)
+  (string-append "0x"
+                 (number->string n 16)))
+
 
 (define-json-rpc-endpoint web3_clientVersion
-  (-> jsexpr?))
+  (-> jsonrpc-response-payload?))
 
 (define-json-rpc-endpoint web3_sha3
-  (-> string? jsexpr?))
+  (-> string? jsonrpc-response-payload?))
 
 (define-json-rpc-endpoint net_version
-  (-> jsexpr?))
+  (-> jsonrpc-response-payload?)
+  #:result-transform hex-string->number)
 
 (define-json-rpc-endpoint net_listening
-  (-> jsexpr?))
+  (-> jsonrpc-response-payload?))
 
 (define-json-rpc-endpoint net_peerCount
-  (-> jsexpr?))
+  (-> jsonrpc-response-payload?)
+  #:result-transform hex-string->number)
 
 (define-json-rpc-endpoint eth_protocolVersion
-  (-> jsexpr?))
+  (-> jsonrpc-response-payload?))
+
+(define-json-rpc-endpoint eth_syncing
+  (-> jsonrpc-response-payload?))
 
 (define-json-rpc-endpoint eth_coinbase
-  (-> jsexpr?))
+  (-> jsonrpc-response-payload?))
 
 (define-json-rpc-endpoint eth_chainId
-  (-> jsexpr?))
+  (-> jsonrpc-response-payload?))
 
 (define-json-rpc-endpoint eth_mining
-  (-> jsexpr?))
+  (-> jsonrpc-response-payload?))
 
 (define-json-rpc-endpoint eth_hashrate
-  (-> jsexpr?))
+  (-> jsonrpc-response-payload?))
 
+;; unit wei
 (define-json-rpc-endpoint eth_gasPrice
-  (-> jsexpr?))
+  (-> jsonrpc-response-payload?)
+  #:result-transform hex-string->number)
+
+(define-json-rpc-endpoint eth_accounts
+  (-> jsonrpc-response-payload?))
 
 (define-json-rpc-endpoint eth_blockNumber
-  (-> jsexpr?))
+  (-> jsonrpc-response-payload?)
+  #:result-transform hex-string->number)
+
+(define default-block-param/c
+  (or/c exact-nonnegative-integer?
+        "latest"
+        "earliest"
+        "pending"
+        "safe"
+        "finalized"))
+
+;; wei
+(define-json-rpc-endpoint eth_getBalance
+  (-> string? default-block-param/c jsonrpc-response-payload?)
+  #:result-transform hex-string->number)
+
+(define-json-rpc-endpoint eth_getStorageAt
+  (-> [string? (lambda (x) x)]
+      [exact-nonnegative-integer? number->hex-string]
+      default-block-param/c
+      jsonrpc-response-payload?))
 
 (module+ test
-  (define (check-response-with-result-type type-pred? fn . args)
+  (check-equal? (hex-string->number "0x2") 2)
+  (check-equal? (hex-string->number "2") 2)
+  
+  (define (check-response-with-result-pred pred? fn . args)
     (define response
       (apply fn args))
-    (check-pred jsexpr? response)
-    (check-pred type-pred? (hash-ref response 'result)))
+    (check-pred jsonrpc-response-payload? response)
+    (check-pred pred? (jsonrpc-response-payload-result response)))
 
-  (check-response-with-result-type string? web3-sha3 "0x68656c6c6f20776f726c64")
-  (check-response-with-result-type string? net-version)
-  (check-response-with-result-type string? net-version)
-  (check-response-with-result-type boolean? net-listening)
-  (check-response-with-result-type string? net-peer-count)
-  (check-response-with-result-type string? eth-protocol-version)
-  (check-response-with-result-type string? eth-coinbase)
-  (check-response-with-result-type string? eth-chain-id)
-  (check-response-with-result-type boolean? eth-mining)
-  (check-response-with-result-type string? eth-hashrate)
-  (check-response-with-result-type string? eth-gas-price)
-  (check-response-with-result-type string? eth-block-number)
+  (define-syntax-parse-rule
+    (check-endpoint* (fn:id args:expr ... (~datum =>?) pred?:expr) ...)
+    (begin
+      (check-response-with-result-pred pred? fn args ...)
+      ...))
+
+  (define (eth-syncing-response-valid? result)
+    (define result-obj-keys
+      '(startingBlock
+        currentBlock
+        highestBlock))
+    (or (boolean? result)
+        (and (jsexpr? result)
+             (hash? result)
+             (hash-has-keys? result result-obj-keys))))
+
+  (define vitalik.eth
+    "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
+
+  (define storage-contract-addr
+    "0x295a70b2de5e3953354a6a8344e616ed314d7251")
   
-  )
+  (check-endpoint*
+   [web3-sha3 "0x68656c6c6f20776f726c64" =>? string?]
+   [net-version =>? exact-nonnegative-integer?]
+   [net-listening =>? boolean?]
+   [net-peer-count =>? exact-positive-integer?]
+   [eth-protocol-version =>? string?]
+   [eth-syncing =>? eth-syncing-response-valid?]
+   [eth-coinbase =>? string?]
+   [eth-chain-id =>? string?]
+   [eth-mining =>? boolean?]
+   [eth-hashrate =>? string?]
+   [eth-gas-price =>? exact-nonnegative-integer?]
+   [eth-accounts =>? (listof string?)]
+   [eth-block-number =>? number?]
+   [eth-get-balance vitalik.eth "latest" =>? number?]
+   [eth-get-balance vitalik.eth "earliest" =>? number?]
+   [eth-get-balance vitalik.eth "pending" =>? number?]
+   [eth-get-balance vitalik.eth "finalized" =>? number?]
+   [eth-get-balance vitalik.eth "safe" =>? number?]
+   [eth-get-storage-at storage-contract-addr #x0 "latest" =>? string?]
 
+   )
+  )    
 
