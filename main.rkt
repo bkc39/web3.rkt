@@ -8,7 +8,8 @@
  racket/contract
  racket/port
  syntax/parse/define
- racket/string)
+ racket/string
+ rackunit)
 (require
  (for-syntax
   casemate
@@ -17,9 +18,6 @@
 
 (module+ test
   (require rackunit))
-
-(define base-url
-  "eth.llamarpc.com")
 
 (struct provider ())
 (struct http-provider provider (conn)
@@ -68,6 +66,11 @@
   (parameterize ([current-provider client])
     body ...))
 
+(module+ test
+  (define test-client
+    (url->http-provider "https://eth.llamarpc.com"))
+  (current-provider test-client))
+
 (define (call-with-params method-name id params)
   (define jsonrpc-version "2.0")
   (define post-data
@@ -92,12 +95,28 @@
   (define-syntax-class jsonrpc-input-spec
     (pattern [contract?:expr ->param:expr])
     (pattern contract?:expr
-             #:attr ->param #'(lambda (x) x))))
+             #:attr ->param #'(lambda (x) x)))
+  
+  (define-syntax-class endpoint-test-spec
+    (pattern (args:expr ... (~datum =>?) pred?:expr))))
+
+(define (check-response-with-result-pred pred? fn . args)
+  (define response
+    (apply fn args))
+  (check-pred jsonrpc-response-payload? response)
+  (check-pred pred? (jsonrpc-response-payload-result response)))
+
+(define-syntax-parse-rule
+  (check-endpoint* (fn:id args:expr ... (~datum =>?) pred?:expr) ...)
+  (begin
+    (check-response-with-result-pred pred? fn args ...)
+    ...))
 
 (define-syntax-parse-rule
   (define-json-rpc-endpoint rpc-name:id
     ((~datum ->) p:jsonrpc-input-spec ... return-contract?)
-    (~optional (~seq #:result-transform result-transform)))
+    (~optional (~seq #:result-transform result-transform))
+    (~optional (~seq #:test* t*:endpoint-test-spec ...+)))
   #:with rpc-endpoint-name (format-id #'rpc-name
                                       "~a"
                                       (->kebab-case (syntax->datum #'rpc-name)))
@@ -106,6 +125,17 @@
                                (syntax->datum #'rpc-name))
   #:with result-fn (or (attribute result-transform)
                        #'(lambda (x) x))
+  #:with (test-case* ...) (if  (attribute t*)
+                               (map (syntax-parser
+                                      [t:endpoint-test-spec
+                                       #'(rpc-endpoint-name t.args ... =>? t.pred?)])
+                                    (syntax->list #'(t* ...)))
+                               #'())
+  #:with test-cases (if (attribute t*)
+                        #'(module+ test
+                            (check-endpoint*
+                             test-case* ...))
+                        #'(void))
   (begin
     (define/contract (rpc-endpoint-name arg ... #:id [id 0])
       (->* (p.contract? ...)
@@ -115,7 +145,8 @@
         (call-with-params rpc-endpoint-str id (list (p.->param arg) ...)))
       (struct-copy
        jsonrpc-response-payload response
-       [result (result-fn (jsonrpc-response-payload-result response))]))))
+       [result (result-fn (jsonrpc-response-payload-result response))]))
+    test-cases))
 
 (define/contract (hex-string->number hex-string)
   (-> string? number?)
@@ -132,7 +163,8 @@
                  (number->string n 16)))
 
 (define-json-rpc-endpoint web3_clientVersion
-  (-> jsonrpc-response-payload?))
+  (-> jsonrpc-response-payload?)
+  #:test* [=>? string?])
 
 (define-json-rpc-endpoint web3_sha3
   (-> string? jsonrpc-response-payload?))
@@ -200,18 +232,6 @@
 (module+ test
   (check-equal? (hex-string->number "0x2") 2)
   (check-equal? (hex-string->number "2") 2)
-  
-  (define (check-response-with-result-pred pred? fn . args)
-    (define response
-      (apply fn args))
-    (check-pred jsonrpc-response-payload? response)
-    (check-pred pred? (jsonrpc-response-payload-result response)))
-
-  (define-syntax-parse-rule
-    (check-endpoint* (fn:id args:expr ... (~datum =>?) pred?:expr) ...)
-    (begin
-      (check-response-with-result-pred pred? fn args ...)
-      ...))
 
   (define (eth-syncing-response-valid? result)
     (define result-obj-keys
@@ -255,9 +275,5 @@
      [eth-get-balance vitalik.eth "finalized" =>? number?]
      [eth-get-balance vitalik.eth "safe" =>? number?]
      [eth-get-storage-at storage-contract-addr #x0 "latest" =>? string?]))
-  
-
-  
-
 
   )
