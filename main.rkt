@@ -100,7 +100,13 @@
     (or (boolean? result)
         (and (jsexpr? result)
              (hash? result)
-             (hash-has-keys? result result-obj-keys)))))
+             (hash-has-keys? result result-obj-keys))))
+  
+  (define vitalik.eth
+    "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
+
+  (define storage-contract-addr
+    "0x295a70b2de5e3953354a6a8344e616ed314d7251"))
 
 (begin-for-syntax
   (define-syntax-class jsonrpc-input-spec
@@ -223,14 +229,17 @@
 ;; unit wei
 (define-json-rpc-endpoint eth_gasPrice
   (-> jsonrpc-response-payload?)
-  #:result-transform hex-string->number)
+  #:result-transform hex-string->number
+  #:test* [=>? exact-nonnegative-integer?])
 
 (define-json-rpc-endpoint eth_accounts
-  (-> jsonrpc-response-payload?))
+  (-> jsonrpc-response-payload?)
+  #:test* [=>? (listof string?)])
 
 (define-json-rpc-endpoint eth_blockNumber
   (-> jsonrpc-response-payload?)
-  #:result-transform hex-string->number)
+  #:result-transform hex-string->number
+  #:test* [=>? number?])
 
 (define default-block-param/c
   (or/c exact-nonnegative-integer?
@@ -243,50 +252,21 @@
 ;; wei
 (define-json-rpc-endpoint eth_getBalance
   (-> string? default-block-param/c jsonrpc-response-payload?)
-  #:result-transform hex-string->number)
+  #:result-transform hex-string->number
+  #:test*
+  [vitalik.eth "latest" =>? number?]
+  [vitalik.eth "earliest" =>? number?]
+  [vitalik.eth "pending" =>? number?]
+  [vitalik.eth "finalized" =>? number?]
+  [vitalik.eth "safe" =>? number?])
 
 (define-json-rpc-endpoint eth_getStorageAt
   (-> [string? (lambda (x) x)]
       [exact-nonnegative-integer? number->hex-string]
       default-block-param/c
-      jsonrpc-response-payload?))
+      jsonrpc-response-payload?)
+  #:test* [storage-contract-addr #x0 "latest" =>? string?])
 
 (module+ test
   (check-equal? (hex-string->number "0x2") 2)
-  (check-equal? (hex-string->number "2") 2)
-
-
-
-  (define vitalik.eth
-    "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
-
-  (define storage-contract-addr
-    "0x295a70b2de5e3953354a6a8344e616ed314d7251")
-
-  ;; (define client (url->http-provider "https://eth.llamarpc.com"))
-  ;; (check-pred http-provider? client)
-  
-  ;; (with-provider client
-  ;;   (check-pred http-provider? (current-provider))
-
-  ;;   (check-endpoint*
-  ;;    [net-version ]
-  ;;    [net-listening ]
-  ;;    [net-peer-count =>? ]
-  ;;    [eth-protocol-version =>? ]
-  ;;    [eth-syncing =>? eth-syncing-response-valid?]
-  ;;    [eth-coinbase =>? string?]
-  ;;    [eth-chain-id ]
-  ;;    [eth-mining ]
-  ;;    [eth-hashrate =>? ]
-  ;;    [eth-gas-price =>? exact-nonnegative-integer?]
-  ;;    [eth-accounts =>? (listof string?)]
-  ;;    [eth-block-number =>? number?]
-  ;;    [eth-get-balance vitalik.eth "latest" =>? number?]
-  ;;    [eth-get-balance vitalik.eth "earliest" =>? number?]
-  ;;    [eth-get-balance vitalik.eth "pending" =>? number?]
-  ;;    [eth-get-balance vitalik.eth "finalized" =>? number?]
-  ;;    [eth-get-balance vitalik.eth "safe" =>? number?]
-  ;;    [eth-get-storage-at storage-contract-addr #x0 "latest" =>? string?]))
-
-  )
+  (check-equal? (hex-string->number "2") 2))
