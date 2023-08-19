@@ -19,6 +19,10 @@
 (module+ test
   (require rackunit))
 
+(define-syntax-parse-rule (begin-for-tests expr ...)
+  (module+ test
+    expr ...))
+
 (struct provider ())
 (struct http-provider provider (conn)
   #:guard (struct-guard/c http-conn?))
@@ -66,10 +70,29 @@
   (parameterize ([current-provider client])
     body ...))
 
-(module+ test
+(begin-for-tests
   (define test-client
     (url->http-provider "https://eth.llamarpc.com"))
-  (current-provider test-client))
+  (current-provider test-client)
+  
+  (define (eth-syncing-response-valid? result)
+    (define result-obj-keys
+      '(startingBlock
+        currentBlock
+        highestBlock))
+    (or (boolean? result)
+        (and (jsexpr? result)
+             (hash? result)
+             (hash-has-keys? result result-obj-keys))))
+
+  (define vitalik.eth
+    "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
+
+  (define storage-contract-addr
+    "0x295a70b2de5e3953354a6a8344e616ed314d7251")
+
+  (define example-block-hash
+    "0xb903239f8543d04b5dc1ba6579132b143087c68db1b2168786408fcbce568238"))
 
 (define (call-with-params method-name id params)
   (define jsonrpc-version "2.0")
@@ -79,6 +102,7 @@
        (method . ,method-name)
        (params . ,params)
        (id . ,id))))
+  ;; (printf "sending params: ~a\n" post-data)
   (define-values (st h in)
     (http-conn-sendrecv!
      (http-provider-conn (current-provider))
@@ -91,11 +115,11 @@
              port->bytes)
    in))
 
-(define/contract (transaction-count-response->number-or-null r)
-  (-> any/c (or/c 'null exact-nonnegative-integer?))
+(define/contract (transaction-count-response->number r)
+  (-> any/c exact-nonnegative-integer?)
   (cond
     [(equal? r 'null)
-     'null]
+     0]
     [(string? r)
      (hex-string->number r)]
     [else
@@ -103,23 +127,6 @@
       'eth-get-block-transaction-count-by-hash
       "response either 'null or string?"
       r)]))
-
-(module+ test
-  (define (eth-syncing-response-valid? result)
-    (define result-obj-keys
-      '(startingBlock
-        currentBlock
-        highestBlock))
-    (or (boolean? result)
-        (and (jsexpr? result)
-             (hash? result)
-             (hash-has-keys? result result-obj-keys))))
-  
-  (define vitalik.eth
-    "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
-
-  (define storage-contract-addr
-    "0x295a70b2de5e3953354a6a8344e616ed314d7251"))
 
 (begin-for-syntax
   (define-syntax-class jsonrpc-input-spec
@@ -133,6 +140,7 @@
 (define (check-response-with-result-pred pred? fn . args)
   (define response
     (apply fn args))
+  
   (check-pred jsonrpc-response-payload? response)
   (check-pred pred? (jsonrpc-response-payload-result response)))
 
@@ -292,24 +300,28 @@
   #:result-transform hex-string->number
   #:test* [vitalik.eth "latest" =>? exact-nonnegative-integer?])
 
-(define example-block-hash
-  "0xb903239f8543d04b5dc1ba6579132b143087c68db1b2168786408fcbce568238")
-
 (define-jsonrpc-endpoint eth_getBlockTransactionCountByHash
   (-> string?
       jsonrpc-response-payload?)
-  #:result-transform transaction-count-response->number-or-null
+  #:result-transform transaction-count-response->number
   #:test*
-  [example-block-hash =>? (or/c exact-nonnegative-integer? 'null)]
-  ["latest" =>? (or/c exact-nonnegative-integer? 'null)])
+  [example-block-hash =>? exact-nonnegative-integer?])
+
+(define/contract (default-block-param->param-string p)
+  (-> default-block-param/c string?)
+  (cond
+    [(exact-nonnegative-integer? p)
+     (number->hex-string p)]
+    [else
+     p]))
 
 (define-jsonrpc-endpoint eth_getBlockTransactionCountByNumber
-  (-> default-block-param/c
+  (-> [default-block-param/c default-block-param->param-string]
       jsonrpc-response-payload?)
-  #:result-transform transaction-count-response->number-or-null
+  #:result-transform transaction-count-response->number
   #:test*
-  [232 =>? (or/c exact-nonnegative-integer? 'null)]
-  ["latest" =>? (or/c exact-nonnegative-integer? 'null)])
+  [232 =>? exact-nonnegative-integer?]
+  ["latest" =>? exact-nonnegative-integer?])
 
 (module+ test
   (check-equal? (hex-string->number "0x2") 2)
