@@ -3,6 +3,7 @@
 (require
  json
  net/http-client
+ net/url
  net/uri-codec
  racket/contract
  racket/port
@@ -19,6 +20,18 @@
 
 (define base-url
   "eth.llamarpc.com")
+
+(struct provider ())
+(struct http-provider provider (conn)
+  #:guard (struct-guard/c http-conn?))
+
+(define/contract (url->http-provider url-str)
+  (-> url-regexp
+      ;; (or/c http-provider #f)
+      any)
+  (define url
+    (string->url url-str))
+  url)
 
 (define (hash-has-keys? h ks)
   (-> hash? (listof symbol?) boolean?)
