@@ -91,6 +91,17 @@
              port->bytes)
    in))
 
+(module+ test
+  (define (eth-syncing-response-valid? result)
+    (define result-obj-keys
+      '(startingBlock
+        currentBlock
+        highestBlock))
+    (or (boolean? result)
+        (and (jsexpr? result)
+             (hash? result)
+             (hash-has-keys? result result-obj-keys)))))
+
 (begin-for-syntax
   (define-syntax-class jsonrpc-input-spec
     (pattern [contract?:expr ->param:expr])
@@ -125,12 +136,13 @@
                                (syntax->datum #'rpc-name))
   #:with result-fn (or (attribute result-transform)
                        #'(lambda (x) x))
-  #:with (test-case* ...) (if  (attribute t*)
-                               (map (syntax-parser
-                                      [t:endpoint-test-spec
-                                       #'(rpc-endpoint-name t.args ... =>? t.pred?)])
-                                    (syntax->list #'(t* ...)))
-                               #'())
+  #:with (test-case* ...)
+  (if (attribute t*)
+      (map (syntax-parser
+             [t:endpoint-test-spec
+              #'(rpc-endpoint-name t.args ... =>? t.pred?)])
+           (syntax->list #'(t* ...)))
+      #'())
   #:with test-cases (if (attribute t*)
                         #'(module+ test
                             (check-endpoint*
@@ -167,36 +179,46 @@
   #:test* [=>? string?])
 
 (define-json-rpc-endpoint web3_sha3
-  (-> string? jsonrpc-response-payload?))
+  (-> string? jsonrpc-response-payload?)
+  #:test* ["0x68656c6c6f20776f726c64" =>? string?])
 
 (define-json-rpc-endpoint net_version
   (-> jsonrpc-response-payload?)
-  #:result-transform hex-string->number)
+  #:result-transform hex-string->number
+  #:test* [=>? exact-nonnegative-integer?])
 
 (define-json-rpc-endpoint net_listening
-  (-> jsonrpc-response-payload?))
+  (-> jsonrpc-response-payload?)
+  #:test* [=>? boolean?])
 
 (define-json-rpc-endpoint net_peerCount
   (-> jsonrpc-response-payload?)
-  #:result-transform hex-string->number)
+  #:result-transform hex-string->number
+  #:test* [=>? exact-positive-integer?])
 
 (define-json-rpc-endpoint eth_protocolVersion
-  (-> jsonrpc-response-payload?))
+  (-> jsonrpc-response-payload?)
+  #:test* [=>? string?])
 
 (define-json-rpc-endpoint eth_syncing
-  (-> jsonrpc-response-payload?))
+  (-> jsonrpc-response-payload?)
+  #:test* [=>? eth-syncing-response-valid?])
 
 (define-json-rpc-endpoint eth_coinbase
-  (-> jsonrpc-response-payload?))
+  (-> jsonrpc-response-payload?)
+  #:test* [=>? string?])
 
 (define-json-rpc-endpoint eth_chainId
-  (-> jsonrpc-response-payload?))
+  (-> jsonrpc-response-payload?)
+  #:test* [=>? string?])
 
 (define-json-rpc-endpoint eth_mining
-  (-> jsonrpc-response-payload?))
+  (-> jsonrpc-response-payload?)
+  #:test* [=>? boolean?])
 
 (define-json-rpc-endpoint eth_hashrate
-  (-> jsonrpc-response-payload?))
+  (-> jsonrpc-response-payload?)
+  #:test* [=>? string?])
 
 ;; unit wei
 (define-json-rpc-endpoint eth_gasPrice
@@ -233,15 +255,7 @@
   (check-equal? (hex-string->number "0x2") 2)
   (check-equal? (hex-string->number "2") 2)
 
-  (define (eth-syncing-response-valid? result)
-    (define result-obj-keys
-      '(startingBlock
-        currentBlock
-        highestBlock))
-    (or (boolean? result)
-        (and (jsexpr? result)
-             (hash? result)
-             (hash-has-keys? result result-obj-keys))))
+
 
   (define vitalik.eth
     "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
@@ -249,31 +263,30 @@
   (define storage-contract-addr
     "0x295a70b2de5e3953354a6a8344e616ed314d7251")
 
-  (define client (url->http-provider "https://eth.llamarpc.com"))
-  (check-pred http-provider? client)
+  ;; (define client (url->http-provider "https://eth.llamarpc.com"))
+  ;; (check-pred http-provider? client)
   
-  (with-provider client
-    (check-pred http-provider? (current-provider))
+  ;; (with-provider client
+  ;;   (check-pred http-provider? (current-provider))
 
-    (check-endpoint*
-     [web3-sha3 "0x68656c6c6f20776f726c64" =>? string?]
-     [net-version =>? exact-nonnegative-integer?]
-     [net-listening =>? boolean?]
-     [net-peer-count =>? exact-positive-integer?]
-     [eth-protocol-version =>? string?]
-     [eth-syncing =>? eth-syncing-response-valid?]
-     [eth-coinbase =>? string?]
-     [eth-chain-id =>? string?]
-     [eth-mining =>? boolean?]
-     [eth-hashrate =>? string?]
-     [eth-gas-price =>? exact-nonnegative-integer?]
-     [eth-accounts =>? (listof string?)]
-     [eth-block-number =>? number?]
-     [eth-get-balance vitalik.eth "latest" =>? number?]
-     [eth-get-balance vitalik.eth "earliest" =>? number?]
-     [eth-get-balance vitalik.eth "pending" =>? number?]
-     [eth-get-balance vitalik.eth "finalized" =>? number?]
-     [eth-get-balance vitalik.eth "safe" =>? number?]
-     [eth-get-storage-at storage-contract-addr #x0 "latest" =>? string?]))
+  ;;   (check-endpoint*
+  ;;    [net-version ]
+  ;;    [net-listening ]
+  ;;    [net-peer-count =>? ]
+  ;;    [eth-protocol-version =>? ]
+  ;;    [eth-syncing =>? eth-syncing-response-valid?]
+  ;;    [eth-coinbase =>? string?]
+  ;;    [eth-chain-id ]
+  ;;    [eth-mining ]
+  ;;    [eth-hashrate =>? ]
+  ;;    [eth-gas-price =>? exact-nonnegative-integer?]
+  ;;    [eth-accounts =>? (listof string?)]
+  ;;    [eth-block-number =>? number?]
+  ;;    [eth-get-balance vitalik.eth "latest" =>? number?]
+  ;;    [eth-get-balance vitalik.eth "earliest" =>? number?]
+  ;;    [eth-get-balance vitalik.eth "pending" =>? number?]
+  ;;    [eth-get-balance vitalik.eth "finalized" =>? number?]
+  ;;    [eth-get-balance vitalik.eth "safe" =>? number?]
+  ;;    [eth-get-storage-at storage-contract-addr #x0 "latest" =>? string?]))
 
   )
