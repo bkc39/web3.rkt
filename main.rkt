@@ -25,13 +25,14 @@
 (struct http-provider provider (conn)
   #:guard (struct-guard/c http-conn?))
 
-(define/contract (url->http-provider url-str)
-  (-> url-regexp
-      ;; (or/c http-provider #f)
-      any)
+(define (url->http-provider url-regexp)
   (define url
-    (string->url url-str))
-  url)
+    (string->url url-regexp))
+  (http-provider
+   (http-conn-open
+    (url-host url)
+    #:ssl? (equal? "https" (url-scheme url))
+    #:auto-reconnect? #t)))
 
 (define (hash-has-keys? h ks)
   (-> hash? (listof symbol?) boolean?)
@@ -52,6 +53,21 @@
                             (hash-ref jsexpr 'jsonrpc)
                             (hash-ref jsexpr 'result)))
 
+(define current-provider
+  (make-parameter
+   'none
+   (lambda (p)
+     (unless (http-provider? p)
+       (raise-argument-error 'current-provider
+                             "http-provider?"
+                             p))
+     p)
+   'current-provider-procedure))
+
+(define-syntax-parse-rule (with-provider client:expr body:expr ...)
+  (parameterize ([current-provider client])
+    body ...))
+
 (define (call-with-params method-name id params)
   (define jsonrpc-version "2.0")
   (define post-data
@@ -61,10 +77,10 @@
        (params . ,params)
        (id . ,id))))
   (define-values (st h in)
-    (http-sendrecv
-     base-url "/"
+    (http-conn-sendrecv!
+     (http-provider-conn (current-provider))
+     "/"
      #:method #"POST"
-     #:ssl? #t
      #:headers '("Content-Type: application/json")
      #:data (jsexpr->bytes post-data)))
   ((compose1 jsexpr->jsonrpc-response-payload
@@ -212,24 +228,36 @@
 
   (define storage-contract-addr
     "0x295a70b2de5e3953354a6a8344e616ed314d7251")
+
+  (define client (url->http-provider "https://eth.llamarpc.com"))
+  (check-pred http-provider? client)
   
-  (check-endpoint*
-   [web3-sha3 "0x68656c6c6f20776f726c64" =>? string?]
-   [net-version =>? exact-nonnegative-integer?]
-   [net-listening =>? boolean?]
-   [net-peer-count =>? exact-positive-integer?]
-   [eth-protocol-version =>? string?]
-   [eth-syncing =>? eth-syncing-response-valid?]
-   [eth-coinbase =>? string?]
-   [eth-chain-id =>? string?]
-   [eth-mining =>? boolean?]
-   [eth-hashrate =>? string?]
-   [eth-gas-price =>? exact-nonnegative-integer?]
-   [eth-accounts =>? (listof string?)]
-   [eth-block-number =>? number?]
-   [eth-get-balance vitalik.eth "latest" =>? number?]
-   [eth-get-balance vitalik.eth "earliest" =>? number?]
-   [eth-get-balance vitalik.eth "pending" =>? number?]
-   [eth-get-balance vitalik.eth "finalized" =>? number?]
-   [eth-get-balance vitalik.eth "safe" =>? number?]
-   [eth-get-storage-at storage-contract-addr #x0 "latest" =>? string?]))
+  (with-provider client
+    (check-pred http-provider? (current-provider))
+
+    (check-endpoint*
+     [web3-sha3 "0x68656c6c6f20776f726c64" =>? string?]
+     [net-version =>? exact-nonnegative-integer?]
+     [net-listening =>? boolean?]
+     [net-peer-count =>? exact-positive-integer?]
+     [eth-protocol-version =>? string?]
+     [eth-syncing =>? eth-syncing-response-valid?]
+     [eth-coinbase =>? string?]
+     [eth-chain-id =>? string?]
+     [eth-mining =>? boolean?]
+     [eth-hashrate =>? string?]
+     [eth-gas-price =>? exact-nonnegative-integer?]
+     [eth-accounts =>? (listof string?)]
+     [eth-block-number =>? number?]
+     [eth-get-balance vitalik.eth "latest" =>? number?]
+     [eth-get-balance vitalik.eth "earliest" =>? number?]
+     [eth-get-balance vitalik.eth "pending" =>? number?]
+     [eth-get-balance vitalik.eth "finalized" =>? number?]
+     [eth-get-balance vitalik.eth "safe" =>? number?]
+     [eth-get-storage-at storage-contract-addr #x0 "latest" =>? string?]))
+  
+
+  
+
+
+  )
