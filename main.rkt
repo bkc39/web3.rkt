@@ -91,6 +91,19 @@
              port->bytes)
    in))
 
+(define/contract (transaction-count-response->number-or-null r)
+  (-> any/c (or/c 'null exact-nonnegative-integer?))
+  (cond
+    [(equal? r 'null)
+     'null]
+    [(string? r)
+     (hex-string->number r)]
+    [else
+     (raise-argument-error
+      'eth-get-block-transaction-count-by-hash
+      "response either 'null or string?"
+      r)]))
+
 (module+ test
   (define (eth-syncing-response-valid? result)
     (define result-obj-keys
@@ -261,11 +274,42 @@
   [vitalik.eth "safe" =>? number?])
 
 (define-jsonrpc-endpoint eth_getStorageAt
-  (-> [string? (lambda (x) x)]
+  (-> string?
       [exact-nonnegative-integer? number->hex-string]
       default-block-param/c
       jsonrpc-response-payload?)
-  #:test* [storage-contract-addr #x0 "latest" =>? string?])
+  #:test*
+  [storage-contract-addr #x0 "latest" =>? string?]
+  [storage-contract-addr #x0 "earliest" =>? string?]
+  [storage-contract-addr #x0 "pending" =>? string?]
+  [storage-contract-addr #x0 "finalized" =>? string?]
+  [storage-contract-addr #x0 "safe" =>? string?])
+
+(define-jsonrpc-endpoint eth_getTransactionCount
+  (-> string?
+      default-block-param/c
+      jsonrpc-response-payload?)
+  #:result-transform hex-string->number
+  #:test* [vitalik.eth "latest" =>? exact-nonnegative-integer?])
+
+(define example-block-hash
+  "0xb903239f8543d04b5dc1ba6579132b143087c68db1b2168786408fcbce568238")
+
+(define-jsonrpc-endpoint eth_getBlockTransactionCountByHash
+  (-> string?
+      jsonrpc-response-payload?)
+  #:result-transform transaction-count-response->number-or-null
+  #:test*
+  [example-block-hash =>? (or/c exact-nonnegative-integer? 'null)]
+  ["latest" =>? (or/c exact-nonnegative-integer? 'null)])
+
+(define-jsonrpc-endpoint eth_getBlockTransactionCountByNumber
+  (-> default-block-param/c
+      jsonrpc-response-payload?)
+  #:result-transform transaction-count-response->number-or-null
+  #:test*
+  [232 =>? (or/c exact-nonnegative-integer? 'null)]
+  ["latest" =>? (or/c exact-nonnegative-integer? 'null)])
 
 (module+ test
   (check-equal? (hex-string->number "0x2") 2)
