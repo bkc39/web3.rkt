@@ -130,7 +130,7 @@
     ...))
 
 (define-syntax-parse-rule
-  (define-json-rpc-endpoint rpc-name:id
+  (define-jsonrpc-endpoint rpc-name:id
     ((~datum ->) p:jsonrpc-input-spec ... return-contract?)
     (~optional (~seq #:result-transform result-transform))
     (~optional (~seq #:test* t*:endpoint-test-spec ...+)))
@@ -180,63 +180,63 @@
   (string-append "0x"
                  (number->string n 16)))
 
-(define-json-rpc-endpoint web3_clientVersion
+(define-jsonrpc-endpoint web3_clientVersion
   (-> jsonrpc-response-payload?)
   #:test* [=>? string?])
 
-(define-json-rpc-endpoint web3_sha3
+(define-jsonrpc-endpoint web3_sha3
   (-> string? jsonrpc-response-payload?)
   #:test* ["0x68656c6c6f20776f726c64" =>? string?])
 
-(define-json-rpc-endpoint net_version
+(define-jsonrpc-endpoint net_version
   (-> jsonrpc-response-payload?)
   #:result-transform hex-string->number
   #:test* [=>? exact-nonnegative-integer?])
 
-(define-json-rpc-endpoint net_listening
+(define-jsonrpc-endpoint net_listening
   (-> jsonrpc-response-payload?)
   #:test* [=>? boolean?])
 
-(define-json-rpc-endpoint net_peerCount
+(define-jsonrpc-endpoint net_peerCount
   (-> jsonrpc-response-payload?)
   #:result-transform hex-string->number
   #:test* [=>? exact-positive-integer?])
 
-(define-json-rpc-endpoint eth_protocolVersion
+(define-jsonrpc-endpoint eth_protocolVersion
   (-> jsonrpc-response-payload?)
   #:test* [=>? string?])
 
-(define-json-rpc-endpoint eth_syncing
+(define-jsonrpc-endpoint eth_syncing
   (-> jsonrpc-response-payload?)
   #:test* [=>? eth-syncing-response-valid?])
 
-(define-json-rpc-endpoint eth_coinbase
+(define-jsonrpc-endpoint eth_coinbase
   (-> jsonrpc-response-payload?)
   #:test* [=>? string?])
 
-(define-json-rpc-endpoint eth_chainId
+(define-jsonrpc-endpoint eth_chainId
   (-> jsonrpc-response-payload?)
   #:test* [=>? string?])
 
-(define-json-rpc-endpoint eth_mining
+(define-jsonrpc-endpoint eth_mining
   (-> jsonrpc-response-payload?)
   #:test* [=>? boolean?])
 
-(define-json-rpc-endpoint eth_hashrate
+(define-jsonrpc-endpoint eth_hashrate
   (-> jsonrpc-response-payload?)
   #:test* [=>? string?])
 
 ;; unit wei
-(define-json-rpc-endpoint eth_gasPrice
+(define-jsonrpc-endpoint eth_gasPrice
   (-> jsonrpc-response-payload?)
   #:result-transform hex-string->number
   #:test* [=>? exact-nonnegative-integer?])
 
-(define-json-rpc-endpoint eth_accounts
+(define-jsonrpc-endpoint eth_accounts
   (-> jsonrpc-response-payload?)
   #:test* [=>? (listof string?)])
 
-(define-json-rpc-endpoint eth_blockNumber
+(define-jsonrpc-endpoint eth_blockNumber
   (-> jsonrpc-response-payload?)
   #:result-transform hex-string->number
   #:test* [=>? number?])
@@ -250,7 +250,7 @@
         "finalized"))
 
 ;; wei
-(define-json-rpc-endpoint eth_getBalance
+(define-jsonrpc-endpoint eth_getBalance
   (-> string? default-block-param/c jsonrpc-response-payload?)
   #:result-transform hex-string->number
   #:test*
@@ -260,7 +260,7 @@
   [vitalik.eth "finalized" =>? number?]
   [vitalik.eth "safe" =>? number?])
 
-(define-json-rpc-endpoint eth_getStorageAt
+(define-jsonrpc-endpoint eth_getStorageAt
   (-> [string? (lambda (x) x)]
       [exact-nonnegative-integer? number->hex-string]
       default-block-param/c
