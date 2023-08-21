@@ -1,6 +1,6 @@
 #lang info
 (define collection "web3")
-(define deps '("base"))
+(define deps '("base" "casemate"))
 (define build-deps '("scribble-lib" "racket-doc" "rackunit-lib"))
 (define scribblings '(("scribblings/web3.scrbl" ())))
 (define pkg-desc "Description Here")
