@@ -8,6 +8,7 @@
  racket/contract
  racket/port
  syntax/parse/define
+ racket/exn
  racket/string
  rackunit)
 (require
@@ -34,7 +35,18 @@
    (http-conn-open
     (url-host url)
     #:ssl? (equal? "https" (url-scheme url))
+    #:port (or (url-port url)
+               (cond
+                 [(equal? "https" (url-scheme url))
+                  443]
+                 [else
+                  80]))
     #:auto-reconnect? #t)))
+
+(module+ test
+  (define http-provider
+    (url->http-provider "http://localhost:8545"))
+  (check-pred provider? http-provider))
 
 (define (hash-has-keys? h ks)
   (-> hash? (listof symbol?) boolean?)
@@ -66,14 +78,17 @@
      p)
    'current-provider-procedure))
 
+(module+ test
+  (current-provider http-provider))
+
 (define-syntax-parse-rule (with-provider client:expr body:expr ...)
   (parameterize ([current-provider client])
     body ...))
 
 (begin-for-tests
-  (define test-client
-    (url->http-provider "https://eth.llamarpc.com"))
-  (current-provider test-client)
+  ;; (define test-client
+  ;;   (url->http-provider "https://eth.llamarpc.com"))
+  ;; (current-provider test-client)
   
   (define (eth-syncing-response-valid? result)
     (define result-obj-keys
@@ -110,10 +125,9 @@
      #:method #"POST"
      #:headers '("Content-Type: application/json")
      #:data (jsexpr->bytes post-data)))
-  ((compose1 jsexpr->jsonrpc-response-payload
-             bytes->jsexpr
-             port->bytes)
-   in))
+  (define jsexpr-response
+    ((compose1 bytes->jsexpr port->bytes) in))
+  (jsexpr->jsonrpc-response-payload jsexpr-response))
 
 (define/contract (transaction-count-response->number r)
   (-> any/c exact-nonnegative-integer?)
@@ -137,9 +151,19 @@
   (define-syntax-class endpoint-test-spec
     (pattern (args:expr ... (~datum =>?) pred?:expr))))
 
+
 (define (check-response-with-result-pred pred? fn . args)
   (define response
-    (apply fn args))
+    (with-handlers ([exn:fail?
+                     (lambda (e)
+                       (list 'exception-raised e))])
+      (apply fn args)))
+
+  (when (and (list? response)
+             (eq? 'exception-raised (car response)))
+    (fail-check (format "Exception raised:~n~a~n"
+                        (exn->string (cadr response)))))
+  
   
   (check-pred jsonrpc-response-payload? response)
   (check-pred pred? (jsonrpc-response-payload-result response)))
@@ -326,3 +350,4 @@
 (module+ test
   (check-equal? (hex-string->number "0x2") 2)
   (check-equal? (hex-string->number "2") 2))
+
