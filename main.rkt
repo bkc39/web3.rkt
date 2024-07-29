@@ -89,7 +89,7 @@
   ;; (define test-client
   ;;   (url->http-provider "https://eth.llamarpc.com"))
   ;; (current-provider test-client)
-  
+
   (define (eth-syncing-response-valid? result)
     (define result-obj-keys
       '(startingBlock
@@ -147,7 +147,7 @@
     (pattern [contract?:expr ->param:expr])
     (pattern contract?:expr
              #:attr ->param #'(lambda (x) x)))
-  
+
   (define-syntax-class endpoint-test-spec
     (pattern (args:expr ... (~datum =>?) pred?:expr))))
 
@@ -163,8 +163,8 @@
              (eq? 'exception-raised (car response)))
     (fail-check (format "Exception raised:~n~a~n"
                         (exn->string (cadr response)))))
-  
-  
+
+
   (check-pred jsonrpc-response-payload? response)
   (check-pred pred? (jsonrpc-response-payload-result response)))
 
@@ -350,4 +350,3 @@
 (module+ test
   (check-equal? (hex-string->number "0x2") 2)
   (check-equal? (hex-string->number "2") 2))
-
