@@ -1,21 +1,17 @@
-# Compiled Racket files
+# Racket build directories
+compiled/
+doc/
 *.zo
 *.zo~
-*.zo[0-9]*
-*.zo[0-9]*~
 
-# Racket build directories
-racket/build/
-racket/collects/
-
-# Emacs backup files
+# Emacs backup and auto-save files
 *~
 \#*\#
-
-# Emacs auto-save files
 .\#*
 
-# Racket package directories
-racket/pkgs/
+# Nix and direnv
+result
+result-*
+.direnv/
 
 .DS_Store

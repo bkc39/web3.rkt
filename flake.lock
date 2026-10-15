@@ -1,0 +1,44 @@
+{
+  "nodes": {
+    "keccak-rkt": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1753321502,
+        "narHash": "sha256-r3csAdIJGRYdcUniCtxYwcCgUOudnr6tEMa7mop6708=",
+        "owner": "bkc39",
+        "repo": "keccak-rkt",
+        "rev": "b22d4297a62c06fcb3c8d2b6bb05f44e2ab353ce",
+        "type": "github"
+      },
+      "original": {
+        "owner": "bkc39",
+        "repo": "keccak-rkt",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1791966044,
+        "narHash": "sha256-t1hT8UW97rFCWCJO7/pClvu0AhLN5V3uir2M0ic4w/Q=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "319e4cebef10cbb636c6ea392137b52ad105336a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixpkgs-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "keccak-rkt": "keccak-rkt",
+        "nixpkgs": "nixpkgs"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}
