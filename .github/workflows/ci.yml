@@ -14,8 +14,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 8.0 is the floor declared in info.rkt.
-        racket-version: ["8.0", "stable"]
+        # 8.6 is the floor declared in info.rkt.
+        racket-version: ["8.6", "stable"]
         experimental: [false]
         include:
           - racket-version: current
@@ -29,9 +29,11 @@ jobs:
           variant: CS
           version: ${{ matrix.racket-version }}
       - uses: foundry-rs/foundry-toolchain@v1.9.1
+      # A full setup, as for users: keccak builds its C library in its
+      # pre-install step, which `raco setup --pkgs web3` alone would skip.
       - name: Install web3 and its dependencies
-        run: raco pkg install --batch --auto --no-setup --link --name web3 "$GITHUB_WORKSPACE"
-      - name: Build, render docs, check dependencies
+        run: raco pkg install --batch --auto --link --name web3 "$GITHUB_WORKSPACE"
+      - name: Check dependencies (with docs)
         run: raco setup --check-pkg-deps --unused-pkg-deps --pkgs web3
       - name: Test (unit and anvil integration)
         run: raco test -x -p web3
