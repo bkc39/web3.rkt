@@ -14,8 +14,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 8.6 is the floor declared in info.rkt.
-        racket-version: ["8.6", "stable"]
+        # 8.8 is the floor declared in info.rkt.
+        racket-version: ["8.8", "stable"]
         experimental: [false]
         include:
           - racket-version: current
