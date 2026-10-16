@@ -75,9 +75,9 @@
               raco pkg install --batch --deps fail --no-setup --copy --scope user \
                 --name web3 "$PWD"
               raco setup --no-docs --pkgs keccak
-              # Strict checks for web3 only; keccak's doc-only deps look
-              # unused with --no-docs.
-              raco setup --no-docs --check-pkg-deps --unused-pkg-deps --pkgs web3
+              # Strict checks for web3 only, with its docs so their build deps
+              # count as used; keccak's doc-only deps look unused with --no-docs.
+              raco setup --check-pkg-deps --unused-pkg-deps --pkgs web3
               runHook postBuild
             '';
             doCheck = true;
@@ -132,7 +132,7 @@
                   && raco pkg install --batch --link --deps fail --no-setup --scope user \
                      --name web3 "$PWD" \
                   && raco setup --no-docs --pkgs keccak \
-                  && raco setup --no-docs --check-pkg-deps --unused-pkg-deps --pkgs web3; then
+                  && raco setup --check-pkg-deps --unused-pkg-deps --pkgs web3; then
                   touch "$deps_stamp"
                   echo "Done. Try: raco test -x -p web3"
                 else

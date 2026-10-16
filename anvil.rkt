@@ -57,9 +57,13 @@
 
 ;;;; processes
 
-;; Which anvil binary to run: $WEB3_ANVIL, else `anvil` on PATH.
+;; Which anvil binary to run: $WEB3_ANVIL, else `anvil` on PATH.  An empty
+;; WEB3_ANVIL counts as unset.
 (define current-anvil-path
-  (make-parameter (or (getenv "WEB3_ANVIL") (find-executable-path "anvil"))))
+  (make-parameter (let ([env (getenv "WEB3_ANVIL")])
+                    (if (and env (not (string=? env "")))
+                        env
+                        (find-executable-path "anvil")))))
 
 (struct anvil (process port log-file provider))
 
