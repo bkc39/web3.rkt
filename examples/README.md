@@ -21,6 +21,12 @@ node.  `(show expr)` prints an expression and its value.
 | `03-custom-providers.rkt` | `mock-provider` from a table and from a procedure, `raise-rpc-error`, a `gen:provider` struct that logs a real node's calls, `provider-close` |
 | `04-abi-encode.rkt` | types in three forms, canonical strings, selectors, standard and packed encoding, typed call data, ABI errors |
 | `05-abi-decode.rkt` | decoding values, results and call data, EIP-55 addresses, reverts with Error, Panic and custom errors from a contract, malformed data |
+| `06-deploy-and-call.rkt` | deploying from a compiled artifact with constructor arguments, calls with one and several outputs, sends and receipts, gas estimates, custom errors on call and on send, transactions mined with status 0, payable calls, senders, CREATE and CREATE2 addresses |
+
+`contracts/` holds the Solidity the examples deploy (`Token.sol`,
+`Counter.sol`, `Events.sol`); `contracts/out/` is its compiled form,
+committed.  After editing a `.sol`, run `racket tests/generate-contracts.rkt`
+in `nix develop`.
 
 anvil must be on `PATH` or named by `WEB3_ANVIL`; `nix develop` provides it.
 `tests/examples.rkt` runs every script.

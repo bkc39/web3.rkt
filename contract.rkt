@@ -69,6 +69,26 @@
 
 (define current-account (make-parameter #f))
 
+(define (transaction #:to [to #f] #:from from #:data data #:value value #:gas gas)
+  (for/fold ([tx (hasheq 'data (bytes->hex-string data))])
+            ([key (in-list '(to from value gas))]
+             [v (in-list (list to
+                               from
+                               (and (positive? value) (number->hex-string value))
+                               (and gas (number->hex-string gas))))]
+             #:when v)
+    (hash-set tx key v)))
+
+(define (call-raising-reverts errors thunk)
+  (with-handlers ([exn:fail:web3:rpc?
+                   (lambda (e) (raise (or (rpc-exn->revert-exn e #:errors errors) e)))])
+    (thunk)))
+
+(define (sender who from)
+  (or from
+      (raise (exn:fail:web3 (format "~a: no sender; pass #:from or set current-account" who)
+                            (current-continuation-marks)))))
+
 (define/who (contract-call who address signature
                            #:from [from (current-account)]
                            #:value [value 0]
@@ -77,7 +97,17 @@
                            #:errors [errors '()]
                            #:provider [provider (current-provider)]
                            . args)
-  (error 'unimplemented))
+  (define sig (result-signature/who who signature))
+  (check-error-signatures/who who errors)
+  (define tx (transaction #:to address
+                          #:from from
+                          #:data (apply encode-call/who who sig args)
+                          #:value value
+                          #:gas gas))
+  (define result (call-raising-reverts errors (lambda () (eth-call tx block #:provider provider))))
+  (match (abi-signature-outputs sig)
+    ['() (values)]
+    [_ (apply values (decode-result/who who sig (node-data->bytes who "return data" result)))]))
 
 (define/who (contract-send who address signature
                            #:from [from (current-account)]
@@ -86,7 +116,65 @@
                            #:errors [errors '()]
                            #:provider [provider (current-provider)]
                            . args)
-  (error 'unimplemented))
+  (define sig (string->abi-signature/who who signature))
+  (check-error-signatures/who who errors)
+  (define data (apply encode-call/who who sig args))
+  (submit who
+          (transaction #:to address #:from (sender who from) #:data data #:value value #:gas gas)
+          errors
+          provider))
+
+(define (submit who tx errors provider)
+  (define tx+gas
+    (cond
+      [(hash-ref tx 'gas #f) tx]
+      [else
+       (define estimate
+         (call-raising-reverts errors (lambda () (eth-estimate-gas tx #:provider provider))))
+       (hash-set tx 'gas (number->hex-string estimate))]))
+  (define tx-hash
+    (call-raising-reverts errors (lambda () (eth-send-transaction tx+gas #:provider provider))))
+  (define receipt (wait-for-receipt tx-hash #:provider provider))
+  (match (receipt-status who receipt)
+    ['success receipt]
+    ['failure (raise-transaction-failure who tx+gas tx-hash receipt errors provider)]))
+
+(define (raise-transaction-failure who tx tx-hash receipt errors provider)
+  (define block (node-quantity->number who "block number" (hash-ref receipt 'blockNumber #f)))
+  (match-define (list revert tail)
+    (with-handlers ([exn:fail:web3:rpc?
+                     (lambda (e)
+                       (match (rpc-exn->revert e #:errors errors)
+                         [#f (list #f (exn:fail:web3:rpc-rpc-message e))]
+                         [r (list r (format "reverted with ~a" (abi-revert->string r)))]))])
+      (eth-call tx block #:provider provider)
+      (list #f "replaying it did not fail")))
+  (raise (exn:fail:web3:transaction
+          (format "~a: transaction ~a failed in block ~a: ~a" who tx-hash block tail)
+          (current-continuation-marks)
+          receipt
+          revert)))
+
+(define (constructor-signature who constructor)
+  (match (string->abi-signature/who who constructor)
+    [(and sig (struct* abi-signature ([name "constructor"] [outputs #f]))) sig]
+    [sig (raise-abi-type-error who "a constructor signature is constructor(T,...)"
+                               (abi-signature->string sig #:outputs? #t) #f)]))
+
+(define (init-code->bytes code)
+  (if (bytes? code) code (hex-string->bytes code)))
+
+(define (deploy who init-code constructor from value gas errors provider args)
+  (define sig (constructor-signature who constructor))
+  (check-error-signatures/who who errors)
+  (define data
+    (bytes-append (init-code->bytes init-code) (abi-encode/who who (abi-signature-inputs sig) args)))
+  (define receipt
+    (submit who (transaction #:from (sender who from) #:data data #:value value #:gas gas)
+            errors
+            provider))
+  (values (node-address->string who "contract address" (hash-ref receipt 'contractAddress #f))
+          receipt))
 
 (define/who (deploy-contract who init-code [constructor "constructor()"]
                              #:from [from (current-account)]
@@ -95,7 +183,9 @@
                              #:errors [errors '()]
                              #:provider [provider (current-provider)]
                              . args)
-  (error 'unimplemented))
+  (define-values (address _receipt)
+    (deploy who init-code constructor from value gas errors provider args))
+  address)
 
 (define/who (deploy-contract/receipt who init-code [constructor "constructor()"]
                                      #:from [from (current-account)]
@@ -104,13 +194,39 @@
                                      #:errors [errors '()]
                                      #:provider [provider (current-provider)]
                                      . args)
-  (error 'unimplemented))
+  (deploy who init-code constructor from value gas errors provider args))
+
+(define (hash->address h)
+  (address->checksum-string (bytes->hex-string (subbytes h 12))))
+
+(define (natural->minimal-bytes n)
+  (let loop ([n n] [acc '()])
+    (if (zero? n)
+        (apply bytes acc)
+        (loop (arithmetic-shift n -8) (cons (bitwise-and n 255) acc)))))
+
+;; RLP of [sender, nonce]; #13's rlp-encode replaces it.
+(define (create-preimage sender nonce)
+  (define encoded-nonce
+    (cond
+      [(zero? nonce) (bytes #x80)]
+      [(< nonce 128) (bytes nonce)]
+      [else
+       (define bs (natural->minimal-bytes nonce))
+       (bytes-append (bytes (+ #x80 (bytes-length bs))) bs)]))
+  (define payload (bytes-append (bytes #x94) sender encoded-nonce))
+  (bytes-append (bytes (+ #xc0 (bytes-length payload))) payload))
 
 (define (create-address sender nonce)
-  (error 'unimplemented))
+  (hash->address (keccak256 (create-preimage (hex-string->bytes sender) nonce))))
 
 (define (create2-address deployer salt init-code)
-  (error 'unimplemented))
+  (define salt-bytes (if (bytes? salt) salt (word->bytes salt)))
+  (hash->address
+   (keccak256 (bytes-append #"\377"
+                            (hex-string->bytes deployer)
+                            salt-bytes
+                            (keccak256 (init-code->bytes init-code))))))
 
 (module* internal #f
   (provide contract-call/who
