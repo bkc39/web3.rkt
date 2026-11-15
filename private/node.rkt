@@ -6,11 +6,14 @@
 
 (provide node-address->string
          node-data->bytes
+         node-hash->string
+         node-optional
          node-quantity->number
          node-status->boolean
+         raise-node-malformed
          receipt-status->boolean)
 
-(define (raise-malformed who what v #:origin [origin " from the node"])
+(define (raise-node-malformed who what v #:origin [origin " from the node"])
   (raise (exn:fail:web3 (format "~a: malformed ~a~a: ~e" who what origin v)
                         (current-continuation-marks))))
 
@@ -20,17 +23,26 @@
 (define (node-data->bytes who what v)
   (cond
     [(hex-data-string? v) (hex->bytes v)]
-    [else (raise-malformed who what v)]))
+    [else (raise-node-malformed who what v)]))
 
 (define (node-quantity->number who what v)
   (cond
     [(node-string? #px"^0x[0-9a-fA-F]+$" v) (string->number (substring v 2) 16)]
-    [else (raise-malformed who what v)]))
+    [else (raise-node-malformed who what v)]))
 
 (define (node-address->string who what v)
   (cond
     [(node-string? #px"^0x[0-9a-fA-F]{40}$" v) (address->checksum-string v)]
-    [else (raise-malformed who what v)]))
+    [else (raise-node-malformed who what v)]))
+
+(define (node-hash->string who what v)
+  (cond
+    [(node-string? #px"^0x[0-9a-fA-F]{64}$" v) (string-downcase v)]
+    [else (raise-node-malformed who what v)]))
+
+;; A field the node leaves out is read as 'null.
+(define (node-optional reader who what v)
+  (if (eq? v 'null) #f (reader who what v)))
 
 (define (status->boolean v malformed)
   (cond
@@ -39,7 +51,7 @@
     [else (malformed v)]))
 
 (define (node-status->boolean who what v)
-  (status->boolean v (lambda (v) (raise-malformed who what v))))
+  (status->boolean v (lambda (v) (raise-node-malformed who what v))))
 
 (define (receipt-status->boolean who v)
-  (status->boolean v (lambda (v) (raise-malformed who "receipt status" v #:origin ""))))
+  (status->boolean v (lambda (v) (raise-node-malformed who "receipt status" v #:origin ""))))

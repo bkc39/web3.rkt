@@ -71,4 +71,5 @@
     (check-equal? (filter (lambda (n) (member (collection n) '("net" "json"))) names) '())
     (check-equal? (sort (remove-duplicates (filter (lambda (n) (equal? (collection n) "web3")) names))
                         string<?)
-                  '("web3/abi/type" "web3/address" "web3/private/exn"))))
+                  '("web3/abi/type" "web3/address" "web3/private/abi-event-type" "web3/private/abi-type"
+                    "web3/private/exn"))))

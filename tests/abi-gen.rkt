@@ -7,12 +7,15 @@
          web3/abi/type
          "util.rkt")
 
-(provide random-abi-type
+(provide random-abi-event
+         random-abi-type
          random-abi-types
          random-abi-value
          random-address
          random-bytes
-         random-decode-inputs)
+         random-data
+         random-decode-inputs
+         random-word)
 
 (define (pick prng xs)
   (list-ref xs (random (length xs) prng)))
@@ -88,6 +91,38 @@
        (for/list ([_ (in-range (random (add1 max-length) prng))]) (loop e))]
       [(struct* abi-fixed-array ([element e] [length k])) (for/list ([_ (in-range k)]) (loop e))]
       [(struct* abi-tuple ([components cs])) (map loop cs)])))
+
+(define identifier-start (string->list "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"))
+(define identifier-rest (append identifier-start (string->list "0123456789_")))
+
+(define (random-identifier prng)
+  (list->string (cons (pick prng identifier-start)
+                      (for/list ([_ (in-range (random 9 prng))]) (pick prng identifier-rest)))))
+
+(define parameter-names
+  '("a" "b" "c" "d" "e" "from" "to" "value" "owner" "spender" "id" "memo" "amount" "x_1" "Y"))
+
+;; k distinct elements of xs, in their order in xs.
+(define (random-subset prng xs k)
+  (let loop ([xs xs] [k k] [n (length xs)])
+    (cond
+      [(zero? k) (map (lambda (_) #f) xs)]
+      [(< (random n prng) k) (cons #t (loop (cdr xs) (sub1 k) (sub1 n)))]
+      [else (cons #f (loop (cdr xs) k (sub1 n)))])))
+
+(define (random-abi-event prng)
+  (define n (random 6 prng))
+  (define anonymous? (zero? (random 5 prng)))
+  (define types (for/list ([_ (in-range n)]) (random-abi-type prng #:max-depth 2)))
+  (define names
+    (for/fold ([names '()] #:result (reverse names))
+              ([_ (in-range n)])
+      (define free (filter (lambda (s) (not (member s names))) parameter-names))
+      (cons (and (positive? (random 4 prng)) (pick prng free)) names)))
+  (define indexed (random-subset prng types (random (add1 (min n (if anonymous? 4 3))) prng)))
+  (abi-event (random-identifier prng)
+             (map abi-event-parameter names types indexed)
+             anonymous?))
 
 ;; Words a decoder treats specially, for data of length n.
 (define (interesting-words n)

@@ -32,7 +32,8 @@
           'length "length out of range"
           'non-canonical "not canonically encoded"
           'utf-8 "invalid UTF-8"
-          'selector "selector mismatch"))
+          'selector "selector mismatch"
+          'topic "topics do not match"))
 
 (define abi-decode-reason/c
   (flat-named-contract 'abi-decode-reason/c (apply or/c (hash-keys reason-phrases #t))))

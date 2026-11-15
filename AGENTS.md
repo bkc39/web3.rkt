@@ -15,12 +15,15 @@ bezzle, which pin it as a flake input.
 | `abi.rkt` | the contract ABI: encoders, decoders, selectors, reverts; an `internal` submodule of entry points that take the caller's `who` |
 | `contract.rkt` | deploying, calls and sends, contract addresses; an `internal` submodule of entry points that take the caller's `who` |
 | `address.rkt` | EIP-55 checksums; requires only `racket/base` libraries, `keccak` and `abi/type.rkt` |
-| `abi/type.rkt` | ABI types, signatures and value checks; phase-1 safe, so it requires only `racket/base` libraries and `private/exn.rkt` |
+| `abi/type.rkt` | ABI types, signatures, events and value checks, re-exported from `private/abi-type.rkt` and `private/abi-event-type.rkt`; phase-1 safe, so these require only `racket/base` libraries and `private/exn.rkt`; a `private` submodule holds the reader and contracts other modules share |
+| `abi/event.rkt` | event topics, `event-topics`, decoding logs into `event-log`s; an `internal` submodule of entry points that take the caller's `who` |
+| `eth/log.rkt` | the `log` struct, read from and printed like the node's JSON |
+| `event.rkt` | `log-filter`, `get-logs` (chunks, halving on a refused range), `receipt-logs` |
 | `abi/vectors.rkt` | conformance vectors, data in `abi/vectors/encode.rktd` (regenerate with `racket tests/generate-abi-vectors.rkt`) and the hand-written `abi/vectors/decode.rktd` |
 | `private/abi-decode.rkt` | the decoder core and its reasons; `abi.rkt` puts contracts on it |
 | `private/hex.rkt` | unchecked hex conversions shared by `rpc.rkt` and `abi.rkt` |
 | `private/exn.rkt` | the exception structs (`exn:fail:web3`, `…:rpc`, `…:rpc:revert`, `…:transaction`, `…:abi`, `…:abi:type`, `…:abi:value`, `…:abi:decode`); racket/base only |
-| `private/node.rkt` | checked conversions of node data (hex, quantities, addresses, receipt status); no JSON or transport modules |
+| `private/node.rkt` | checked conversions of node data (hex, quantities, addresses, hashes, receipt status, optional fields); no JSON or transport modules |
 | `private/who.rkt` | `define/who`, which defines `name` and `name/who`, the same procedure taking the `who` its messages start with |
 | `anvil.rkt` | anvil's methods and process management |
 | `examples/` | numbered scripts (`NN-name.rkt`) for reading and for the REPL |

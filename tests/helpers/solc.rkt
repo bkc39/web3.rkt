@@ -14,6 +14,7 @@
 
 (provide compile-fixture
          fixture-sources
+         fixture-event-hashes
          pinned-solc-version
          solc-path
          solc-version
@@ -80,10 +81,13 @@
                                           "evm.methodIdentifiers"
                                           "metadata"))))))
 
-(define (compile-fixture path)
+(define (check-pinned who)
   (define version (solc-version))
   (unless (pinned? version)
-    (error 'compile-fixture "solc ~a at ~a is not ~a" version solc-path pinned-solc-version))
+    (error who "solc ~a at ~a is not ~a" version solc-path pinned-solc-version)))
+
+(define (compile-fixture path)
+  (check-pinned 'compile-fixture)
   (define file-name (path->string (file-name-from-path path)))
   (define name (source-name path))
   (define output
@@ -104,3 +108,16 @@
           'deployedBytecode (object 'deployedBytecode)
           'methodIdentifiers (hash-ref evm 'methodIdentifiers)
           'metadata (string->jsexpr metadata)))
+
+;; The "Event signatures" section of solc --hashes, as (list hash signature)
+;; rows with the hash as a 0x-prefixed topic.
+(define (fixture-event-hashes path)
+  (check-pinned 'fixture-event-hashes)
+  (define lines (string-split (run-solc #"" "--evm-version" "cancun" "--hashes" (path->string path)) "\n"))
+  (match (member "Event signatures:" lines)
+    [#f '()]
+    [(cons _ rows)
+     (for/list ([row (in-list rows)]
+                #:break (string=? (string-trim row) ""))
+       (match (regexp-match #px"^([0-9a-f]{64}): (.*)$" row)
+         [(list _ hash signature) (list (string-append "0x" hash) signature)]))]))

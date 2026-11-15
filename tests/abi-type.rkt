@@ -169,18 +169,21 @@
     (check-equal? (filter (lambda (n) (member (collection n) '("ffi" "net" "json" "file" "keccak")))
                           names)
                   '())
+    (define web3-modules
+      '("web3/abi/type" "web3/private/abi-event-type" "web3/private/abi-type" "web3/private/exn"))
     (check-equal? (sort (remove-duplicates (filter (lambda (n) (equal? (collection n) "web3")) names))
                         string<?)
-                  '("web3/abi/type" "web3/private/exn"))
+                  web3-modules)
     (define allowed
-      '("racket/base" "racket/contract/base" "racket/list" "racket/string" "racket/match"
-        "web3/private/exn"))
-    (for ([name (in-list (filter values
-                                 (map module-name
-                                      (direct-imports
-                                       (module-path-index-resolve
-                                        (module-path-index-join 'web3/abi/type #f) #t)))))])
-      (check-not-false (member name allowed) name))
+      (append '("racket/base" "racket/contract/base" "racket/list" "racket/string" "racket/match")
+              web3-modules))
+    (for* ([module (in-list web3-modules)]
+           [name (in-list (filter values
+                                  (map module-name
+                                       (direct-imports
+                                        (module-path-index-resolve
+                                         (module-path-index-join (string->symbol module) #f) #t)))))])
+      (check-not-false (member name allowed) (format "~a requires ~a" module name)))
     (define abi-names (filter values (map module-name (import-closure 'web3/abi))))
     (check-not-false (member "keccak/main" abi-names))
     (check-equal? (filter (lambda (n) (member (collection n) '("net" "json"))) abi-names) '()))

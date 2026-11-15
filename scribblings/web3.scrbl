@@ -10,12 +10,16 @@
                     web3/address
                     web3/anvil
                     web3/contract
+                    web3/abi/event
                     web3/eth
+                    web3/eth/log
+                    web3/event
                     web3/rpc]
           scribble/example]
 
 @(define abi-eval (make-base-eval '(require web3/abi web3/address web3/rpc)))
 @(define contract-eval (make-base-eval '(require web3)))
+@(define event-eval (make-base-eval '(require web3)))
 
 @title{web3: Ethereum JSON-RPC for Racket}
 @author{bkc}
@@ -29,8 +33,8 @@ support for running local
 
 @racket[(require web3)] provides everything in @racketmodname[web3/rpc],
 @racketmodname[web3/eth], @racketmodname[web3/abi],
-@racketmodname[web3/address], @racketmodname[web3/contract] and
-@racketmodname[web3/anvil].
+@racketmodname[web3/address], @racketmodname[web3/contract],
+@racketmodname[web3/event] and @racketmodname[web3/anvil].
 
 @racketblock[
 (require web3)
@@ -63,8 +67,10 @@ Results come back decoded where the encoding is unambiguous:
  @item{quantities (balances, gas, block numbers, counts) are exact
        nonnegative integers;}
  @item{data, hashes and addresses are @racket["0x..."] strings;}
- @item{transactions, receipts, blocks and logs are @racket[jsexpr?]
+ @item{transactions, receipts and blocks are @racket[jsexpr?]
        hash tables with symbol keys, as read by @racketmodname[json];}
+ @item{logs from @racket[get-logs] and @racket[receipt-logs] are
+       @racket[log] values; @racket[eth-get-logs] returns the node's JSON;}
  @item{a missing object (an unknown transaction, a block that does not
        exist yet) is @racket['null].}]
 
@@ -602,6 +608,54 @@ The canonical signature; without outputs it is the selector preimage.
 @examples[#:eval abi-eval
           (abi-signature->string (string->abi-signature "balanceOf(address)(uint)"))]}
 
+@subsubsection[#:tag "abi-events"]{Events}
+
+@defstruct*[abi-event-parameter ([name (or/c #f (and/c string? #px"^[A-Za-z_$][A-Za-z0-9_$]*$"))]
+                                 [type abi-type-spec/c]
+                                 [indexed? boolean?])
+            #:transparent]{
+One parameter of an event.  @racket[name] is @racket[#f] when unnamed,
+and is not a keyword or a type name.  The constructor converts
+@racket[type] with @racket[abi-type].}
+
+@defstruct*[abi-event ([name (and/c string? #px"^[A-Za-z_$][A-Za-z0-9_$]*$")]
+                       [parameters (listof abi-event-parameter?)]
+                       [anonymous? boolean?])
+            #:transparent]{
+An event: at most three indexed parameters, four when
+@racket[anonymous?], with distinct names.  Wherever an event is
+expected, a string or s-expression such as the ones below works too.
+
+@racketgrammar*[#:literals (event)
+ [event (event name ([param-name type maybe-indexed] ...) maybe-anonymous)]
+ [param-name identifier #f]
+ [maybe-indexed code:blank #:indexed]
+ [maybe-anonymous code:blank #:anonymous]]
+
+@examples[#:eval event-eval
+          (string->abi-event "event Transfer(address indexed from, address indexed to, uint256 value)")
+          (abi-event->string '(event Deposit ([from address #:indexed] [value uint256] [memo string])))]}
+
+@defthing[abi-event-spec/c flat-contract?]{
+An @racket[abi-event], string or s-expression.}
+
+@deftogether[(@defproc[(string->abi-event [s string?]) abi-event?]
+              @defproc[(sexp->abi-event [v pair?]) abi-event?])]{
+Parse one form.  The string is Solidity's declaration without the
+semicolon; @tt{event} is optional, and names of tuple components are
+allowed and dropped.}
+
+@deftogether[(@defproc[(abi-event->string [e abi-event-spec/c]) string?]
+              @defproc[(abi-event->sexp [e abi-event-spec/c]) pair?])]{
+The canonical forms.}
+
+@defproc[(abi-event->signature [e abi-event-spec/c]) abi-signature?]{
+The signature whose hash is the event's topic.
+
+@examples[#:eval event-eval
+          (abi-signature->string
+           (abi-event->signature "Deposit(address indexed from, uint256 value, string memo)"))]}
+
 @subsection[#:tag "abi-values"]{Values}
 
 @tabular[#:style 'boxed
@@ -801,7 +855,7 @@ index followed by element and component indices.}
 @defstruct*[(exn:fail:web3:abi:decode exn:fail:web3:abi)
             ([type (or/c abi-type? (listof abi-type?))]
              [offset exact-nonnegative-integer?]
-             [reason (or/c 'short 'offset 'overlap 'length 'non-canonical 'utf-8 'selector)])]{
+             [reason (or/c 'short 'offset 'overlap 'length 'non-canonical 'utf-8 'selector 'topic)])]{
 Bytes that do not decode.  @racket[offset] indexes the data passed in;
 @racket[type] is the type being read there.}
 
@@ -975,6 +1029,186 @@ it with @racket[eth-call] at its block reverted with, or @racket[#f] when the
 replay did not revert or could not be made.  The replay runs after the whole
 block, so it may not reproduce the failure when other transactions in the
 block changed the state it depends on.}
+
+@section{Events}
+
+@defmodule[web3/event]
+
+Reading the logs contracts emit.  Also provides everything in
+@racketmodname[web3/abi/event] and @racketmodname[web3/eth/log].
+
+@subsection{Logs}
+
+@defmodule[web3/eth/log]
+
+@defproc[(log? [v any/c]) boolean?]{
+Recognizes logs.  A log prints with its address, position and
+abbreviated topics.}
+
+@deftogether[(@defproc[(log-address [l log?]) string?]
+              @defproc[(log-topics [l log?]) (listof string?)]
+              @defproc[(log-data [l log?]) bytes?]
+              @defproc[(log-block-number [l log?]) (or/c #f exact-nonnegative-integer?)]
+              @defproc[(log-block-hash [l log?]) (or/c #f string?)]
+              @defproc[(log-block-timestamp [l log?]) (or/c #f exact-nonnegative-integer?)]
+              @defproc[(log-transaction-hash [l log?]) (or/c #f string?)]
+              @defproc[(log-transaction-index [l log?]) (or/c #f exact-nonnegative-integer?)]
+              @defproc[(log-index [l log?]) (or/c #f exact-nonnegative-integer?)]
+              @defproc[(log-removed? [l log?]) boolean?])]{
+The fields of a log: a checksummed address, up to four lowercase
+topics, the data, and its place in the chain, @racket[#f] while pending.
+@racket[log-removed?] is true for a log undone by a reorg.}
+
+@defproc[(jsexpr->log [v any/c]) log?]{
+A log from the node's JSON.  Raises @racket[exn:fail:web3] for anything
+else.  Unknown fields are kept in @racket[log->jsexpr].
+
+@examples[#:eval event-eval
+          (define transfer-json
+            (hasheq 'address "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+                    'topics (list "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+                                  "0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+                                  "0x00000000000000000000000070997970c51812dc3a010c7d01b50e0d17dc79c8")
+                    'data "0x00000000000000000000000000000000000000000000000000000000000000fa"
+                    'blockNumber "0x2" 'logIndex "0x0" 'transactionIndex "0x0" 'removed #f
+                    'blockHash (string-append "0x" (make-string 64 #\a))
+                    'transactionHash (string-append "0x" (make-string 64 #\b))))
+          (jsexpr->log transfer-json)]}
+
+@defproc[(log->jsexpr [l log?]) hash?]{
+The node's object @racket[l] was read from.}
+
+@subsection{Topics and Decoding}
+
+@defmodule[web3/abi/event]
+
+@defproc[(event-topic [e abi-event-spec/c]) (or/c #f (and/c string? #px"^0x[0-9a-fA-F]{64}$"))]{
+Topic 0 of @racket[e]'s logs, or @racket[#f] for an anonymous event,
+which has none.
+
+@examples[#:eval event-eval
+          (event-topic "Transfer(address indexed from, address indexed to, uint256 value)")]}
+
+@defproc[(abi-value->topic [t abi-type-spec/c] [v any/c]) (and/c string? #px"^0x[0-9a-fA-F]{64}$")]{
+The topic of @racket[v] as an indexed parameter of type @racket[t]: its
+word for a value type, otherwise the Keccak-256 hash of its in-place
+encoding, so @tt{string}, @tt{bytes}, arrays and structs cannot be
+recovered from a log.
+
+@examples[#:eval event-eval
+          (abi-value->topic 'string "hello")]}
+
+@defproc[(event-topics [e abi-event-spec/c] [where hash? (hasheq)])
+         (and/c (listof (or/c #f
+                                       (and/c string? #px"^0x[0-9a-fA-F]{64}$")
+                                       (non-empty-listof (and/c string? #px"^0x[0-9a-fA-F]{64}$"))))
+                       (property/c length (<=/c 4)))]{
+Topic positions matching @racket[e] with the indexed parameters in
+@racket[where], keyed by name or position; @racket[#f] matches anything
+and a list matches any of its topics.  A key that is not an indexed
+parameter of @racket[e] is a contract violation.
+
+@examples[#:eval event-eval
+          (event-topics "Transfer(address indexed from, address indexed to, uint256 value)"
+                        (hasheq 'to "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"))]}
+
+@defproc[(any-of [v any/c] ...+) any-of?]{
+Any of the @racket[v]s, as a value in @racket[where].}
+
+@deftogether[(@defproc[(any-of? [v any/c]) boolean?]
+              @defproc[(any-of-values [a any-of?]) (non-empty-listof any/c)])]{
+Recognizes the result of @racket[any-of], and gives its values.}
+
+@defstruct*[indexed-hash ([topic (and/c string? #px"^0x[0-9a-fA-F]{64}$")]) #:transparent]{
+The value of an indexed parameter whose type is hashed.  The constructor
+lowercases @racket[topic].}
+
+@defproc[(decode-log [e abi-event-spec/c] [l log?]) event-log?]{
+Decodes @racket[l] as @racket[e].  Raises
+@racket[exn:fail:web3:abi:decode] with reason @racket['topic] when the
+topics do not match; offsets count bytes in the topics followed by the
+data.
+
+@examples[#:eval event-eval
+          (define sent
+            (decode-log "Transfer(address indexed from, address indexed to, uint256 value)"
+                        (jsexpr->log transfer-json)))
+          sent
+          (event-log-ref sent 'value)]}
+
+@defproc[(decode-logs [events (listof abi-event-spec/c)] [logs (listof log?)]) (listof log?)]{
+Each log decoded as the one event in @racket[events] with its topic 0
+and number of topics, or returned unchanged when there is none or it
+does not decode.  Two events that cannot be told apart raise
+@racket[exn:fail:web3:abi:type].}
+
+@defproc[(event-log? [v any/c]) boolean?]{
+A decoded log; also a @racket[log?].}
+
+@deftogether[(@defproc[(event-log-event [el event-log?]) abi-event?]
+              @defproc[(event-log-name [el event-log?]) string?]
+              @defproc[(event-log-arguments [el event-log?]) list?]
+              @defproc[(event-log-ref [el event-log?]
+                                      [key (or/c symbol? string? exact-nonnegative-integer?)])
+                       any/c])]{
+The event, its name, the arguments in order, and one argument by name or
+position; a key that names no parameter is a contract violation.}
+
+@subsection{Filters and Fetching}
+
+@defproc[(log-filter [#:address address (or/c #f
+                                              (abi-value/c 'address)
+                                              (non-empty-listof (abi-value/c 'address)))
+                                #f]
+                     [#:from-block from block-param/c "earliest"]
+                     [#:to-block to block-param/c "latest"]
+                     [#:block-hash block-hash (or/c #f (and/c string? #px"^0x[0-9a-fA-F]{64}$")) #f]
+                     [#:topics topics (and/c (listof (or/c #f
+                                       (and/c string? #px"^0x[0-9a-fA-F]{64}$")
+                                       (non-empty-listof (and/c string? #px"^0x[0-9a-fA-F]{64}$"))))
+                       (property/c length (<=/c 4))) '()]
+                     [#:event event (or/c #f abi-event-spec/c) #f]
+                     [#:where where hash? (hasheq)])
+         log-filter?]{
+Logs from @racket[address] in a block range or one block, with
+@racket[topics] given raw or as @racket[event] with indexed arguments as
+for @racket[event-topics].  @racket[block-hash] excludes the range,
+@racket[topics] excludes @racket[event], and @racket[where] must be
+empty without @racket[event].
+
+@examples[#:eval event-eval
+          (log-filter->jsexpr
+           (log-filter #:address "0x5FbDB2315678afecb367f032d93F642f64180aa3" #:from-block 10
+                       #:event "Transfer(address indexed from, address indexed to, uint256 value)"
+                       #:where (hasheq 'from (any-of "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+                                                     "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"))))]}
+
+@defproc[(log-filter? [v any/c]) boolean?]{
+Recognizes filters.}
+
+@defproc[(log-filter->jsexpr [f log-filter?]) (and/c hash? jsexpr?)]{
+The filter as @racket[eth-get-logs] takes it.}
+
+@defproc[(get-logs [f log-filter?]
+                   [#:events events (listof abi-event-spec/c) (list event)]
+                   [#:chunk chunk (or/c #f exact-positive-integer?) #f]
+                   [#:provider provider (or/c #f provider?) (current-provider)])
+         (listof log?)]{
+The logs matching @racket[f], in chain order, decoded with
+@racket[decode-logs]; @racket[events] defaults to the filter's event.  A
+range is fetched in requests of @racket[chunk] blocks; a request the
+node refuses as too large is halved and retried.
+
+@examples[#:eval event-eval
+          (define node (mock-provider (hash "eth_getLogs" (list transfer-json))))
+          (get-logs (log-filter #:event "Transfer(address indexed from, address indexed to, uint256 value)")
+                    #:provider node)
+          (mock-provider-calls node)]}
+
+@defproc[(receipt-logs [receipt (and/c hash? jsexpr?)]
+                       [#:events events (listof abi-event-spec/c) '()])
+         (listof log?)]{
+The logs of @racket[receipt], decoded with @racket[decode-logs].}
 
 @section{Local Nodes with anvil}
 
