@@ -37,14 +37,20 @@
 
 ;;;; anvil / hardhat-style methods
 
-(define-jsonrpc-endpoint anvil_setCode (-> string? hex-string? any/c))
+(define-jsonrpc-endpoint anvil_setCode (-> string? hex-string? void?)
+  #:result-transform void)
 (define-jsonrpc-endpoint anvil_setBalance
-  (-> string? [exact-nonnegative-integer? number->hex-string] any/c))
+  (-> string? [exact-nonnegative-integer? number->hex-string] void?)
+  #:result-transform void)
 (define-jsonrpc-endpoint anvil_setStorageAt
-  (-> string? [exact-nonnegative-integer? number->hex-string] hex-string? any/c))
-(define-jsonrpc-endpoint anvil_mine (-> any/c))
-(define-jsonrpc-endpoint anvil_impersonateAccount (-> string? any/c))
-(define-jsonrpc-endpoint anvil_stopImpersonatingAccount (-> string? any/c))
+  (-> string? [exact-nonnegative-integer? number->hex-string] hex-string? void?)
+  #:result-transform void)
+(define-jsonrpc-endpoint anvil_mine (-> void?)
+  #:result-transform void)
+(define-jsonrpc-endpoint anvil_impersonateAccount (-> string? void?)
+  #:result-transform void)
+(define-jsonrpc-endpoint anvil_stopImpersonatingAccount (-> string? void?)
+  #:result-transform void)
 (define-jsonrpc-endpoint evm_snapshot (-> hex-string?))
 (define-jsonrpc-endpoint evm_revert (-> hex-string? boolean?))
 
