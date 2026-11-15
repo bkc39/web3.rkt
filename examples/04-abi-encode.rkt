@@ -17,9 +17,7 @@
 
 (show (abi-type "uint"))
 (show (abi-type 'uint))
-(show (abi-uint 256))
 (show (equal? (abi-type "uint") (abi-uint 256)))
-(show (equal? (abi-type 'uint) (abi-uint 256)))
 
 (define pairs (abi-type "(address,uint)[2]"))
 (show pairs)
@@ -82,30 +80,20 @@
 
 (section "errors")
 
-(show (with-handlers ([exn:fail:web3:abi? exn-message])
-        (encode-call "add(uint256,uint256)" 1 -1)))
-(show (with-handlers ([exn:fail:web3:abi? exn-message])
-        (encode-call "add(uint256,uint256)" 1)))
-(show (with-handlers ([exn:fail:web3:abi? exn-message])
-        (abi-type "uint7")))
-(show (with-handlers ([exn:fail:web3:abi? exn-message])
-        (abi-encode '(bytes3) (list #"ab"))))
+(show-error (encode-call "add(uint256,uint256)" 1 -1))
+(show-error (encode-call "add(uint256,uint256)" 1))
+(show-error (abi-type "uint7"))
+(show-error (abi-encode '(bytes3) (list #"ab")))
 
 ;; The path is the argument, then the element, then the component.
-(define nested
-  (with-handlers ([exn:fail:web3:abi:value? values])
-    (abi-encode '("(uint8,string)[]") '(((1 "a") (256 "b"))))))
+(show-error (abi-encode '("(uint8,string)[]") '(((1 "a") (256 "b")))) #:as nested)
 (show (exn:fail:web3:abi:value-type nested))
 (show (exn:fail:web3:abi:value-value nested))
 (show (exn:fail:web3:abi:value-path nested))
 
-(show (with-handlers ([exn:fail:web3:abi? exn-message])
-        (abi-encode-packed '("(uint8,uint8)") '((1 2)))))
+(show-error (abi-encode-packed '("(uint8,uint8)") '((1 2))))
 
 ;; A wrong Racket shape, here a string for the list of types, is a contract
 ;; violation instead.
-(define violation
-  (with-handlers ([exn:fail:contract? values])
-    (abi-encode "uint256" '(1))))
+(show-error (abi-encode "uint256" '(1)) #:as violation)
 (show (exn:fail:web3:abi? violation))
-(show (exn:fail:contract? violation))

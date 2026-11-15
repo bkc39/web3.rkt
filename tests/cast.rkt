@@ -1,13 +1,13 @@
 #lang racket/base
 
-;; Foundry's cast as an oracle for the ABI encoders.
-
-(require racket/list
+(require (only-in racket/function curry)
+         racket/list
          racket/match
          racket/port
          racket/string
          web3/abi
-         (only-in web3/rpc bytes->hex-string))
+         (only-in web3/rpc bytes->hex-string)
+         "util.rkt")
 
 (provide cast-path
          cast-version
@@ -24,22 +24,22 @@
 ;; cast reads a nested string between double quotes with no escapes, and
 ;; trims trailing whitespace from a top-level one.
 (define (value->cast-argument type v [top? #t])
-  (define t (abi-type type))
-  (cond
-    [(or (abi-uint? t) (abi-int? t)) (number->string v)]
-    [(abi-bool? t) (if v "true" "false")]
-    [(abi-address? t) v]
-    [(or (abi-bytes? t) (abi-fixed-bytes? t)) (bytes->hex-string v)]
-    [(and (abi-string? t) top? (regexp-match? #px"\\s$" v))
+  (match (abi-type type)
+    [(or (struct* abi-uint ()) (struct* abi-int ())) (number->string v)]
+    [(struct* abi-bool ()) (if v "true" "false")]
+    [(struct* abi-address ()) v]
+    [(or (struct* abi-bytes ()) (struct* abi-fixed-bytes ())) (bytes->hex-string v)]
+    [(struct* abi-string ())
+     #:when (and top? (regexp-match? #px"\\s$" v))
      (error 'value->cast-argument "cast trims trailing whitespace: ~s" v)]
-    [(and (abi-string? t) top?) v]
-    [(and (abi-string? t) (or (string-contains? v "\"") (string-contains? v "\\")))
+    [(struct* abi-string ()) #:when top? v]
+    [(struct* abi-string ())
+     #:when (or (string-contains? v "\"") (string-contains? v "\\"))
      (error 'value->cast-argument "cast cannot quote ~s" v)]
-    [(abi-string? t) (format "\"~a\"" v)]
-    [(abi-array? t) (format "[~a]" (join-arguments (make-list (length v) (abi-array-element t)) v))]
-    [(abi-fixed-array? t)
-     (format "[~a]" (join-arguments (make-list (length v) (abi-fixed-array-element t)) v))]
-    [else (format "(~a)" (join-arguments (abi-tuple-components t) v))]))
+    [(struct* abi-string ()) (format "\"~a\"" v)]
+    [(or (struct* abi-array ([element e])) (struct* abi-fixed-array ([element e])))
+     (format "[~a]" (join-arguments (make-list (length v) e) v))]
+    [(struct* abi-tuple ([components cs])) (format "(~a)" (join-arguments cs v))]))
 
 (define (join-arguments types vs)
   (string-join (map (lambda (t v) (value->cast-argument t v #f)) types vs) ","))
@@ -64,30 +64,24 @@
     [(list _ version) version]
     [#f "(unknown version)"]))
 
-;; cast's --packed left-pads array elements without sign extension, where
-;; solc pads each element as in the standard encoding; packed arrays go
-;; through cast's standard mode instead.
+;; cast's --packed left-pads every array element to 32 bytes, so negative
+;; integers lose their sign extension and bytesN elements are padded on the
+;; wrong side; solc pads each element as in the standard encoding.  Packed
+;; arrays go through cast's standard mode instead.
 (define (packed-argument-hex t v)
-  (define element
-    (cond
-      [(abi-array? t) (abi-array-element t)]
-      [(abi-fixed-array? t) (abi-fixed-array-element t)]
-      [else #f]))
   (define hex
-    (cond
-      [element
-       (define signature
-         (format "f(~a)" (string-join (make-list (length v) (abi-type->string element)) ",")))
-       (apply run-cast "abi-encode" "--" signature
-              (map (lambda (x) (value->cast-argument element x)) v))]
-      [else
+    (match t
+      [(or (struct* abi-array ([element e])) (struct* abi-fixed-array ([element e])))
+       (apply run-cast "abi-encode" "--"
+              (format "f(~a)" (string-join (make-list (length v) (abi-type->string e)) ","))
+              (map (curry value->cast-argument e) v))]
+      [_
        (run-cast "abi-encode" "--packed" "--" (format "f(~a)" (abi-type->string t))
                  (value->cast-argument t v))]))
   (substring hex 2))
 
-;; mode is 'encode, 'packed or 'call; signature is "name(T,...)".
 (define (cast-encode mode signature vs)
-  (define inputs (abi-signature-inputs (string->abi-signature signature)))
+  (define inputs (signature-inputs signature))
   (define arguments (map value->cast-argument inputs vs))
   (string-downcase
    (match mode

@@ -1,10 +1,8 @@
 #lang racket/base
 
-;; The contract ABI: selectors, the standard and packed encodings, call
-;; data, and the conventional revert payloads (Error(string), Panic(uint256)).
-
 (require racket/contract/base
          (only-in keccak keccak256)
+         (only-in racket/function negate)
          (only-in racket/list make-list)
          (only-in racket/match match struct*)
          "abi/type.rkt"
@@ -13,7 +11,7 @@
 (provide (all-from-out "abi/type.rkt")
          (contract-out
           [function-selector (-> (or/c string? bytes? abi-signature?) bytes?)]
-          [word->bytes (-> exact-nonnegative-integer? bytes?)]
+          [word->bytes (-> (integer-in 0 (sub1 (expt 2 256))) bytes?)]
           [bytes->words (-> bytes? (listof exact-nonnegative-integer?))]
           [abi-encode (-> (listof abi-type-spec/c) list? bytes?)]
           [abi-encode-packed (-> (listof abi-type-spec/c) list? bytes?)]
@@ -28,13 +26,11 @@
   (define preimage
     (match signature
       [(? bytes?) signature]
-      [(? string?) (signature->string (string->signature 'function-selector signature) #f)]
-      [_ (signature->string signature #f)]))
+      [(? string?) (abi-signature->string (string->signature 'function-selector signature))]
+      [_ (abi-signature->string signature)]))
   (subbytes (keccak256 preimage) 0 4))
 
 (define (word->bytes n)
-  (unless (< n (expt 2 256))
-    (raise-argument-error 'word->bytes "a value below 2^256" n))
   (natural->bytes n 32))
 
 (define (natural->bytes n width)
@@ -43,11 +39,13 @@
     (bytes-set! bs (- width i 1) (bitwise-and (arithmetic-shift n (* -8 i)) 255)))
   bs)
 
-;; Big-endian 32-byte words; a short trailing chunk is read as-is.
 (define (bytes->words bs)
   (for/list ([i (in-range 0 (bytes-length bs) 32)])
     (for/fold ([n 0]) ([b (in-bytes bs i (min (bytes-length bs) (+ i 32)))])
       (+ (* n 256) b))))
+
+(define (address->natural a)
+  (string->number (substring a 2) 16))
 
 (define (pad-right bs)
   (bytes-append bs (make-bytes (modulo (- (bytes-length bs)) 32) 0)))
@@ -60,7 +58,7 @@
   (match t
     [(struct* abi-uint ()) (word->bytes v)]
     [(struct* abi-int ()) (word->bytes (modulo v (expt 2 256)))]
-    [(struct* abi-address ()) (word->bytes (string->number (substring v 2) 16))]
+    [(struct* abi-address ()) (word->bytes (address->natural v))]
     [(struct* abi-bool ()) (word->bytes (if v 1 0))]
     [(struct* abi-fixed-bytes ()) (pad-right v)]
     [(struct* abi-bytes ()) (encode-bytes v)]
@@ -70,7 +68,6 @@
     [(struct* abi-fixed-array ([element e] [length k])) (encode-sequence (make-list k e) v)]
     [(struct* abi-tuple ([components cs])) (encode-sequence cs v)]))
 
-;; Heads in order, then the tails of the dynamic values they point to.
 (define (encode-sequence ts vs)
   (define head-size (for/sum ([t (in-list ts)]) (or (static-size t) 32)))
   (define-values (heads tails _end)
@@ -102,7 +99,7 @@
   (match t
     [(struct* abi-uint ([bits n])) (natural->bytes v (quotient n 8))]
     [(struct* abi-int ([bits n])) (natural->bytes (modulo v (expt 2 n)) (quotient n 8))]
-    [(struct* abi-address ()) (natural->bytes (string->number (substring v 2) 16) 20)]
+    [(struct* abi-address ()) (natural->bytes (address->natural v) 20)]
     [(struct* abi-bool ()) (bytes (if v 1 0))]
     [(struct* abi-fixed-bytes ()) v]
     [(struct* abi-bytes ()) v]
@@ -113,7 +110,7 @@
 (define (abi-encode-packed types vs)
   (define ts (types/who 'abi-encode-packed types))
   (cond
-    [(findf (lambda (t) (not (packable? t))) ts)
+    [(findf (negate packable?) ts)
      => (lambda (t)
           (raise-abi-type-error 'abi-encode-packed "not supported in packed encoding"
                                 (type->string t) #f))]
@@ -130,7 +127,6 @@
 (define error-selector (bytes #x08 #xc3 #x79 #xa0)) ; Error(string)
 (define panic-selector (bytes #x4e #x48 #x7b #x71)) ; Panic(uint256)
 
-;; A readable reason for Error(string) and Panic(uint256) payloads, or #f.
 (define (decode-revert-reason data)
   (define n (bytes-length data))
   (define (word-at i) (car (bytes->words (subbytes data i (+ i 32)))))

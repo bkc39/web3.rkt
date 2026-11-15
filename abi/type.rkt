@@ -1,9 +1,5 @@
 #lang racket/base
 
-;; ABI types: one struct core, read from canonical strings and
-;; s-expressions.  Requires nothing beyond racket/base's own libraries, so
-;; macros can use it at phase 1.
-
 (require racket/contract/base
          (only-in racket/list make-list)
          (only-in racket/match match match* match-define struct*)
@@ -24,7 +20,7 @@
   (struct abi-bytes ())
   (struct abi-string ())
   (struct abi-array ([element abi-type-spec/c]))
-  (struct abi-fixed-array ([element abi-type-spec/c] [length exact-positive-integer?]))
+  (struct abi-fixed-array ([element abi-type-spec/c] [length abi-array-length/c]))
   (struct abi-tuple ([components (non-empty-listof abi-type-spec/c)]))
   (struct abi-signature ([name abi-identifier/c]
                          [inputs (listof abi-type-spec/c)]
@@ -42,10 +38,6 @@
   [string->abi-signature (-> string? abi-signature?)]
   [abi-signature->string (->* (abi-signature?) (#:outputs? boolean?) string?)]))
 
-(struct exn:fail:web3:abi exn:fail:web3 ())
-(struct exn:fail:web3:abi:type exn:fail:web3:abi (input position))
-(struct exn:fail:web3:abi:value exn:fail:web3:abi (type value path))
-
 ;;;; contracts
 
 (define abi-type-spec/c
@@ -60,9 +52,19 @@
   (flat-named-contract 'abi-fixed-bytes-size/c
                        (lambda (v) (and (exact-integer? v) (<= 1 v 32)))))
 
+(define abi-array-length/c (integer-in 1 (sub1 (expt 2 64))))
+
+(define array-length? (flat-contract-predicate abi-array-length/c))
+
+;; The end of the identifier that starts at index i of s, or #f.
+(define (identifier-end s i)
+  (match (regexp-match-positions #px"^[A-Za-z_$][A-Za-z0-9_$]*" s i)
+    [(list (cons _ end)) end]
+    [#f #f]))
+
 (define abi-identifier/c
   (flat-named-contract 'abi-identifier/c
-                       (lambda (v) (and (string? v) (regexp-match? #px"^[A-Za-z_$][A-Za-z0-9_$]*$" v)))))
+                       (lambda (v) (and (string? v) (eqv? (identifier-end v 0) (string-length v))))))
 
 ;;;; structs
 
@@ -147,11 +149,8 @@
     [(regexp-match? #px"^(?:function|u?fixed(?:[0-9]+x[0-9]+)?)$" token) "not supported"]
     [else "not an ABI type"]))
 
-(define (identifier-char? c)
-  (or (char<=? #\a c #\z) (char<=? #\A c #\Z) (char<=? #\0 c #\9) (memv c '(#\_ #\$))))
-
-;; A recursive-descent reader of a type or a signature.  Positions are
-;; string indices; the string's length means the input ended early.
+;; Positions are string indices; the string's length means the input
+;; ended early.
 (define (read-abi-string who s goal)
   (define n (string-length s))
   (define (fail reason position)
@@ -160,14 +159,11 @@
     (and (< i n) (string-ref s i)))
   (define (skip i)
     (if (eqv? (char-at i) #\space) (skip (add1 i)) i))
-  (define (identifier-end i)
-    (define c (char-at i))
-    (if (and c (identifier-char? c)) (identifier-end (add1 i)) i))
   (define (read-type i)
     (define-values (base j) (read-base i))
     (read-suffixes base j))
   (define (read-base i)
-    (define j (identifier-end i))
+    (define j (or (identifier-end s i) i))
     (define token (substring s i j))
     (define k (skip j))
     (cond
@@ -183,13 +179,12 @@
       (match (regexp-match-positions #px"^[1-9][0-9]*\\]" s (min (add1 i) n))
         [(list (cons _ end)) end]
         [#f #f]))
+    (define k (and length-end (string->number (substring s (add1 i) (sub1 length-end)))))
     (cond
       [(not (eqv? (char-at i) #\[)) (values t i)]
       [(eqv? (char-at (add1 i)) #\]) (read-suffixes (abi-array t) (+ i 2))]
-      [length-end
-       (define k (string->number (substring s (add1 i) (sub1 length-end))))
-       (read-suffixes (abi-fixed-array t k) length-end)]
-      [else (fail "expected an array length from 1" (add1 i))]))
+      [(and k (array-length? k)) (read-suffixes (abi-fixed-array t k) length-end)]
+      [else (fail "expected an array length from 1 to 2^64-1" (add1 i))]))
   (define (read-tuple i)
     (define-values (ts j) (read-list i #f))
     (values (abi-tuple ts) j))
@@ -208,11 +203,10 @@
            [#f (fail "expected , or )" n)]
            [_ (fail "expected , or )" j)]))]))
   (define (read-signature i)
-    (define name-end (identifier-end i))
-    (define open (skip name-end))
+    (define name-end (identifier-end s i))
+    (define open (and name-end (skip name-end)))
     (cond
-      [(not (regexp-match? #px"^[A-Za-z_$]" (substring s i name-end)))
-       (fail "expected a function name" i)]
+      [(not name-end) (fail "expected a function name" i)]
       [(not (eqv? (char-at open) #\()) (fail "expected (" open)]
       [else
        (define-values (inputs inputs-end) (read-list open #t))
@@ -242,7 +236,7 @@
       [(? symbol? (app symbol->string (app elementary (? abi-type? t)))) t]
       [(? symbol?) (raise-abi-type-error who (elementary-failure (symbol->string v)) input #f v)]
       [(list 'array t) (abi-array (loop t))]
-      [(list 'array t (? exact-positive-integer? k)) (abi-fixed-array (loop t) k)]
+      [(list 'array t (? array-length? k)) (abi-fixed-array (loop t) k)]
       [(list 'tuple ts ..1) (abi-tuple (map loop ts))]
       [_ (raise-abi-type-error who "not an ABI type" input #f v)])))
 
@@ -277,7 +271,7 @@
     [(struct* abi-tuple ([components cs])) `(tuple ,@(map type->sexp cs))]
     [_ (string->symbol (type->string t))]))
 
-(define (signature->string sig outputs?)
+(define (abi-signature->string sig #:outputs? [outputs? #f])
   (match-define (struct* abi-signature ([name name] [inputs inputs] [outputs outputs])) sig)
   (define (types->string ts)
     (format "(~a)" (string-join (map type->string ts) ",")))
@@ -392,18 +386,13 @@
 (define (string->abi-signature s)
   (string->signature 'string->abi-signature s))
 
-(define (abi-signature->string sig #:outputs? [outputs? #f])
-  (signature->string sig outputs?))
-
-;; For web3/abi and the decoder: the readers and checks under their
-;; caller's name.
+;; The readers and checks under their caller's name, for web3/abi.
 (module* private #f
   (provide abi-type/who
            arguments-failure
            dynamic?
            raise-abi-type-error
            raise-abi-value-error
-           signature->string
            static-size
            string->signature
            type->string

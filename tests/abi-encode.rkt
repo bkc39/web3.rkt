@@ -1,23 +1,14 @@
 #lang racket/base
 
-;; web3/abi: the standard and packed encodings and call data.
-
 (module+ test
   (require racket/list
            racket/match
-           (only-in racket/contract exn:fail:contract:blame?)
            rackunit
            syntax/parse/define
            web3/abi
            (only-in web3/rpc bytes->hex-string hex-string->bytes)
-           "abi-gen.rkt")
-
-  (define-syntax-parse-rule (check-blames-here expr)
-    (check-exn (lambda (e)
-                 (and (exn:fail:contract:blame? e)
-                      (regexp-match? #rx"blaming: [^\n]*abi-encode[.]rkt" (exn-message e))))
-               (lambda () expr)
-               (format "~s" 'expr)))
+           "abi-gen.rkt"
+           "util.rkt")
 
   (define (value-error thunk)
     (with-handlers ([exn:fail:web3:abi:value? values])
@@ -35,10 +26,9 @@
   (define (word n) (word->bytes n))
   (define (encode1 t v) (abi-encode (list t) (list v)))
   (define (packed1 t v) (abi-encode-packed (list t) (list v)))
-  (define widths (range 8 257 8))
   (define (seeded) (vector->pseudo-random-generator (vector 7 7 7 7 7 7)))
 
-  (test-case "T13 static encodings have the static size"
+  (test-case "static encodings have the static size"
     (define prng (seeded))
     (for ([_ (in-range 300)])
       (define t (random-abi-type prng #:static? #t))
@@ -47,7 +37,7 @@
       (check-equal? (bytes-length (encode1 t v)) size (abi-type->string t))
       (check-true (and (positive? size) (zero? (remainder size 32))))))
 
-  (test-case "T14 word formulas"
+  (test-case "elementary values encode as one word"
     (for ([n (in-list widths)])
       (for ([v (in-list (list 0 1 (sub1 (expt 2 n)) (quotient (expt 2 n) 3)))])
         (check-equal? (encode1 (abi-uint n) v) (word v)))
@@ -65,7 +55,7 @@
       (define b (make-bytes n 171))
       (check-equal? (encode1 (abi-fixed-bytes n) b) (bytes-append b (make-bytes (- 32 n) 0)))))
 
-  (test-case "T15 boundaries"
+  (test-case "values at and past their type's bounds"
     (for ([n (in-list widths)])
       (define u (abi-uint n))
       (define i (abi-int n))
@@ -92,7 +82,7 @@
   (define (padded b)
     (bytes-append b (make-bytes (modulo (- (bytes-length b)) 32) 0)))
 
-  (test-case "T16 dynamic layout"
+  (test-case "bytes and string are a length and right-padded data"
     (for ([len (in-list '(0 1 31 32 33 64))])
       (define b (make-bytes len 7))
       (define encoded (encode1 'bytes b))
@@ -101,7 +91,7 @@
     (define s "héllo €😀")
     (check-equal? (encode1 'string s) (encode1 'bytes (string->bytes/utf-8 s))))
 
-  (test-case "T17 arrays reduce to tuples"
+  (test-case "arrays encode as tuples"
     (define prng (seeded))
     (for ([_ (in-range 200)])
       (define t (random-abi-type prng #:max-depth 2))
@@ -113,7 +103,7 @@
                     (bytes-append (word 32) (word (length ys))
                                   (abi-encode (make-list (length ys) t) ys)))))
 
-  (test-case "T18 the argument list is a tuple"
+  (test-case "the argument list encodes as a tuple"
     (define prng (seeded))
     (for ([_ (in-range 200)])
       (define ts (random-abi-types prng))
@@ -126,7 +116,7 @@
                           (abi-encode ts vs)))))
     (check-equal? (abi-encode '() '()) #""))
 
-  (test-case "T19 arity and paths"
+  (test-case "value errors name the arity or the path"
     (check-value-error (abi-encode '(uint8 bool) '(1)) (list (abi-uint 8) (abi-bool)) '(1) '())
     (check-value-error (abi-encode '("uint8[2]") '((1 2 3))) (abi-type "uint8[2]") '(1 2 3) '(0))
     (check-value-error (abi-encode '((array (tuple uint8 string))) '(((1 "a") (256 "b"))))
@@ -146,7 +136,7 @@
 
   (define a-address "0x00000000000000000000000000000000000000aa")
 
-  (test-case "T20 encode-call"
+  (test-case "encode-call is the selector and the encoded inputs"
     (for ([row (in-list `(("add(uint256,uint256)" 2 40)
                           ("transfer(address,uint256)" ,a-address 1000)
                           ("submit(string,bytes[])" "hi" (#"" #"\1"))
@@ -178,7 +168,7 @@
     `((uint8 255 1) (int16 -1 2) (uint256 1 32) (int256 -1 32) (address ,a-address 20)
       (bool #t 1) (bytes1 #"a" 1) (bytes3 #"abc" 3) (bytes32 ,(make-bytes 32 1) 32)))
 
-  (test-case "T21 packed"
+  (test-case "packed encoding"
     (for ([n (in-list widths)])
       (check-equal? (bytes-length (packed1 (abi-uint n) 1)) (quotient n 8))
       (check-equal? (bytes-length (packed1 (abi-int n) -1)) (quotient n 8)))
@@ -213,12 +203,21 @@
                  (lambda () (packed1 t v))
                  t)))
 
-  (test-case "T22 contract blame"
+  (test-case "encoders blame their caller"
     (check-blames-here (abi-encode "uint256" '(1)))
     (check-blames-here (abi-encode '(uint256) 1))
     (check-blames-here (abi-encode-packed '(42) '(1)))
     (check-blames-here (encode-call 'transfer 1))
-    (check-blames-here (function-selector 42)))
+    (check-blames-here (function-selector 42))
+    (check-blames-here (word->bytes (expt 2 256)))
+    (check-blames-here (word->bytes -1))
+    (check-equal? (word->bytes (sub1 (expt 2 256))) (make-bytes 32 255)))
+
+  (test-case "function-selector reads a string as a signature"
+    (check-exn (lambda (e)
+                 (and (exn:fail:web3:abi:type? e)
+                      (regexp-match? #rx"^function-selector: " (exn-message e))))
+               (lambda () (function-selector "foo"))))
 
   (test-case "doc examples"
     (check-equal? (bytes->hex-string (abi-encode '(int8 bytes3) (list -1 #"abc")))

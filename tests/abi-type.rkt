@@ -1,17 +1,16 @@
 #lang racket/base
 
-;; web3/abi/type: the three forms of a type, signatures, values.
-
 (module+ test
   (require racket/list
            racket/match
-           (only-in racket/contract contract-name exn:fail:contract:blame?)
+           (only-in racket/contract contract-name)
            rackunit
            setup/collects
            syntax/parse/define
            web3/abi/type
            (only-in web3/rpc exn:fail:web3?)
            "abi-gen.rkt"
+           "util.rkt"
            (for-syntax racket/base
                        web3/abi/type))
 
@@ -24,18 +23,10 @@
         (check-equal? (exn:fail:web3:abi:type-input e) input (format "~s" 'expr))
         (check-equal? (exn:fail:web3:abi:type-position e) position (format "~s" 'expr)))))
 
-  (define-syntax-parse-rule (check-blames-here expr)
-    (check-exn (lambda (e)
-                 (and (exn:fail:contract:blame? e)
-                      (regexp-match? #rx"blaming: [^\n]*abi-type[.]rkt" (exn-message e))))
-               (lambda () expr)
-               (format "~s" 'expr)))
-
   (define (generated-types n)
     (define prng (vector->pseudo-random-generator (vector 1 2 3 4 5 6)))
     (for/list ([_ (in-range n)]) (random-abi-type prng)))
 
-  ;; T1
   (define canonical-pairs
     '(("uint" "uint256")
       ("int" "int256")
@@ -46,24 +37,24 @@
       ("tuple(tuple(uint8),bytes)[3][]" "((uint8),bytes)[3][]")
       ("uint8[2][]" "uint8[2][]")))
 
-  (test-case "T1 canonicalising"
+  (test-case "aliases, tuple() and spaces canonicalise"
     (for ([pair (in-list canonical-pairs)])
       (match-define (list in out) pair)
       (check-equal? (abi-type->string (string->abi-type in)) out in)))
 
-  (test-case "T2 canonical strings are fixed points"
+  (test-case "canonical strings are fixed points"
     (for ([c (in-list (append (map second canonical-pairs)
                               (map abi-type->string (generated-types 500))))])
       (check-equal? (abi-type->string (string->abi-type c)) c)))
 
-  (test-case "T3 round trips"
+  (test-case "string and s-expression forms round-trip"
     (for ([t (in-list (generated-types 500))])
       (check-equal? (string->abi-type (abi-type->string t)) t)
       (check-equal? (sexp->abi-type (abi-type->sexp t)) t)
       (check-equal? (abi-type (abi-type->sexp t)) t)
       (check-equal? (abi-type t) t)))
 
-  ;; T4: (string sexp struct-expression)
+  ;; (string sexp struct-expression)
   (define three-forms
     '(("uint256" uint256 (abi-uint 256))
       ("uint8[]" (array uint8) (abi-array (abi-uint 8)))
@@ -78,7 +69,7 @@
   (define-namespace-anchor anchor)
   (define ns (namespace-anchor->namespace anchor))
 
-  (test-case "T4 the three forms agree"
+  (test-case "the string, s-expression and struct forms agree"
     (for ([row (in-list three-forms)])
       (match-define (list s x struct-expr) row)
       (define t (eval struct-expr ns))
@@ -97,39 +88,49 @@
       ("Uint256" 0) ("fixed128x18" 0) ("ufixed" 0) ("function" 0) ("foo" 0) ("" 0)
       ("tuple" 5) ("address payable" 8) ("uint256[0]" 8) ("uint256[01]" 8) ("uint256[-1]" 8)
       ("uint256[" 8) ("uint256 []" 7) ("uint256[]x" 9) ("(uint256" 8) ("(uint256,)" 9)
-      ("()" 1) ("uint 256" 4)))
+      ("()" 1) ("uint 256" 4) ("(uint256) []" 9)
+      ("uint256[18446744073709551616]" 8) ("uint256[1000000000000000000000]" 8)))
 
-  (test-case "T5 string rejections"
+  (test-case "malformed strings raise with a position"
     (for ([row (in-list string-rejections)])
       (match-define (list s position) row)
       (check-raises-type s position (string->abi-type s))
       (check-raises-type s position (abi-type s))))
 
-  (test-case "T5 messages"
+  (test-case "type error messages"
     (check-exn #rx"^abi-type: not an ABI type: \"uint7\"\n  at: position 0$"
                (lambda () (abi-type "uint7")))
     (check-exn #rx"^string->abi-type: " (lambda () (string->abi-type "uint7")))
     (check-exn #rx"not supported" (lambda () (abi-type "function")))
     (check-exn #rx"not supported" (lambda () (abi-type "fixed128x18")))
-    (check-exn #rx"write address" (lambda () (abi-type "address payable"))))
+    (check-exn #rx"write address" (lambda () (abi-type "address payable")))
+    (check-exn #rx"expected an array length from 1 to 2\\^64-1"
+               (lambda () (abi-type "uint256[18446744073709551616]"))))
+
+  (test-case "the largest array length is 2^64-1"
+    (define k (sub1 (expt 2 64)))
+    (check-equal? (abi-type "uint8[18446744073709551615]") (abi-fixed-array (abi-uint 8) k))
+    (check-equal? (abi-type `(array uint8 ,k)) (abi-fixed-array (abi-uint 8) k)))
 
   (define sexp-rejections
     '(uint7 Uint256 array (array) (array uint256 0) (array uint256 -1) (array uint256 2 3)
-      (tuple) (tuple . address) (vector uint256) (uint256 address) (array "uint256")))
+      (tuple) (tuple . address) (vector uint256) (uint256 address) (array "uint256")
+      (array uint256 18446744073709551616)))
 
-  (test-case "T6 sexp rejections"
+  (test-case "malformed s-expressions raise"
     (for ([x (in-list sexp-rejections)])
       (check-raises-type x #f (sexp->abi-type x))
       (check-raises-type x #f (abi-type x)))
     (check-exn #rx"^abi-type: not an ABI type: \\(array \"uint256\"\\)\n  form: \"uint256\"$"
                (lambda () (abi-type '(array "uint256")))))
 
-  (test-case "T7 contract blame"
+  (test-case "constructors and conversions blame their caller"
     (check-blames-here (abi-type 42))
     (check-blames-here (abi-uint 7))
     (check-blames-here (abi-int 264))
     (check-blames-here (abi-fixed-bytes 33))
     (check-blames-here (abi-fixed-array 'uint256 0))
+    (check-blames-here (abi-fixed-array 'uint256 (expt 2 64)))
     (check-blames-here (abi-tuple '()))
     (check-blames-here (abi-signature "1f" '() #f))
     (check-blames-here (string->abi-type 'uint))
@@ -149,7 +150,7 @@
       ("(uint256,string)" #t #f)
       ("((string))[1]" #t #f)))
 
-  (test-case "T8 dynamic and size"
+  (test-case "dynamic types have no static size"
     (for ([row (in-list dynamic-and-size)])
       (match-define (list t dynamic? size) row)
       (check-equal? (abi-type-dynamic? t) dynamic? t)
@@ -198,7 +199,7 @@
   (define (collection name)
     (car (regexp-split #rx"/" name)))
 
-  (test-case "T9 phase-1 safety"
+  (test-case "web3/abi/type is usable at phase 1 and needs no I/O libraries"
     (check-equal? (canonical (array (tuple address uint))) "(address,uint256)[]")
     (define names (filter values (map module-name (import-closure 'web3/abi/type))))
     (check-not-false (member "racket/contract/base" names))
@@ -221,7 +222,7 @@
     (check-not-false (member "keccak/main" abi-names))
     (check-equal? (filter (lambda (n) (member (collection n) '("net" "json"))) abi-names) '()))
 
-  (test-case "T10 signatures"
+  (test-case "signatures"
     (define transfer (string->abi-signature "transfer(address,uint256)"))
     (check-equal? (abi-signature-name transfer) "transfer")
     (check-equal? (length (abi-signature-inputs transfer)) 2)
@@ -235,18 +236,16 @@
     (check-equal? (abi-signature->string (string->abi-signature "transfer (address, uint)"))
                   "transfer(address,uint256)")
     (for ([row (in-list '(("transfer(address,uint256" 24) ("1f()" 0) ("f" 1)
-                          ("f(uint256)x" 10)))])
+                          ("f(uint256)x" 10) ("f((uint256) [])" 11) ("" 0)))])
       (match-define (list s position) row)
       (check-raises-type s position (string->abi-signature s))))
 
-  (test-case "T11 exception hierarchy"
+  (test-case "ABI errors are web3 errors"
     (check-pred exn:fail:web3? (with-handlers ([exn:fail? values]) (abi-type "uint7")))
     (check-true (exn:fail:web3?
                  (exn:fail:web3:abi:value "m" (current-continuation-marks) (abi-bool) 0 '(0)))))
 
-  (define widths (range 8 257 8))
-
-  (test-case "T12 abi-value?"
+  (test-case "abi-value? and abi-value/c"
     (for ([n (in-list widths)])
       (define u (abi-uint n))
       (define i (abi-int n))

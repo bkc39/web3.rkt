@@ -1,25 +1,17 @@
 #lang racket/base
 
-;; web3/abi/vectors: every committed vector reproduces.
-
 (module+ test
   (require racket/list
-           racket/match
            rackunit
            web3/abi
            web3/abi/vectors
-           (only-in web3/rpc bytes->hex-string))
+           "util.rkt")
 
-  (define (vector-bytes v)
-    (match-define (struct* abi-vector ([mode mode] [signature signature] [values vs])) v)
-    (match mode
-      ['encode (abi-encode (abi-signature-inputs (string->abi-signature signature)) vs)]
-      ['packed (abi-encode-packed (abi-signature-inputs (string->abi-signature signature)) vs)]
-      ['call (apply encode-call signature vs)]))
-
-  (test-case "V1 every vector reproduces"
+  (test-case "every committed vector reproduces"
     (for ([v (in-list abi-encode-vectors)])
-      (check-equal? (bytes->hex-string (vector-bytes v)) (abi-vector-hex v) (abi-vector-name v))))
+      (check-equal? (encode-hex (abi-vector-mode v) (abi-vector-signature v) (abi-vector-values v))
+                    (abi-vector-hex v)
+                    (abi-vector-name v))))
 
   (define required-names
     '("uint256-zero" "uint256-max" "uint8-max" "int8-bounds" "int256-min" "int256-max"
@@ -31,12 +23,12 @@
       "no-args" "packed-widths" "packed-dynamic" "packed-empty" "packed-arrays" "packed-wide"
       "call-transfer" "call-outputs-ignored" "call-no-args" "call-negative" "call-dynamic"))
 
-  (test-case "V2 the file is well formed"
+  (test-case "the vector file is well formed and covers the required cases"
     (define names (map abi-vector-name abi-encode-vectors))
     (check-false (check-duplicates names))
     (for ([v (in-list abi-encode-vectors)])
       (check-regexp-match #px"^0x(?:[0-9a-f]{2})*$" (abi-vector-hex v))
-      (define inputs (abi-signature-inputs (string->abi-signature (abi-vector-signature v))))
+      (define inputs (signature-inputs (abi-vector-signature v)))
       (check-equal? (length (abi-vector-values v)) (length inputs) (abi-vector-name v))
       (for ([t (in-list inputs)]
             [x (in-list (abi-vector-values v))])

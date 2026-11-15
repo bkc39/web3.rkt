@@ -473,6 +473,9 @@ s-expression such as @racket['(array (tuple address uint256) 2)] works
 too.  This module depends on nothing but @racketmodname[racket/base] and
 its contract library, so macros can use it at phase 1.
 
+The reader treats @litchar{[]} as parentheses, so the s-expression form
+cannot spell @tt{T[]} as a symbol: write @racket[(array T)].
+
 @racketgrammar*[#:literals (array tuple uint uint8 uint256 int int8 int256 address bool
                             bytes bytes1 bytes32 string)
  [type uint8 ... uint256 uint int8 ... int256 int address bool bytes1 ... bytes32 bytes string
@@ -491,15 +494,15 @@ its contract library, so macros can use it at phase 1.
 @defstruct*[abi-fixed-bytes ([size (integer-in 1 32)]) #:transparent]{
 @tt{bytes}@racket[size].}
 
-@defstruct*[abi-array ([element abi-type?]) #:transparent]{
-@racket[element]@tt{[]}.}
-
-@defstruct*[abi-fixed-array ([element abi-type?] [length exact-positive-integer?]) #:transparent]{
-@racket[element]@tt{[}@racket[length]@tt{]}.}
-
-@defstruct*[abi-tuple ([components (non-empty-listof abi-type?)]) #:transparent]{
-A tuple.  Constructors of compound types accept any type form and convert
-it with @racket[abi-type].
+@deftogether[(@defstruct*[abi-array ([element abi-type-spec/c]) #:transparent]
+              @defstruct*[abi-fixed-array ([element abi-type-spec/c]
+                                           [length (integer-in 1 (sub1 (expt 2 64)))])
+                          #:transparent]
+              @defstruct*[abi-tuple ([components (non-empty-listof abi-type-spec/c)])
+                          #:transparent])]{
+@racket[element]@tt{[]}, @racket[element]@tt{[}@racket[length]@tt{]} and
+the tuple of @racket[components].  The constructors accept any type form
+and convert it with @racket[abi-type], so the fields hold type structs.
 
 @examples[#:eval abi-eval
           (abi-array "uint")
@@ -523,7 +526,8 @@ The type @racket[spec] denotes.
 
 @deftogether[(@defproc[(string->abi-type [s string?]) abi-type?]
               @defproc[(sexp->abi-type [v (or/c symbol? pair?)]) abi-type?])]{
-Parse one form.  Spaces are allowed next to parentheses and commas;
+Parse one form.  Spaces are allowed next to parentheses and commas, but
+not before @litchar{[};
 @tt{uint} and @tt{int} mean @tt{uint256} and @tt{int256};
 @tt{tuple(...)} means @tt{(...)}.}
 
@@ -553,11 +557,13 @@ Whether @racket[v] is a value of @racket[t] (see the table in
 @defproc[(abi-value/c [t abi-type-spec/c]) flat-contract?]{
 @racket[abi-value?] as a contract named after @racket[t].}
 
-@defstruct*[abi-signature ([name string?]
-                           [inputs (listof abi-type?)]
-                           [outputs (or/c #f (listof abi-type?))])
+@defstruct*[abi-signature ([name (and/c string? #px"^[A-Za-z_$][A-Za-z0-9_$]*$")]
+                           [inputs (listof abi-type-spec/c)]
+                           [outputs (or/c #f (listof abi-type-spec/c))])
             #:transparent]{
-A function: @racket[outputs] is @racket[#f] when not given.}
+A function: @racket[name] is a Solidity identifier and @racket[outputs]
+is @racket[#f] when not given.  The constructor converts the types with
+@racket[abi-type].}
 
 @defproc[(string->abi-signature [s string?]) abi-signature?]{
 Reads @racket["name(T,...)"] or, with outputs,
@@ -618,14 +624,15 @@ Call data: the selector of @racket[signature] and the encoding of the
 
 @defproc[(function-selector [signature (or/c string? bytes? abi-signature?)]) bytes?]{
 The first four bytes of the Keccak-256 hash of the canonical signature.
-A byte string is hashed as given.
+A string must parse as a signature, or @racket[exn:fail:web3:abi:type] is
+raised; a byte string is hashed as given.
 
 @examples[#:eval abi-eval
-          (bytes->hex-string (function-selector "transfer(address, uint)"))]}
+          (bytes->hex-string (function-selector "transfer(address, uint)"))
+          (eval:error (function-selector "foo"))]}
 
-@defproc[(word->bytes [n exact-nonnegative-integer?]) bytes?]{
-@racket[n] as a 32-byte big-endian word.  Raises an error if @racket[n]
-does not fit in 256 bits.}
+@defproc[(word->bytes [n (integer-in 0 (sub1 (expt 2 256)))]) bytes?]{
+@racket[n] as a 32-byte big-endian word.}
 
 @defproc[(bytes->words [bs bytes?]) (listof exact-nonnegative-integer?)]{
 Reads @racket[bs] as consecutive 32-byte big-endian words.  A trailing

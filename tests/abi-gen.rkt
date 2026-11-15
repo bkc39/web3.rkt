@@ -1,16 +1,13 @@
 #lang racket/base
 
-;; Seeded generators of ABI types and values, shared by the ABI tests.
-
 (require racket/list
          racket/match
-         web3/abi/type)
+         web3/abi/type
+         "util.rkt")
 
 (provide random-abi-type
          random-abi-types
          random-abi-value)
-
-(define widths (range 8 257 8))
 
 (define (pick prng xs)
   (list-ref xs (random (length xs) prng)))
@@ -34,8 +31,8 @@
     [2 (abi-tuple (for/list ([_ (in-range (add1 (random 3 prng)))]) (child)))]
     [3 (abi-array (child))]))
 
-(define (random-abi-types prng #:max-count [max-count 4])
-  (for/list ([_ (in-range (random (add1 max-count) prng))])
+(define (random-abi-types prng #:min-count [min-count 0] #:max-count [max-count 4])
+  (for/list ([_ (in-range (+ min-count (random (add1 (- max-count min-count)) prng)))])
     (random-abi-type prng)))
 
 (define cast-safe-alphabet
@@ -83,3 +80,13 @@
        (for/list ([_ (in-range (random (add1 max-length) prng))]) (loop e))]
       [(struct* abi-fixed-array ([element e] [length k])) (for/list ([_ (in-range k)]) (loop e))]
       [(struct* abi-tuple ([components cs])) (map loop cs)])))
+
+(module+ test
+  (require rackunit)
+
+  (test-case "random-abi-types draws between min-count and max-count types"
+    (define prng (vector->pseudo-random-generator (vector 3 1 4 1 5 9)))
+    (define counts
+      (for/list ([_ (in-range 200)])
+        (length (random-abi-types prng #:min-count 1 #:max-count 3))))
+    (check-equal? (sort (remove-duplicates counts) <) '(1 2 3))))
