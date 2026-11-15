@@ -299,8 +299,15 @@
            (length (filter abi-event-parameter-indexed? (abi-event-parameters i))))]
     [_ (item-label i)]))
 
-(define (repeatable? i)
-  (or (abi-event? i) (abi-error? i)))
+(define (repeat-key i)
+  (match i
+    [(? abi-event?) (map abi-event-parameter-indexed? (abi-event-parameters i))]
+    [(? abi-error?) 'error]
+    [_ #f]))
+
+(define (repeat? first item)
+  (define key (repeat-key item))
+  (and key (equal? (repeat-key first) key)))
 
 (define (described-items items)
   (let loop ([items items] [i 0] [seen (hash)] [kept '()])
@@ -308,10 +315,11 @@
       ['() (values (reverse kept) #f)]
       [(cons item rest)
        (define key (item-key item))
-       (match (hash-ref seen key #f)
-         [#f (loop rest (add1 i) (hash-set seen key item) (cons item kept))]
-         [(== item) #:when (repeatable? item) (loop rest (add1 i) seen kept)]
-         [_ (values #f (cons (format "duplicate ~a" (item-label item)) i))])])))
+       (define first (hash-ref seen key #f))
+       (cond
+         [(not first) (loop rest (add1 i) (hash-set seen key item) (cons item kept))]
+         [(repeat? first item) (loop rest (add1 i) seen kept)]
+         [else (values #f (cons (format "duplicate ~a" (item-label item)) i))])])))
 
 (define (write-contract-abi d port _mode)
   (define (group label names)

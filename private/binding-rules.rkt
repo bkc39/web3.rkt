@@ -42,9 +42,10 @@
     (if (null? (cdr sorted))
         (count-of (car sorted) "argument")
         (format "~a arguments" (or-list sorted))))
-  (if deploy?
-      (format "takes ~a; given ~a" takes given)
-      (format "~a takes ~a after the address; given ~a" what takes given)))
+  (cond
+    [deploy? (format "takes ~a; given ~a" takes given)]
+    [given (format "~a takes ~a after the address; given ~a" what takes given)]
+    [else (format "the address is missing; ~a takes it, then ~a" what takes)]))
 
 (define (keyword-message what how kw allowed)
   (if (memq kw all-keywords)

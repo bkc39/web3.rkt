@@ -61,11 +61,14 @@
     (check-equal? (map (lambda (e) (bytes->hex-string (error-selector e))) (contract-abi-errors token))
                   '("0xcf479181" "0x8e4a23d6")))
 
-  (test-case "an artifact listing one error and one event twice keeps each once"
+  (test-case "an artifact listing one error and one event twice under other names keeps the first"
+    (define (signature x)
+      (list (hash-ref x 'type) (hash-ref x 'name) (map (lambda (p) (hash-ref p 'type)) (hash-ref x 'inputs))))
     (define j (artifact "Mover"))
     (define d (jsexpr->contract-abi j))
     (check-equal? (length (hash-ref j 'abi)) 7)
-    (check-equal? (contract-abi->jsexpr d) (remove-duplicates (norm (hash-ref j 'abi))))
+    (check-equal? (length (contract-abi-items d)) 5)
+    (check-equal? (contract-abi->jsexpr d) (remove-duplicates (norm (hash-ref j 'abi)) #:key signature))
     (check-equal? (contract-abi-error d 'Unauthorized) (string->abi-item "error Unauthorized(address who)"))
     (check-equal? (contract-abi-event d 'Moved) (string->abi-event "Moved(uint256 x)"))
     (check-equal? (file->contract-abi (artifact-path "Mover")) d))

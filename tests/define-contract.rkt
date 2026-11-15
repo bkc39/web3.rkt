@@ -317,6 +317,19 @@
                     "(define-contract c #:bytecode #\"\" #:bytecode #\"\")" 0)
       #s(syntax-row () "expected #:file or at least one item" "(define-contract c)" 0)))
 
+  (define clause-message-rows
+    '(#s(syntax-row (#:file "x.json" #:file "x.json") "too many #:file clauses" "#:file" 1)
+      #s(syntax-row (#:file "x.json" "function f()") "#:file excludes inline items" "\"function f()\"" 0)
+      #s(syntax-row ("function f()" #:bytecode #"" "function g()") "inline items come together"
+                    "\"function g()\"" 0)
+      #s(syntax-row ("function f()" #:frob 1)
+                    #<<MESSAGE
+expected an item string; expected (function name (parameter ...) option ...); expected (error ...), (event ...), (constructor ...), (fallback ...) or (receive); or expected one of these literals: #:bytecode, #:rename, or #:file
+MESSAGE
+                    "#:frob" 0)
+      #s(syntax-row ("function f()" #:rename x) "expected ([key rename-id] ...) after #:rename" "x" 0)
+      #s(syntax-row ("function f()" #:rename ([1 f-1])) "expected a key string" "1" 0)))
+
   (define (expand-program forms #:dir [dir #f])
     (define text
       (with-output-to-string
@@ -366,6 +379,14 @@
       (define-values (e text) (expand-program '((define-contract "c" "function f()"))))
       (check-srcloc e text "\"c\"" 0 "expected identifier")))
 
+  (test-case "misplaced, repeated and unknown clauses say what define-contract takes"
+    (with-temporary-directory (dir)
+      (call-with-output-file (build-path dir "x.json") (lambda (out) (write-string "[]" out)))
+      (for ([row (in-list clause-message-rows)])
+        (match-define (struct* syntax-row ([clauses clauses] [message message] [needle needle] [nth nth])) row)
+        (define-values (e text) (expand-program (list `(define-contract c ,@clauses)) #:dir dir))
+        (check-srcloc e text needle nth (string-append ": define-contract: " (regexp-quote message) "\n")))))
+
   (struct use-row (form message) #:prefab)
 
   (define use-definition
@@ -374,6 +395,7 @@
        "function transfer(address to, uint256 amount) returns (bool)"
        "function safeTransferFrom(address, address, uint256)"
        "function safeTransferFrom(address, address, uint256, bytes)"
+       "function g() view returns (uint256)"
        "constructor()"
        #:bytecode #"\x60\x80"))
 
@@ -381,7 +403,9 @@
     (define ns (fresh-namespace))
     (eval use-definition ns)
     (eval `(define A ,token-address) ns)
-    (for ([row (in-list '(#s(use-row (c-f) "^c-f: f takes 1 argument after the address; given 0")
+    (for ([row (in-list '(#s(use-row (c-f) "^c-f: the address is missing; f takes it, then 1 argument\n")
+                          #s(use-row (c-g) "^c-g: the address is missing; g takes it, then 0 arguments\n")
+                          #s(use-row (c-g A 1) "^c-g: g takes 0 arguments after the address; given 1\n")
                           #s(use-row (c-f A 1 2) "given 2")
                           #s(use-row (c-safe-transfer-from A 1 2)
                                      "takes 3 or 4 arguments after the address; given 2")
@@ -393,7 +417,7 @@
                           #s(use-row (c-deploy 1) "^c-deploy: takes 0 arguments; given 1")
                           #s(use-row (c-f A 1 #:from)
                                      "^c-f: expected more terms starting with a value after the keyword")
-                          #s(use-row (c-f A . 5) "#%app: bad syntax")
+                          #s(use-row (c-f A . 5) "^c-f: bad syntax\n")
                           #s(use-row (set! c-f 5) "cannot mutate")))])
       (match-define (struct* use-row ([form form] [message message])) row)
       (define e (syntax-error-of ns form))
@@ -401,7 +425,9 @@
       (when e
         (check-regexp-match (regexp message) (exn-message e) (format "~s" form))))
     (define-values (e text) (expand-program (list use-definition `(c-transfer ,token-address "x" 1 #:value 1))))
-    (check-srcloc e text "#:value" 0 "#:value is not allowed"))
+    (check-srcloc e text "#:value" 0 "#:value is not allowed")
+    (define-values (improper improper-text) (expand-program (list use-definition `(c-f ,token-address . 5))))
+    (check-srcloc improper improper-text (format "(c-f ~s . 5)" token-address) 0 ": c-f: bad syntax\n"))
 
   (test-case "bad values given to a bound procedure blame the module applying it"
     (check-blames-here (c-f 42 1))
@@ -467,7 +493,7 @@
     (eval '(define-contract c "function f(uint256 a) view returns (uint256)") ns)
     (define node (mock-provider (hash "eth_call" (hex-word 9))))
     (check-equal? (eval `(c-f ,token-address 1 #:provider ,node) ns) 9)
-    (check-regexp-match #rx"^c-f: f takes 1 argument after the address; given 0"
+    (check-regexp-match #rx"^c-f: the address is missing; f takes it, then 1 argument"
                         (exn-message (syntax-error-of ns '(c-f))))
     (with-temporary-directory (dir)
       (call-with-output-file (build-path dir "x.json")

@@ -44,6 +44,7 @@
 (define bare "Bare(uint256, string)")
 (define counted "Counted(uint256 indexed i)")
 (define moved "Moved(uint256 x)")
+(define moved-renamed "Moved(uint256 y)")
 (define note "Note(address indexed sender, uint256 value) anonymous")
 (define four "Four(uint256 indexed a, uint256 indexed b, uint256 indexed c, uint256 indexed d) anonymous")
 
@@ -65,6 +66,7 @@
     #s(known-topic ,bare "0x8cccb0c5b28f620a5e57ab28294c9328b43da0c2b64b1c4c4680b4f8a3d42d3c")
     #s(known-topic ,counted "0x15df0a6785153dfd625c8af51397704c7ddaff0690e5076243b5e52f4a0d5409")
     #s(known-topic ,moved "0x1dab0657949e41c2a7ccec8b1e070181e1281ff7669040728758fa9c81b6b7d9")
+    #s(known-topic ,moved-renamed "0x1dab0657949e41c2a7ccec8b1e070181e1281ff7669040728758fa9c81b6b7d9")
     #s(known-topic ,note #f)
     #s(known-topic ,four #f)))
 

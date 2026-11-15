@@ -1040,10 +1040,12 @@ are read.  Anything else raises @racket[exn:fail:web3:abi:type].
                                    #f])
          contract-abi?]{
 A contract's description: its items, in order, and the init code that
-deploys it, if known; empty bytecode is none.  An error or event listed
-twice, as solc lists one declared by two libraries, is kept once.  Two
-functions or errors with one signature, two events with one signature and
-as many indexed parameters, or two constructors, fallbacks or receives,
+deploys it, if known; empty bytecode is none.  Errors with one signature,
+and events with one signature, anonymity and indexed positions, are
+repeats, as solc lists one declared by two libraries under any parameter
+names; the first is kept.  Two functions with one signature, two events
+with one signature, anonymity and number of indexed parameters but
+different indexed positions, or two constructors, fallbacks or receives,
 raise @racket[exn:fail:web3:abi:type].
 
 @examples[#:eval abi-eval
@@ -1099,8 +1101,9 @@ A description from a JSON ABI (a list of items) or a compiled artifact with
 an @tt{abi}, as forge, solc, Hardhat and Truffle write them; the bytecode
 is read from the artifact's @tt{bytecode}, @tt{bytecode.object},
 @tt{evm.bytecode.object} or @tt{bin}, the first present and not
-@tt{null}.  Bytecode with unlinked library references, a bytecode key
-holding the wrong kind of value, and anything else raise
+@tt{null}.  Repeated and duplicate items are as for
+@racket[contract-abi].  Bytecode with unlinked library references, a
+bytecode key holding the wrong kind of value, and anything else raise
 @racket[exn:fail:web3:abi:type].}
 
 @defproc[(contract-abi->jsexpr [d contract-abi?]) (listof hash?)]{
@@ -1140,9 +1143,12 @@ returns its outputs as multiple values: one value per output, none for
 a @racket[contract-instance], @racket[function] may be a name, resolved by
 its number of arguments, and the instance's ABI errors, provider and sender
 are the defaults.  With an address, @racket[function] must be a signature,
-with its parentheses; a name is a contract violation.  A name or signature
-an instance's ABI does not hold, and a @racket[value] above 0 for a
-function that is not @tt{payable}, raise @racket[exn:fail:web3:abi].
+with its parentheses; a name is a contract violation.  An instance looks
+up names and signature strings in its ABI, and one it does not hold raises
+@racket[exn:fail:web3:abi]; an @racket[abi-signature] or
+@racket[abi-function] value is used as given.  A @racket[value] above 0
+for an @racket[abi-function], or a function looked up, that is not
+@tt{payable} raises @racket[exn:fail:web3:abi].
 
 @examples[#:eval contract-eval
           (define token "0x5FbDB2315678afecb367f032d93F642f64180aa3")

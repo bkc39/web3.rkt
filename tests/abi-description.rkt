@@ -22,6 +22,7 @@
   (struct form-row (string sexp) #:prefab)
   (struct canonical-row (input canonical) #:prefab)
   (struct position-row (input position) #:prefab)
+  (struct repeat-row (items kept) #:prefab)
 
 
   (define-syntax-parse-rule (check-type-error expr)
@@ -178,15 +179,27 @@
               ([_ (in-range depth)])
       (hasheq 'name "" 'type "tuple[2][]" 'components (list p))))
 
-  (test-case "deeply nested JSON tuples are read, printed and written in linear time"
-    (define j (list (hasheq 'type "function" 'name "f" 'inputs (list (nested-tuple 2000)) 'outputs '())))
-    (match (call-bounded (lambda ()
-                           (define d (jsexpr->contract-abi j))
-                           (define f (contract-abi-function d 'f))
-                           (list (string-length (abi-item->string f))
-                                 (equal? (jsexpr->contract-abi (contract-abi->jsexpr d)) d)
-                                 (equal? (sexp->abi-item (abi-item->sexp f)) f)
-                                 (string-length (format "~v" f))))
+  (define (nested-function depth)
+    (list (hasheq 'type "function" 'name "f" 'inputs (list (nested-tuple depth)) 'outputs '())))
+
+  (define (nested-round-trip j)
+    (define d (jsexpr->contract-abi j))
+    (define f (contract-abi-function d 'f))
+    (list (string-length (abi-item->string f))
+          (equal? (jsexpr->contract-abi (contract-abi->jsexpr d)) d)
+          (equal? (sexp->abi-item (abi-item->sexp f)) f)
+          (string-length (format "~v" f))))
+
+  (define (round-trip-milliseconds depth)
+    (define j (nested-function depth))
+    (for/fold ([best +inf.0]) ([_ (in-range 3)])
+      (collect-garbage)
+      (define start (current-inexact-milliseconds))
+      (nested-round-trip j)
+      (min best (- (current-inexact-milliseconds) start))))
+
+  (test-case "deeply nested JSON tuples are read, printed and written back"
+    (match (call-bounded (lambda () (nested-round-trip (nested-function 2000)))
                          #:seconds 2
                          #:megabytes 256)
       [(list 'ok (list length round-trip? sexp-round-trip? printed))
@@ -194,6 +207,16 @@
        (check-true round-trip?)
        (check-true sexp-round-trip?)
        (check-true (> printed 2000))]
+      [other (fail (format "~s" other))]))
+
+  (test-case "doubling a JSON tuple's nesting takes under 3.5 times as long to read, print and write"
+    (match (call-bounded (lambda ()
+                           (round-trip-milliseconds 1000)
+                           (list (round-trip-milliseconds 4000) (round-trip-milliseconds 8000)))
+                         #:seconds 10
+                         #:megabytes 512)
+      [(list 'ok (list single double))
+       (check-true (< double (* 3.5 single)) (format "~a ms at depth 4000, ~a ms at 8000" single double))]
       [other (fail (format "~s" other))]))
 
   (test-case "an s-expression that is not an item raises, naming the subform"
@@ -282,10 +305,11 @@
     (for ([items (in-list (list '("function f(uint256)" "function f(uint)")
                                 '("function f()" "function f()")
                                 '("function f(uint256)" (function f ([#f uint256]) #:view))
-                                '("error E(uint256 a)" "error E(uint256 b)")
-                                '("event E(uint256 indexed a)" "event E(uint256 indexed b)")
-                                '("event E(uint256 a)" "event E(uint256 a) anonymous"
-                                  "event E(uint256 b) anonymous")
+                                '("event E(uint256 indexed a, uint256 b)"
+                                  "event E(uint256 a, uint256 indexed b)")
+                                '("event E(uint256 a, uint256 b)"
+                                  "event E(uint256 indexed a, uint256 b) anonymous"
+                                  "event E(uint256 a, uint256 indexed b) anonymous")
                                 '("constructor()" "constructor(uint256)")
                                 '("fallback()" "fallback() payable")
                                 '("receive() payable" "receive() external payable")))])
@@ -306,6 +330,35 @@
     (check-false (contract-abi-bytecode (contract-abi '() #:bytecode #"")))
     (check-false (contract-abi-bytecode (contract-abi '() #:bytecode "0x")))
     (check-equal? (contract-abi-bytecode (contract-abi '() #:bytecode "0x60aB")) #"\x60\xab"))
+
+  (define repeat-rows
+    '(#s(repeat-row ("error Unauthorized(address who)" "error Unauthorized(address caller)")
+                    ("error Unauthorized(address who)"))
+      #s(repeat-row ("event Moved(uint256 x)" "event Moved(uint256 y)")
+                    ("event Moved(uint256 x)"))
+      #s(repeat-row ("event E(uint256 indexed a, uint256 b)" "event E(uint256 indexed c, uint256 d)")
+                    ("event E(uint256 indexed a, uint256 b)"))
+      #s(repeat-row ("event E(uint256 a) anonymous" "event E(uint256 b) anonymous")
+                    ("event E(uint256 a) anonymous"))
+      #s(repeat-row ("event E(uint256 a)" "event E(uint256 b) anonymous")
+                    ("event E(uint256 a)" "event E(uint256 b) anonymous"))
+      #s(repeat-row ("event E(uint256 indexed a, uint256 b)" "event E(uint256 c, uint256 d)")
+                    ("event E(uint256 indexed a, uint256 b)" "event E(uint256 c, uint256 d)"))))
+
+  (test-case "repeated errors and events are kept once whatever their parameter names"
+    (for ([row (in-list repeat-rows)])
+      (match-define (struct* repeat-row ([items items] [kept kept])) row)
+      (define expected (map string->abi-item kept))
+      (check-equal? (contract-abi-items (contract-abi items)) expected (format "~s" items))
+      (check-equal? (contract-abi-items (jsexpr->contract-abi (map abi-item->jsexpr items)))
+                    expected
+                    (format "~s" items))))
+
+  (test-case "events told apart only by their indexed positions raise from JSON too"
+    (define items '("event E(uint256 indexed a, uint256 b)" "event E(uint256 a, uint256 indexed b)"))
+    (check-regexp-match #rx"item 1: duplicate event E[(]uint256,uint256[)]"
+                        (exn-message (raised-type-error
+                                      (lambda () (jsexpr->contract-abi (map abi-item->jsexpr items)))))))
 
   (define overloaded
     (contract-abi '("function safeTransferFrom(address from, address to, uint256 id)"

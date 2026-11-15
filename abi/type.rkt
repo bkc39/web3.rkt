@@ -119,7 +119,7 @@
 
 (define (type-label t)
   (if (list? t)
-      (format "(~a)" (string-join (map type->string t) ","))
+      (written (lambda (out) (write-types t out)))
       (type->string t)))
 
 (define (path-label path)
@@ -273,18 +273,33 @@
 
 ;;;; writing types
 
-(define (type->string t)
+(define (write-type t out)
   (match t
-    [(struct* abi-uint ([bits n])) (format "uint~a" n)]
-    [(struct* abi-int ([bits n])) (format "int~a" n)]
-    [(struct* abi-address ()) "address"]
-    [(struct* abi-bool ()) "bool"]
-    [(struct* abi-fixed-bytes ([size n])) (format "bytes~a" n)]
-    [(struct* abi-bytes ()) "bytes"]
-    [(struct* abi-string ()) "string"]
-    [(struct* abi-array ([element e])) (format "~a[]" (type->string e))]
-    [(struct* abi-fixed-array ([element e] [length k])) (format "~a[~a]" (type->string e) k)]
-    [(struct* abi-tuple ([components cs])) (format "(~a)" (string-join (map type->string cs) ","))]))
+    [(struct* abi-uint ([bits n])) (fprintf out "uint~a" n)]
+    [(struct* abi-int ([bits n])) (fprintf out "int~a" n)]
+    [(struct* abi-address ()) (write-string "address" out)]
+    [(struct* abi-bool ()) (write-string "bool" out)]
+    [(struct* abi-fixed-bytes ([size n])) (fprintf out "bytes~a" n)]
+    [(struct* abi-bytes ()) (write-string "bytes" out)]
+    [(struct* abi-string ()) (write-string "string" out)]
+    [(struct* abi-array ([element e])) (write-type e out) (write-string "[]" out)]
+    [(struct* abi-fixed-array ([element e] [length k])) (write-type e out) (fprintf out "[~a]" k)]
+    [(struct* abi-tuple ([components cs])) (write-types cs out)]))
+
+(define (write-types ts out)
+  (write-string "(" out)
+  (for ([t (in-list ts)] [i (in-naturals)])
+    (unless (zero? i) (write-string "," out))
+    (write-type t out))
+  (write-string ")" out))
+
+(define (written write)
+  (define out (open-output-string))
+  (write out)
+  (get-output-string out))
+
+(define (type->string t)
+  (written (lambda (out) (write-type t out))))
 
 (define (type->sexp t)
   (match t
@@ -295,11 +310,11 @@
 
 (define (abi-signature->string sig #:outputs? [outputs? #f])
   (match-define (struct* abi-signature ([name name] [inputs inputs] [outputs outputs])) sig)
-  (define (types->string ts)
-    (format "(~a)" (string-join (map type->string ts) ",")))
-  (if (and outputs? outputs)
-      (format "~a~a~a" name (types->string inputs) (types->string outputs))
-      (format "~a~a" name (types->string inputs))))
+  (written (lambda (out)
+             (write-string name out)
+             (write-types inputs out)
+             (when (and outputs? outputs)
+               (write-types outputs out)))))
 
 ;;;; layout
 

@@ -28,6 +28,7 @@
          rename-clause
          solidity-name->racket-name
          source
+         source-conflict
          syntax->abi-item)
 
 (define (solidity-name->racket-name name)
@@ -122,6 +123,7 @@
                                       (keyword->mutability #'mutability))))
 
 (define-syntax-class other-clause
+  #:description "(error ...), (event ...), (constructor ...), (fallback ...) or (receive)"
   #:attributes (item)
   (pattern ((~datum error) name:solidity-name inputs:parameters)
            #:do [(define-values (duplicate reason)
@@ -187,7 +189,7 @@
 (define-syntax-class item-clause
   #:description "an item"
   #:attributes (item)
-  (pattern s:str
+  (pattern (~describe #:opaque "an item string" s:str)
            #:do [(define-values (parsed at reason) (string-clause #'s))]
            #:fail-when at reason
            #:attr item parsed)
@@ -249,10 +251,23 @@
            #:attr description d
            #:attr where where))
 
+(define (file-start? start)
+  (eq? (syntax-e start) '#:file))
+
+(define (source-conflict starts)
+  (match starts
+    [(list first second _ ...)
+     (values second
+             (cond
+               [(and (file-start? first) (file-start? second)) "too many #:file clauses"]
+               [(or (file-start? first) (file-start? second)) "#:file excludes inline items"]
+               [else "inline items come together"]))]
+    [_ (values #f #f)]))
+
 (define-syntax-class rename-clause
-  #:description "[key identifier]"
+  #:description "[key rename-id]"
   #:attributes (key new)
-  (pattern [key:str new:id]))
+  (pattern [(~describe #:opaque "a key string" key:str) new:id]))
 
 (struct overload (arity mutability) #:prefab)
 
@@ -404,26 +419,29 @@
     self)
   (define (refuse at message)
     (raise-syntax-error name message stx at))
-  (when (syntax->list stx)
-    (syntax-parse stx
-      [(_ arg:argument ...)
-       #:do [(define keywords (filter values (attribute arg.keyword)))
-             (define positional (- (length (attribute arg.keyword)) (length keywords)))
-             (define given (if deploy? positional (max 0 (sub1 positional))))
-             (define chosen (findf (lambda (o) (= (overload-arity o) given)) overloads))]
-       #:fail-when (and (or (not chosen) (and (not deploy?) (zero? positional))) stx)
-       (arity-message what (map overload-arity overloads) given #:deploy? deploy?)
-       #:do [(define mutability (overload-mutability chosen))
-             (define allowed
-               (if deploy?
-                   (deploy-keywords (eq? mutability 'payable))
-                   (function-keywords mutability)))]
-       (for ([kw (in-list keywords)]
-             #:unless (memq (syntax-e kw) allowed))
-         (refuse kw (keyword-message (if deploy? "the constructor" what)
-                                     (if deploy? "not payable" mutability)
-                                     (syntax-e kw)
-                                     allowed)))])))
+  (syntax-parse stx
+    [(_ . (~not (_ ...))) (refuse #f "bad syntax")]
+    [(_ arg:argument ...)
+     #:do [(define keywords (filter values (attribute arg.keyword)))
+           (define positional (- (length (attribute arg.keyword)) (length keywords)))
+           (define given (cond
+                           [deploy? positional]
+                           [(zero? positional) #f]
+                           [else (sub1 positional)]))
+           (define chosen (and given (findf (lambda (o) (= (overload-arity o) given)) overloads)))]
+     #:fail-unless chosen
+     (arity-message what (map overload-arity overloads) given #:deploy? deploy?)
+     #:do [(define mutability (overload-mutability chosen))
+           (define allowed
+             (if deploy?
+                 (deploy-keywords (eq? mutability 'payable))
+                 (function-keywords mutability)))]
+     (for ([kw (in-list keywords)]
+           #:unless (memq (syntax-e kw) allowed))
+       (refuse kw (keyword-message (if deploy? "the constructor" what)
+                                   (if deploy? "not payable" mutability)
+                                   (syntax-e kw)
+                                   allowed)))]))
 
 (struct bound-procedure-info (reference name solidity overloads deploy?)
   #:property prop:set!-transformer

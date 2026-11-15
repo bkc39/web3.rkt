@@ -1,7 +1,6 @@
 #lang racket/base
 
 (require (for-syntax racket/base
-                     (only-in racket/match match)
                      racket/provide-transform
                      syntax/parse
                      "../abi/description.rkt"
@@ -209,16 +208,15 @@
                          #:name "#:bytecode clause"
                          #:too-many "too many #:bytecode clauses"
                          #:defaults ([bytecode? #f]))
-              (~optional (~seq #:rename (rename:rename-clause ...))
+              (~optional (~seq #:rename (~describe "([key rename-id] ...) after #:rename"
+                                                   (rename:rename-clause ...)))
                          #:name "#:rename clause"
                          #:too-many "too many #:rename clauses"
                          #:defaults ([(rename 1) '()])))
         ...)
      #:fail-when (null? (attribute src.start)) "expected #:file or at least one item"
-     #:fail-when (match (attribute src.start)
-                   [(list _ second _ ...) second]
-                   [_ #f])
-                 "#:file excludes inline items, and inline items come together"
+     #:do [(define-values (second-source reason) (source-conflict (attribute src.start)))]
+     #:fail-when second-source reason
      #:do [(define d (car (attribute src.description)))
            (define deploy? (or (attribute bytecode?) (and (contract-abi-bytecode d) #t)))
            (define bindings

@@ -204,6 +204,27 @@
     (check-equal? (format "~v" (contract-instance (contract-abi '()) token))
                   "#<contract-instance 0x5FbDB2315678afecb367f032d93F642f64180aa3>"))
 
+  (test-case "a signature or function value given to an instance is sent as given, unlooked-up"
+    (define reply (hash "eth_call" (hex-word 7)))
+    (define by-address
+      (traffic reply (lambda () (contract-call token "zz(uint256)(uint256)" 1 #:block 7))))
+    (check-equal? by-address
+                  (list '(7) (list (list "eth_call"
+                                         (hasheq 'to token
+                                                 'data (bytes->hex-string (encode-call "zz(uint256)" 1)))
+                                         "0x7"))))
+    (for ([f (list (string->abi-signature "zz(uint256)(uint256)")
+                   (string->abi-item "function zz(uint256) view returns (uint256)"))])
+      (check-equal? (traffic reply (lambda () (contract-call instance f 1 #:block 7))) by-address))
+    (define (send target f)
+      (traffic (sending) (lambda () (contract-send target f anvil-bob 10 #:from anvil-alice #:value 5))))
+    (define sent (send token "transfer(address,uint256)"))
+    (check-equal? (first sent) (list mined))
+    (check-equal? (send instance (string->abi-signature "transfer(address,uint256)")) sent)
+    (check-exn #rx"^contract-send: zz is nonpayable; #:value must be 0$"
+               (lambda () (contract-send instance (string->abi-item "function zz(uint256)") 1
+                                         #:from anvil-alice #:value 5))))
+
   (struct refusal-row (thunk message) #:prefab)
 
   (test-case "names an instance cannot resolve, and values they refuse, raise under the operation"
