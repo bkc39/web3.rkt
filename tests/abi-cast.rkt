@@ -27,6 +27,10 @@
     [(not cast-path)
      (displayln "skipping cast differential: cast not found")]
     [else
+     (test-case "cast --packed still left-pads array elements"
+       (check-equal? (run-cast "abi-encode" "--packed" "--" "f(int8[])" "[-1]")
+                     (string-append "0x" (make-string 62 #\0) "ff")))
+
      (test-case "D-a committed vectors agree with cast"
        (for ([v (in-list abi-encode-vectors)])
          (check-equal? (cast-encode (abi-vector-mode v) (abi-vector-signature v) (abi-vector-values v))

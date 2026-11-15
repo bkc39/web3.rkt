@@ -631,7 +631,9 @@ does not fit in 256 bits.}
 Reads @racket[bs] as consecutive 32-byte big-endian words.  A trailing
 chunk shorter than 32 bytes is read as a number on its own.}
 
-@subsection{Errors}
+@subsection[#:tag "abi-errors"]{Errors}
+
+@declare-exporting[web3/abi/type web3/abi]
 
 @defstruct*[(exn:fail:web3:abi exn:fail:web3) ()]{
 Raised for ABI failures.}
@@ -647,6 +649,8 @@ indexes a string @racket[input].}
              [path (listof exact-nonnegative-integer?)])]{
 A value that does not fit @racket[type]; @racket[path] is the argument
 index followed by element and component indices.}
+
+@subsection{Revert Reasons}
 
 @defproc[(decode-revert-reason [data bytes?]) (or/c string? #f)]{
 A readable form of a revert payload encoded as @tt{Error(string)} or

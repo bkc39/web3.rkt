@@ -121,7 +121,8 @@
     (for ([x (in-list sexp-rejections)])
       (check-raises-type x #f (sexp->abi-type x))
       (check-raises-type x #f (abi-type x)))
-    (check-exn #rx"\"uint256\"" (lambda () (abi-type '(array "uint256")))))
+    (check-exn #rx"^abi-type: not an ABI type: \\(array \"uint256\"\\)\n  form: \"uint256\"$"
+               (lambda () (abi-type '(array "uint256")))))
 
   (test-case "T7 contract blame"
     (check-blames-here (abi-type 42))
@@ -200,6 +201,7 @@
   (test-case "T9 phase-1 safety"
     (check-equal? (canonical (array (tuple address uint))) "(address,uint256)[]")
     (define names (filter values (map module-name (import-closure 'web3/abi/type))))
+    (check-not-false (member "racket/contract/base" names))
     (check-equal? (filter (lambda (n) (member (collection n) '("ffi" "net" "json" "file" "keccak")))
                           names)
                   '())
@@ -215,9 +217,9 @@
                                        (module-path-index-resolve
                                         (module-path-index-join 'web3/abi/type #f) #t)))))])
       (check-not-false (member name allowed) name))
-    (check-equal? (filter (lambda (n) (member (collection n) '("net" "json")))
-                          (filter values (map module-name (import-closure 'web3/abi))))
-                  '()))
+    (define abi-names (filter values (map module-name (import-closure 'web3/abi))))
+    (check-not-false (member "keccak/main" abi-names))
+    (check-equal? (filter (lambda (n) (member (collection n) '("net" "json"))) abi-names) '()))
 
   (test-case "T10 signatures"
     (define transfer (string->abi-signature "transfer(address,uint256)"))
@@ -268,5 +270,6 @@
     (check-true (abi-value? "(uint8,string)[]" '((1 "a") (2 "b"))))
     (check-true (abi-value? 'address "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"))
     (check-equal? (format "~s" (contract-name (abi-value/c "uint8"))) "(abi-value/c \"uint8\")")
+    (check-equal? (format "~v" (abi-value/c 'uint8)) "(abi-value/c \"uint8\")")
     (check-true ((abi-value/c "uint8") 255))
     (check-false ((abi-value/c "uint8") 256))))

@@ -10,9 +10,10 @@
          (only-in web3/rpc bytes->hex-string))
 
 (provide cast-path
-         value->cast-argument
          cast-version
-         cast-encode)
+         cast-encode
+         run-cast
+         value->cast-argument)
 
 (define cast-path
   (let ([env (getenv "WEB3_CAST")])
@@ -43,8 +44,11 @@
 (define (join-arguments types vs)
   (string-join (map (lambda (t v) (value->cast-argument t v #f)) types vs) ","))
 
+;; Arguments go as UTF-8 bytes: as strings they would be converted through
+;; the locale, which in a build sandbox turns non-ASCII into "?".
 (define (run-cast . args)
-  (define-values (process out in err) (apply subprocess #f #f #f cast-path args))
+  (define-values (process out in err)
+    (apply subprocess #f #f #f cast-path (map string->bytes/utf-8 args)))
   (close-output-port in)
   (define stdout (port->string out))
   (define stderr (port->string err))
@@ -60,6 +64,27 @@
     [(list _ version) version]
     [#f "(unknown version)"]))
 
+;; cast's --packed left-pads array elements without sign extension, where
+;; solc pads each element as in the standard encoding; packed arrays go
+;; through cast's standard mode instead.
+(define (packed-argument-hex t v)
+  (define element
+    (cond
+      [(abi-array? t) (abi-array-element t)]
+      [(abi-fixed-array? t) (abi-fixed-array-element t)]
+      [else #f]))
+  (define hex
+    (cond
+      [element
+       (define signature
+         (format "f(~a)" (string-join (make-list (length v) (abi-type->string element)) ",")))
+       (apply run-cast "abi-encode" "--" signature
+              (map (lambda (x) (value->cast-argument element x)) v))]
+      [else
+       (run-cast "abi-encode" "--packed" "--" (format "f(~a)" (abi-type->string t))
+                 (value->cast-argument t v))]))
+  (substring hex 2))
+
 ;; mode is 'encode, 'packed or 'call; signature is "name(T,...)".
 (define (cast-encode mode signature vs)
   (define inputs (abi-signature-inputs (string->abi-signature signature)))
@@ -67,5 +92,5 @@
   (string-downcase
    (match mode
      ['encode (apply run-cast "abi-encode" "--" signature arguments)]
-     ['packed (apply run-cast "abi-encode" "--packed" "--" signature arguments)]
+     ['packed (string-append "0x" (apply string-append (map packed-argument-hex inputs vs)))]
      ['call (apply run-cast "calldata" "--" signature arguments)])))
