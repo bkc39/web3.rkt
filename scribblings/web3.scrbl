@@ -248,7 +248,7 @@ put a reverting call's return data in @racket[data] as a hex string.
 
 @racketblock[
 (with-handlers ([exn:fail:web3:rpc?
-                 (lambda (e) (abi-revert->string (rpc-exn->revert e)))])
+                 (lambda (e) (abi-revert->string (or (rpc-exn->revert e) (raise e))))])
   (eth-call (hasheq 'to contract 'data "0x") "latest"))
 ]}
 
@@ -582,6 +582,9 @@ A function: @racket[name] is a Solidity identifier and @racket[outputs]
 is @racket[#f] when not given.  The constructor converts the types with
 @racket[abi-type].}
 
+@defthing[abi-signature-spec/c flat-contract?]{
+A signature struct or a string read by @racket[string->abi-signature].}
+
 @defproc[(string->abi-signature [s string?]) abi-signature?]{
 Reads @racket["name(T,...)"] or, with outputs,
 @racket["name(T,...)(U,...)"].}
@@ -632,7 +635,7 @@ Tuples, nested arrays and arrays of dynamic types raise
 @examples[#:eval abi-eval
           (bytes->hex-string (abi-encode-packed '(uint16 bytes1 string) (list 1 #"A" "hi")))]}
 
-@defproc[(encode-call [signature (or/c string? abi-signature?)] [v any/c] ...) bytes?]{
+@defproc[(encode-call [signature abi-signature-spec/c] [v any/c] ...) bytes?]{
 Call data: the selector of @racket[signature] and the encoding of the
 @racket[v]s as its inputs.  Outputs in @racket[signature] are ignored.
 
@@ -673,15 +676,15 @@ The values @racket[data] encodes as @racket[types].
           (abi-decode '(address) (abi-encode '(address) '("0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed")))
           (eval:error (abi-decode '(uint8) (word->bytes 256)))]}
 
-@defproc[(decode-result [signature (or/c string? abi-signature?)] [data bytes?]) list?]{
-@racket[data], as returned by @racket[eth-call], decoded as the outputs of
-@racket[signature].  Raises @racket[exn:fail:web3:abi:type] when
+@defproc[(decode-result [signature abi-signature-spec/c] [data bytes?]) list?]{
+@racket[data] decoded as the outputs of @racket[signature]; for the hex
+string @racket[eth-call] returns, pass @racket[(hex-string->bytes result)].  Raises @racket[exn:fail:web3:abi:type] when
 @racket[signature] has no outputs.
 
 @examples[#:eval abi-eval
           (decode-result "balanceOf(address)(uint256)" (word->bytes 1000))]}
 
-@defproc[(decode-call [signature (or/c string? abi-signature?)] [data bytes?]) list?]{
+@defproc[(decode-call [signature abi-signature-spec/c] [data bytes?]) list?]{
 The arguments in call data for @racket[signature]; the inverse of
 @racket[encode-call].  A different selector raises
 @racket[exn:fail:web3:abi:decode] with reason @racket['selector].
@@ -701,22 +704,24 @@ errors are passed as signatures.
                         [arguments list?]
                         [data bytes?])
             #:transparent]{
-A decoded revert.  @racket[signature] is @racket[#f], and
-@racket[arguments] is @racket['()], when the selector is not recognised
-or @racket[data] is shorter than four bytes.}
+A decoded revert.  When @racket[signature] is an @racket[abi-signature],
+@racket[arguments] must be values of its inputs, one for each, or the
+constructor raises a contract violation.  @racket[signature] is
+@racket[#f], and @racket[arguments] is @racket['()], when the selector is
+not recognised or @racket[data] is shorter than four bytes.}
 
 @deftogether[(@defproc[(abi-revert-name [r abi-revert?]) (or/c #f string?)]
               @defproc[(abi-revert-selector [r abi-revert?]) (or/c #f bytes?)])]{
 The name of the error, and the first four bytes of its data.}
 
-@defproc[(error-selector [signature (or/c string? abi-signature?)]) bytes?]{
+@defproc[(error-selector [signature abi-signature-spec/c]) bytes?]{
 The selector of a custom error.
 
 @examples[#:eval abi-eval
           (bytes->hex-string (error-selector "InsufficientBalance(uint256,uint256)"))]}
 
 @defproc[(decode-revert [data bytes?]
-                        [#:errors errors (listof (or/c string? abi-signature?)) '()])
+                        [#:errors errors (listof abi-signature-spec/c) '()])
          abi-revert?]{
 Decodes revert @racket[data] against the built-in errors and
 @racket[errors].  An unrecognised selector is not an error.  Two
@@ -741,7 +746,7 @@ What a Solidity panic code means, or @racket[#f].
           (panic-description #x32)]}
 
 @defproc[(rpc-exn->revert [e exn:fail:web3:rpc?]
-                          [#:errors errors (listof (or/c string? abi-signature?)) '()])
+                          [#:errors errors (listof abi-signature-spec/c) '()])
          (or/c #f abi-revert?)]{
 The revert carried by @racket[e]'s @racket[data]: a hex string,
 @racket["Reverted 0x..."], or an object whose @tt{data} is one of those.
@@ -751,12 +756,12 @@ not decode is returned unrecognised.
 
 @examples[#:eval abi-eval
           (with-handlers ([exn:fail:web3:rpc?
-                           (lambda (e) (abi-revert->string (rpc-exn->revert e)))])
+                           (lambda (e) (abi-revert->string (or (rpc-exn->revert e) (raise e))))])
             (raise-rpc-error "eth_call" 3 "execution reverted"
                              (bytes->hex-string (encode-call "Error(string)" "oops!"))))]}
 
 @defproc[(rpc-exn->revert-exn [e exn:fail:web3:rpc?]
-                              [#:errors errors (listof (or/c string? abi-signature?)) '()])
+                              [#:errors errors (listof abi-signature-spec/c) '()])
          (or/c #f exn:fail:web3:rpc:revert?)]{
 @racket[e] as an @racket[exn:fail:web3:rpc:revert], for re-raising, or
 @racket[#f].}
@@ -819,8 +824,12 @@ but need not be canonical.}
                                [signature string?]
                                [hex string?]
                                [reason symbol?]
-                               [offset exact-nonnegative-integer?])]{
-Bytes that do not decode as the inputs of @racket[signature].
+                               [offset exact-nonnegative-integer?]
+                               [type (or/c string? (listof string?))])]{
+Bytes that do not decode as the inputs of @racket[signature]: decoding
+raises @racket[exn:fail:web3:abi:decode] with @racket[reason] at
+@racket[offset], and the type there is @racket[type], or the list of
+input types when the whole head is short.
 @racket['overlap] and @racket['utf-8] rows are this library's rules;
 Solidity's decoder accepts them.}
 

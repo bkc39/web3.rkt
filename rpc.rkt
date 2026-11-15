@@ -329,10 +329,10 @@
 
 (define/contract (hex-string->bytes s)
   (-> string? bytes?)
-  (define h (if (string-prefix? s "0x") (substring s 2) s))
+  (define h (if (string-prefix? s "0x") s (string-append "0x" s)))
   (unless (even? (string-length h))
     (raise-argument-error 'hex-string->bytes "hex string of even length" s))
-  (hex-digits->bytes h))
+  (hex->bytes h))
 
 (module+ test
   (check-equal? (hex-string->number "0x2") 2)

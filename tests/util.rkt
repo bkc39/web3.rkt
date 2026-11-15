@@ -8,10 +8,13 @@
          rackunit
          syntax/parse/define
          web3/abi
+         (only-in (submod web3/abi/type private) map-abi-value)
          web3/address
          (only-in web3/rpc bytes->hex-string))
 
-(provide check-blames-here
+(provide alice
+         alice-checksummed
+         check-blames-here
          check-decode-error
          check-decoded
          checksummed
@@ -19,11 +22,28 @@
          decode-error
          decoded-size
          encode-hex
+         insufficient-balance
+         max-word
+         seeded
          signature-inputs
          signature-string
-         widths)
+         widths
+         word)
 
 (define widths (range 8 257 8))
+
+(define max-word (sub1 (expt 2 256)))
+
+(define alice "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed")
+(define alice-checksummed "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed")
+
+(define insufficient-balance "InsufficientBalance(uint256,uint256)")
+
+(define (word n)
+  (word->bytes n))
+
+(define (seeded . seed)
+  (vector->pseudo-random-generator (list->vector seed)))
 
 (define (signature-string name inputs [outputs #f])
   (abi-signature->string (abi-signature name inputs outputs) #:outputs? #t))
@@ -53,13 +73,7 @@
 
 ;; v with f applied to every address in it.
 (define (map-addresses f type v)
-  (let loop ([t (abi-type type)] [v v])
-    (match t
-      [(struct* abi-address ()) (f v)]
-      [(or (struct* abi-array ([element e])) (struct* abi-fixed-array ([element e])))
-       (map (lambda (x) (loop e x)) v)]
-      [(struct* abi-tuple ([components cs])) (map loop cs v)]
-      [_ v])))
+  (map-abi-value (lambda (t x) (if (abi-address? t) (f x) x)) (abi-type type) v))
 
 ;; vs with every address in its EIP-55 form, as the decoders return them.
 (define (checksummed types vs)

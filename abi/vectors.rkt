@@ -16,7 +16,8 @@
                                      [signature string?]
                                      [hex string?]
                                      [reason symbol?]
-                                     [offset exact-nonnegative-integer?]))
+                                     [offset exact-nonnegative-integer?]
+                                     [type (or/c string? (listof string?))]))
           [abi-encode-vectors (listof abi-vector?)]
           [abi-decode-vectors (listof abi-vector?)]
           [abi-reject-vectors (listof abi-reject-vector?)]))
@@ -25,7 +26,7 @@
 (define-runtime-path decode-path "vectors/decode.rktd")
 
 (struct abi-vector (mode name signature values hex) #:transparent)
-(struct abi-reject-vector (name signature hex reason offset) #:transparent)
+(struct abi-reject-vector (name signature hex reason offset type) #:transparent)
 
 (define (read-rows path)
   (call-with-input-file path (lambda (in) (port->list read in))))
@@ -33,8 +34,9 @@
 (define abi-encode-vectors
   (map (curry apply abi-vector) (read-rows encode-path)))
 
-(define-values (abi-decode-vectors abi-reject-vectors)
-  (let-values ([(decode reject)
-                (partition (lambda (row) (eq? (car row) 'decode)) (read-rows decode-path))])
-    (values (map (curry apply abi-vector) decode)
-            (map (lambda (row) (apply abi-reject-vector (cdr row))) reject))))
+(define-values (decode-rows reject-rows)
+  (partition (lambda (row) (eq? (car row) 'decode)) (read-rows decode-path)))
+
+(define abi-decode-vectors (map (curry apply abi-vector) decode-rows))
+
+(define abi-reject-vectors (map (lambda (row) (apply abi-reject-vector (cdr row))) reject-rows))

@@ -18,27 +18,25 @@
       (eth-call (hasheq 'to reverter 'data (bytes->hex-string payload)) "latest")
       #f))
 
-  (cond
-    [(not (current-anvil-path))
-     (displayln "skipping anvil revert tests: anvil not found (set WEB3_ANVIL or use `nix develop`)")]
-    [else
-     (with-anvil ()
-       (anvil-set-code reverter echo-revert)
+  (if (current-anvil-path)
+      (with-anvil ()
+        (anvil-set-code reverter echo-revert)
 
-       (test-case "a revert from anvil decodes as its payload does"
-         (for ([row (in-list reverts)])
-           (match-define (list payload errors _ _ string) row)
-           (define e (revert-exn payload))
-           (check-pred exn:fail:web3:rpc? e string)
-           (check-equal? (rpc-exn->revert e #:errors errors) (decode-revert payload #:errors errors)
-                         string))
-         (check-equal? (abi-revert->string (rpc-exn->revert (revert-exn #""))) "no revert data"))
+        (test-case "a revert from anvil decodes as its payload does"
+          (for ([c (in-list reverts)])
+            (match-define (struct* revert-case ([payload payload] [errors errors] [display display])) c)
+            (define e (revert-exn payload))
+            (check-pred exn:fail:web3:rpc? e display)
+            (check-equal? (rpc-exn->revert e #:errors errors) (decode-revert payload #:errors errors)
+                          display))
+          (check-equal? (abi-revert->string (rpc-exn->revert (revert-exn #""))) "no revert data"))
 
-       (test-case "anvil describes panics as panic-description does"
-         (for ([row (in-list panics)])
-           (match-define (list code _) row)
-           (define e (revert-exn (encode-call "Panic(uint256)" code)))
-           (check-equal? (exn:fail:web3:rpc-rpc-message e)
-                         (format "execution reverted: panic: ~a (0x~a)"
-                                 (panic-description code)
-                                 (~r code #:base 16 #:min-width 2 #:pad-string "0"))))))]))
+        (test-case "anvil describes panics as panic-description does"
+          (for ([row (in-list panics)])
+            (match-define (list code _) row)
+            (define e (revert-exn (encode-call "Panic(uint256)" code)))
+            (check-equal? (exn:fail:web3:rpc-rpc-message e)
+                          (format "execution reverted: panic: ~a (0x~a)"
+                                  (panic-description code)
+                                  (~r code #:base 16 #:min-width 2 #:pad-string "0"))))))
+      (displayln "skipping anvil revert tests: anvil not found (set WEB3_ANVIL or use `nix develop`)")))

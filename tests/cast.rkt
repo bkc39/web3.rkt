@@ -7,6 +7,7 @@
          racket/port
          racket/string
          web3/abi
+         (only-in (submod web3/abi/type private) map-abi-value)
          (only-in web3/rpc bytes->hex-string)
          "util.rkt")
 
@@ -95,14 +96,14 @@
 ;; cast --json writes integers of up to 64 bits as numbers and wider ones
 ;; as decimal strings.
 (define (value->cast-json type v)
-  (match (abi-type type)
-    [(or (struct* abi-uint ([bits n])) (struct* abi-int ([bits n])))
-     (if (<= n 64) v (number->string v))]
-    [(or (struct* abi-bytes ()) (struct* abi-fixed-bytes ())) (bytes->hex-string v)]
-    [(or (struct* abi-array ([element e])) (struct* abi-fixed-array ([element e])))
-     (map (curry value->cast-json e) v)]
-    [(struct* abi-tuple ([components cs])) (map value->cast-json cs v)]
-    [_ v]))
+  (map-abi-value (lambda (t x)
+                   (match t
+                     [(or (struct* abi-uint ([bits n])) (struct* abi-int ([bits n])))
+                      (if (<= n 64) x (number->string x))]
+                     [(or (struct* abi-bytes ()) (struct* abi-fixed-bytes ())) (bytes->hex-string x)]
+                     [_ x]))
+                 (abi-type type)
+                 v))
 
 ;; The values cast decodes from hex, as JSON: the outputs of "f()(T,...)"
 ;; in mode 'result, the inputs of a signature in mode 'call.

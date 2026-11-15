@@ -26,10 +26,9 @@
   (define (word n) (word->bytes n))
   (define (encode1 t v) (abi-encode (list t) (list v)))
   (define (packed1 t v) (abi-encode-packed (list t) (list v)))
-  (define (seeded) (vector->pseudo-random-generator (vector 7 7 7 7 7 7)))
 
   (test-case "static encodings have the static size"
-    (define prng (seeded))
+    (define prng (seeded 7 7 7 7 7 7))
     (for ([_ (in-range 300)])
       (define t (random-abi-type prng #:static? #t))
       (define v (random-abi-value prng t))
@@ -92,7 +91,7 @@
     (check-equal? (encode1 'string s) (encode1 'bytes (string->bytes/utf-8 s))))
 
   (test-case "arrays encode as tuples"
-    (define prng (seeded))
+    (define prng (seeded 7 7 7 7 7 7))
     (for ([_ (in-range 200)])
       (define t (random-abi-type prng #:max-depth 2))
       (define k (add1 (random 3 prng)))
@@ -104,7 +103,7 @@
                                   (abi-encode (make-list (length ys) t) ys)))))
 
   (test-case "the argument list encodes as a tuple"
-    (define prng (seeded))
+    (define prng (seeded 7 7 7 7 7 7))
     (for ([_ (in-range 200)])
       (define ts (random-abi-types prng))
       (define vs (map (lambda (t) (random-abi-value prng t)) ts))

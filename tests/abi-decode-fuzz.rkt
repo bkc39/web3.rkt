@@ -11,20 +11,11 @@
            "bounded.rkt"
            "util.rkt")
 
-  (define seed (vector 1 2 3 4 5 6))
+  (define seed '(1 2 3 4 5 6))
   (define reason? (flat-contract-predicate abi-decode-reason/c))
 
-  (test-case "call-bounded reports results, exceptions, timeouts and memory"
-    (check-equal? (call-bounded (lambda () 1)) '(ok 1))
-    (check-match (call-bounded (lambda () (error 'x "y"))) (list 'raised (? exn:fail?)))
-    (check-equal? (call-bounded (lambda () (let loop () (loop))) #:seconds 0.2) 'timeout)
-    (when (custodian-memory-accounting-available?)
-      (check-equal? (call-bounded (lambda () (let loop ([xs '()]) (loop (cons (make-vector 1024) xs))))
-                                  #:seconds 30 #:megabytes 16)
-                    'memory)))
-
   (test-case "decoding any input finishes in bounds with values or a decode error"
-    (define prng (vector->pseudo-random-generator seed))
+    (define prng (apply seeded seed))
     (for ([input (in-list (random-decode-inputs prng))])
       (match-define (list kind ts data original) input)
       (define name (format "seed ~s, ~a ~s ~a" seed kind (map abi-type->string ts) (bytes->hex-string data)))

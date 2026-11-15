@@ -69,6 +69,13 @@
           (check-equal? (exn-message e) "g: boom"))))
     (check-equal? out "> (error 'g \"boom\")\n; exn:fail\n; g: boom\n"))
 
+  (test-case "show-error replaces each run of control characters in a line with an ellipsis"
+    (define out
+      (with-output-to-string
+        (lambda ()
+          (show-error (error 'h "a\0\1b\tc\r\nd\e")))))
+    (check-equal? out "> (error 'h \"a\\u0000\\u0001b\\tc\\r\\nd\\e\")\n; exn:fail\n; h: a…b…c…\n; d…\n"))
+
   (test-case "show-error fails when nothing is raised"
     (check-exn #rx"^show-error: 1 raised no exception$"
                (lambda () (with-output-to-string (lambda () (show-error 1))))))

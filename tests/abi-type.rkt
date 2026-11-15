@@ -24,7 +24,7 @@
         (check-equal? (exn:fail:web3:abi:type-position e) position (format "~s" 'expr)))))
 
   (define (generated-types n)
-    (define prng (vector->pseudo-random-generator (vector 1 2 3 4 5 6)))
+    (define prng (seeded 1 2 3 4 5 6))
     (for/list ([_ (in-range n)]) (random-abi-type prng)))
 
   (define canonical-pairs
@@ -234,4 +234,10 @@
     (check-equal? (format "~s" (contract-name (abi-value/c "uint8"))) "(abi-value/c \"uint8\")")
     (check-equal? (format "~v" (abi-value/c 'uint8)) "(abi-value/c \"uint8\")")
     (check-true ((abi-value/c "uint8") 255))
-    (check-false ((abi-value/c "uint8") 256))))
+    (check-false ((abi-value/c "uint8") 256)))
+
+  (test-case "abi-signature-spec/c accepts strings and signature structs"
+    (check-true (abi-signature-spec/c "f(uint256)"))
+    (check-true (abi-signature-spec/c (string->abi-signature "f(uint256)")))
+    (check-false (abi-signature-spec/c 'f))
+    (check-equal? (contract-name abi-signature-spec/c) 'abi-signature-spec/c)))

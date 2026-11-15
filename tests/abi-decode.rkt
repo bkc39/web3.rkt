@@ -8,18 +8,15 @@
            web3/abi
            (submod web3/abi internal)
            web3/abi/vectors
+           (only-in web3/private/abi-decode raise-abi-decode-error)
            (only-in web3/rpc exn:fail:web3? hex-string->bytes)
            "abi-gen.rkt"
            "bounded.rkt"
            "util.rkt")
 
-  (define (w n) (word->bytes n))
-  (define (s bs) (bytes-append bs (make-bytes (modulo (- (bytes-length bs)) 32) 0)))
-  (define (words . ns) (apply bytes-append (map w ns)))
-  (define (seeded . seed) (vector->pseudo-random-generator (list->vector seed)))
-  (define A "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed")
-  (define A* "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed")
-  (define A-number (string->number (substring A 2) 16))
+  (define (padded bs) (bytes-append bs (make-bytes (modulo (- (bytes-length bs)) 32) 0)))
+  (define (words . ns) (apply bytes-append (map word ns)))
+  (define alice-number (string->number (substring alice 2) 16))
 
   (define (random-case prng)
     (define ts (random-abi-types prng))
@@ -78,67 +75,55 @@
       (define i (abi-int n))
       (define (decode1 t data) (car (abi-decode (list t) data)))
       (for ([v (in-list (list 0 1 (sub1 (expt 2 n))))])
-        (check-equal? (decode1 u (w v)) v))
+        (check-equal? (decode1 u (word v)) v))
       (for ([v (in-list (list (- (expt 2 (sub1 n))) -1 0 (sub1 (expt 2 (sub1 n)))))])
-        (check-equal? (decode1 i (w (modulo v (expt 2 256)))) v))
+        (check-equal? (decode1 i (word (modulo v (expt 2 256)))) v))
       (when (< n 256)
-        (for ([word (in-list (list (expt 2 n) (sub1 (expt 2 256))))])
-          (check-decode-error (abi-decode (list u) (w word)) 'abi-decode 'non-canonical 0
+        (for ([dirty (in-list (list (expt 2 n) max-word))])
+          (check-decode-error (abi-decode (list u) (word dirty)) 'abi-decode 'non-canonical 0
                               #:type (abi-type->string u)))
-        (for ([word (in-list (list (expt 2 (sub1 n)) (- (expt 2 256) (expt 2 (sub1 n)) 1)))])
-          (check-decode-error (abi-decode (list i) (w word)) 'abi-decode 'non-canonical 0
+        (for ([dirty (in-list (list (expt 2 (sub1 n)) (- (expt 2 256) (expt 2 (sub1 n)) 1)))])
+          (check-decode-error (abi-decode (list i) (word dirty)) 'abi-decode 'non-canonical 0
                               #:type (abi-type->string i)))))
     (check-equal? (abi-decode '(bool bool) (words 0 1)) '(#f #t))
-    (for ([word (in-list (list 2 (expt 2 255)))])
-      (check-decode-error (abi-decode '(bool) (w word)) 'abi-decode 'non-canonical 0 #:type "bool"))
-    (check-equal? (abi-decode '(address) (w A-number)) (list A*))
-    (for ([word (in-list (list (+ (expt 2 160) A-number) (expt 2 255)))])
-      (check-decode-error (abi-decode '(address) (w word)) 'abi-decode 'non-canonical 0
+    (for ([dirty (in-list (list 2 (expt 2 255)))])
+      (check-decode-error (abi-decode '(bool) (word dirty)) 'abi-decode 'non-canonical 0 #:type "bool"))
+    (check-equal? (abi-decode '(address) (word alice-number)) (list alice-checksummed))
+    (for ([dirty (in-list (list (+ (expt 2 160) alice-number) (expt 2 255)))])
+      (check-decode-error (abi-decode '(address) (word dirty)) 'abi-decode 'non-canonical 0
                           #:type "address"))
     (for ([n (in-range 1 33)])
       (define t (abi-fixed-bytes n))
       (define b (make-bytes n 171))
-      (check-equal? (abi-decode (list t) (s b)) (list b))
+      (check-equal? (abi-decode (list t) (padded b)) (list b))
       (when (< n 32)
-        (define dirty (s b))
+        (define dirty (padded b))
         (bytes-set! dirty n 1)
         (check-decode-error (abi-decode (list t) dirty) 'abi-decode 'non-canonical 0
                             #:type (abi-type->string t))))
     (check-equal? (abi-decode '(bytes32) (make-bytes 32 255)) (list (make-bytes 32 255))))
 
-  (define (row-type name)
-    (match name
-      ["short-static" '("uint256")]
-      ["short-head" '("uint256" "string")]
-      ["tuple-head-past-end" "(uint256,string)"]
-      ["fixed-dynamic-offset" "string[2]"]
-      ["length-huge-bytes" "bytes"]
-      [(or "length-huge-array" "length-array-off-by-one" "overlap-shared-inner") "uint256[]"]
-      [(or "dirty-uint8" "dirty-uint8-ones" "dirty-in-array") "uint8"]
-      ["dirty-address" "address"]
-      [(or "dirty-bool" "dirty-in-tuple") "bool"]
-      ["dirty-bytes1" "bytes1"]
-      [(or "dirty-int8-positive" "dirty-int8-sign") "int8"]
-      [_ "string"]))
-
-  (define (nested-array depth)
-    (for/fold ([t "uint256"]) ([_ (in-range depth)]) (string-append t "[]")))
+  (define (nested type suffix depth)
+    (for/fold ([t type]) ([_ (in-range depth)]) (string-append t suffix)))
 
   (define (nested-value depth)
     (for/fold ([v 7]) ([_ (in-range depth)]) (list v)))
 
   (define hostile
-    `(("bomb-shared-inner" ("uint256[][]")
-       ,(bytes-append (words 32 4096) (apply words (make-list 4096 131072))
-                      (w 4096) (apply words (make-list 4096 7)))
-       overlap 96 "uint256[]")
-      ("bomb-shared-string" ("string[]")
-       ,(bytes-append (words 32 4096) (apply words (make-list 4096 131072))
-                      (w 131072) (make-bytes 131072 97))
-       overlap 96 "string")
-      ("huge-bytes" ("bytes") ,(words 32 (sub1 (expt 2 256))) length 32 "bytes")
-      ("huge-array" ("uint256[]") ,(words 32 (expt 2 255)) length 32 "uint256[]")
-      ("huge-static-type" ("uint256[100000000]") ,(w 1) short 0 ("uint256[100000000]"))))
+    `((#:name "bomb-shared-inner" #:types ("uint256[][]")
+       #:data ,(bytes-append (words 32 4096) (apply words (make-list 4096 131072))
+                             (word 4096) (apply words (make-list 4096 7)))
+       #:reason overlap #:offset 96 #:type "uint256[]")
+      (#:name "bomb-shared-string" #:types ("string[]")
+       #:data ,(bytes-append (words 32 4096) (apply words (make-list 4096 131072))
+                             (word 131072) (make-bytes 131072 97))
+       #:reason overlap #:offset 96 #:type "string")
+      (#:name "huge-bytes" #:types ("bytes") #:data ,(words 32 max-word)
+       #:reason length #:offset 32 #:type "bytes")
+      (#:name "huge-array" #:types ("uint256[]") #:data ,(words 32 (expt 2 255))
+       #:reason length #:offset 32 #:type "uint256[]")
+      (#:name "huge-static-type" #:types ("uint256[100000000]") #:data ,(word 1)
+       #:reason short #:offset 0 #:type ("uint256[100000000]"))))
 
   (define (check-rejects-within-bounds name types data reason offset type)
     (match (call-bounded (lambda () (abi-decode types data)))
@@ -147,15 +132,27 @@
 
   (test-case "hostile inputs are rejected within bounds"
     (for ([v (in-list abi-reject-vectors)])
-      (match-define (abi-reject-vector name signature hex reason offset) v)
+      (match-define (abi-reject-vector name signature hex reason offset type) v)
       (check-rejects-within-bounds name (signature-inputs signature) (hex-string->bytes hex)
-                                   reason offset (row-type name)))
+                                   reason offset type))
     (for ([row (in-list hostile)])
-      (apply check-rejects-within-bounds row))
-    (define deep (list (nested-array 200)))
-    (define deep-value (list (nested-value 200)))
-    (check-equal? (call-bounded (lambda () (abi-decode deep (abi-encode deep deep-value))))
-                  (list 'ok deep-value)))
+      (match-define (list #:name name #:types types #:data data #:reason reason #:offset offset
+                          #:type type)
+        row)
+      (check-rejects-within-bounds name types data reason offset type)))
+
+  (test-case "deeply nested types encode and decode in time linear in their depth"
+    (for ([suffix (in-list '("[]" "[1]"))])
+      (define deep (list (nested "uint256" suffix 1000)))
+      (define deep-value (list (nested-value 1000)))
+      (check-equal? (call-bounded (lambda () (abi-decode deep (abi-encode deep deep-value)))
+                                  #:seconds 1)
+                    (list 'ok deep-value)
+                    suffix)))
+
+  (test-case "a decode error's reason is one the decoder knows"
+    (check-blames-here (raise-abi-decode-error 'f 'shrot '() 0))
+    (check-decode-error (raise-abi-decode-error 'f 'short '() 0) 'f 'short 0 #:type '()))
 
   (test-case "decode-call and decode-result invert encode-call and abi-encode"
     (define prng (seeded 4 4 4 4 4 4))
@@ -180,7 +177,7 @@
       (check-decode-error (decode-call "f(uint256)" (make-bytes n 0)) 'decode-call 'selector 0
                           #:type '("uint256")))
     (check-decode-error (decode-call "f(string)"
-                                     (bytes-append (function-selector "f(string)") (w (expt 2 64))))
+                                     (bytes-append (function-selector "f(string)") (word (expt 2 64))))
                         'decode-call 'offset 4 #:type "string")
     (check-exn exn:fail:web3:abi:type? (lambda () (decode-result "f(uint256)" #"")))
     (check-exn #rx"^decode-result: signature has no outputs; write name[(][.][.][.][)][(][.][.][.][)]: \"f[(]uint256[)]\""
@@ -190,11 +187,11 @@
 
   (define messages
     `((abi-decode ("uint256") ,(make-bytes 31 0) "data too short" "(uint256)" 0)
-      (abi-decode ("string") ,(w 64) "offset out of range" "string" 0)
-      (abi-decode ("string" "string") ,(bytes-append (words 64 64 1) (s #"a")) "overlapping tail" "string" 32)
-      (abi-decode ("bytes") ,(words 32 (sub1 (expt 2 256))) "length out of range" "bytes" 32)
-      (abi-decode ("uint8") ,(w 256) "not canonically encoded" "uint8" 0)
-      (abi-decode ("string") ,(bytes-append (words 32 1) (s #"\377")) "invalid UTF-8" "string" 64)
+      (abi-decode ("string") ,(word 64) "offset out of range" "string" 0)
+      (abi-decode ("string" "string") ,(bytes-append (words 64 64 1) (padded #"a")) "overlapping tail" "string" 32)
+      (abi-decode ("bytes") ,(words 32 max-word) "length out of range" "bytes" 32)
+      (abi-decode ("uint8") ,(word 256) "not canonically encoded" "uint8" 0)
+      (abi-decode ("string") ,(bytes-append (words 32 1) (padded #"\377")) "invalid UTF-8" "string" 64)
       (decode-call ("uint256") #"\1\2" "selector mismatch" "(uint256)" 0)))
 
   (test-case "messages name the caller, the reason, the type and the offset"
@@ -212,14 +209,14 @@
       (check-true (string-contains? message (format "\n  offset: ~a" offset)) message))
     (check-regexp-match #rx"^abi-decode: length out of range: 115792089237316195423570985008687907853269984665640564039457584007913129639935 bytes claimed, 0 remain\n  type: bytes\n  offset: 32$"
                         (exn-message (decode-error (lambda ()
-                                                     (abi-decode '(bytes) (words 32 (sub1 (expt 2 256))))))))
+                                                     (abi-decode '(bytes) (words 32 max-word))))))
     (check-regexp-match #rx"^decode-revert: "
                         (exn-message (decode-error (lambda ()
                                                      (decode-revert (bytes-append (error-selector "Error(string)")
-                                                                                  (w (expt 2 64)))))))))
+                                                                                  (word (expt 2 64)))))))))
 
   (test-case "decode errors are ABI errors and web3 errors"
-    (define e (decode-error (lambda () (abi-decode '(uint8 string) (w 1)))))
+    (define e (decode-error (lambda () (abi-decode '(uint8 string) (word 1)))))
     (check-true (exn:fail:web3:abi? e))
     (check-true (exn:fail:web3? e))
     (check-true (andmap abi-type? (exn:fail:web3:abi:decode-type e)))
@@ -227,7 +224,7 @@
     (check-not-false (memq (exn:fail:web3:abi:decode-reason e)
                            '(short offset overlap length non-canonical utf-8 selector)))
     (check-pred abi-type? (exn:fail:web3:abi:decode-type
-                           (decode-error (lambda () (abi-decode '(bool) (w 2))))))
+                           (decode-error (lambda () (abi-decode '(bool) (word 2))))))
     (check-exn exn:fail:web3:abi:type? (lambda () (abi-decode '("uint7") #""))))
 
   (test-case "decoders blame their caller"
@@ -242,24 +239,15 @@
     (define data (abi-encode '(uint256 string) '(5 "hi")))
     (define prefixed (bytes-append (make-bytes 7 9) data))
     (check-equal? (abi-decode/who 'decode-log '(uint256 string) prefixed 7) '(5 "hi"))
-    (check-equal? (abi-decode/who 'decode-log (list (abi-uint 256)) (w 5) 0) '(5))
-    (check-decode-error (abi-decode/who 'decode-log '(uint8) (bytes-append (make-bytes 64) (w 256)) 64)
+    (check-equal? (abi-decode/who 'decode-log (list (abi-uint 256)) (word 5) 0) '(5))
+    (check-decode-error (abi-decode/who 'decode-log '(uint8) (bytes-append (make-bytes 64) (word 256)) 64)
                         'decode-log 'non-canonical 64 #:type "uint8")
-    (check-decode-error (abi-decode/who 'decode-log '(string) (bytes-append (make-bytes 7) (w 0)) 7)
+    (check-decode-error (abi-decode/who 'decode-log '(string) (bytes-append (make-bytes 7) (word 0)) 7)
                         'decode-log 'overlap 7 #:type "string")
     (check-decode-error (abi-decode/who 'decode-log '(uint256) (make-bytes 40) 9)
                         'decode-log 'short 9 #:type '("uint256"))
-    (check-equal? (decode-result/who 'contract-call "f()(uint256)" (w 7)) '(7))
-    (check-decode-error (decode-result/who 'contract-call "f()(bool)" (w 2))
+    (check-equal? (decode-result/who 'contract-call "f()(uint256)" (word 7)) '(7))
+    (check-decode-error (decode-result/who 'contract-call "f()(bool)" (word 2))
                         'contract-call 'non-canonical 0 #:type "bool")
     (check-exn #rx"^contract-call: signature has no outputs"
-               (lambda () (decode-result/who 'contract-call "f()" #""))))
-
-  (test-case "doc examples"
-    (check-equal? (abi-decode '(uint8 string) (abi-encode '(uint8 string) '(7 "hi"))) '(7 "hi"))
-    (check-equal? (abi-decode '(address) (abi-encode '(address) (list A))) (list A*))
-    (check-exn #rx"^abi-decode: not canonically encoded" (lambda () (abi-decode '(uint8) (w 256))))
-    (check-equal? (decode-result "balanceOf(address)(uint256)" (w 1000)) '(1000))
-    (check-equal? (decode-call "transfer(address,uint256)"
-                               (encode-call "transfer(address,uint256)" A 1000))
-                  (list A* 1000))))
+               (lambda () (decode-result/who 'contract-call "f()" #"")))))

@@ -1,64 +1,85 @@
 #lang racket/base
 
-(require racket/contract/base
+(require (for-syntax racket/base
+                     (only-in racket/struct-info extract-struct-info prop:struct-info)
+                     (only-in racket/syntax format-id)
+                     syntax/parse)
+         racket/contract/base
          (only-in keccak keccak256)
          (only-in racket/function negate)
          (only-in racket/list make-list)
-         (only-in racket/match == match match* match-define struct*)
+         (only-in racket/match == match match-define struct*)
          (only-in racket/string string-join string-prefix?)
+         syntax/parse/define
          "abi/type.rkt"
          (submod "abi/type.rkt" private)
          "address.rkt"
          "private/abi-decode.rkt"
-         (only-in "private/exn.rkt"
-                  exn:fail:web3:rpc
-                  exn:fail:web3:rpc?
-                  exn:fail:web3:rpc:revert
-                  exn:fail:web3:rpc:revert?
-                  exn:fail:web3:rpc:revert-revert
-                  struct:exn:fail:web3:rpc:revert)
-         (only-in "private/hex.rkt" bytes->hex hex-digits->bytes))
+         "private/exn.rkt"
+         (only-in "private/hex.rkt" bytes->hex hex->bytes))
 
 (provide (all-from-out "abi/type.rkt")
          (struct-out exn:fail:web3:rpc:revert)
+         abi-revert
+         struct:abi-revert
          (contract-out
           [function-selector (-> (or/c string? bytes? abi-signature?) bytes?)]
           [word->bytes (-> (integer-in 0 (sub1 (expt 2 256))) bytes?)]
           [bytes->words (-> bytes? (listof exact-nonnegative-integer?))]
           [abi-encode (-> (listof abi-type-spec/c) list? bytes?)]
           [abi-encode-packed (-> (listof abi-type-spec/c) list? bytes?)]
-          [encode-call (->* ((or/c string? abi-signature?)) #:rest list? bytes?)]
+          [encode-call (->* (abi-signature-spec/c) #:rest list? bytes?)]
           [abi-decode (-> (listof abi-type-spec/c) bytes? list?)]
-          [decode-result (-> (or/c string? abi-signature?) bytes? list?)]
-          [decode-call (-> (or/c string? abi-signature?) bytes? list?)]
-          (struct abi-revert ([signature (or/c #f abi-signature?)]
-                              [arguments list?]
-                              [data bytes?]))
+          [decode-result (-> abi-signature-spec/c bytes? list?)]
+          [decode-call (-> abi-signature-spec/c bytes? list?)]
+          [abi-revert? (-> any/c boolean?)]
+          [abi-revert-signature (-> abi-revert? (or/c #f abi-signature?))]
+          [abi-revert-arguments (-> abi-revert? list?)]
+          [abi-revert-data (-> abi-revert? bytes?)]
           [abi-revert-name (-> abi-revert? (or/c #f string?))]
           [abi-revert-selector (-> abi-revert? (or/c #f bytes?))]
           [abi-revert->string (-> abi-revert? string?)]
-          [error-selector (-> error-signature/c bytes?)]
-          [decode-revert (->* (bytes?) (#:errors (listof error-signature/c)) abi-revert?)]
+          [error-selector (-> abi-signature-spec/c bytes?)]
+          [decode-revert (->* (bytes?) (#:errors (listof abi-signature-spec/c)) abi-revert?)]
           [panic-description (-> exact-nonnegative-integer? (or/c #f string?))]
           [rpc-exn->revert (->* (exn:fail:web3:rpc?)
-                                (#:errors (listof error-signature/c))
+                                (#:errors (listof abi-signature-spec/c))
                                 (or/c #f abi-revert?))]
           [rpc-exn->revert-exn (->* (exn:fail:web3:rpc?)
-                                    (#:errors (listof error-signature/c))
+                                    (#:errors (listof abi-signature-spec/c))
                                     (or/c #f exn:fail:web3:rpc:revert?))]
           [decode-revert-reason (-> bytes? (or/c string? #f))]))
-
-(define error-signature/c
-  (flat-named-contract 'error-signature/c (or/c string? abi-signature?)))
 
 (module+ test
   (require rackunit
            (only-in "rpc.rkt" bytes->hex-string)))
 
+;; (define/who (name who formal ...) body ...) defines name/who, which
+;; takes the name to raise under first, and name, which passes 'name.  A
+;; formal [x #:public v] is passed v by name; a rest argument reaches
+;; name/who as a list.
+(begin-for-syntax
+  (define-splicing-syntax-class formal
+    (pattern x:id
+             #:with (public ...) #'(x)
+             #:with value #'x)
+    (pattern [x:id #:public value:expr]
+             #:with (public ...) #'())
+    (pattern (~seq kw:keyword [x:id default:expr])
+             #:with (public ...) #'(kw [x default])
+             #:with value #'x)))
+
+(define-syntax-parse-rule (define/who (name:id who:id f:formal ... . (~or* () rest:id))
+                            body:expr ...+)
+  #:with name/who (format-id #'name "~a/who" #'name #:source #'name)
+  (begin
+    (define (name/who who f.x ... (~? rest)) body ...)
+    (define (name f.public ... ... . (~? rest ())) (name/who 'name f.value ... (~? rest)))))
+
 (define (function-selector signature)
-  (match signature
-    [(? bytes?) (subbytes (keccak256 signature) 0 4)]
-    [_ (signature-selector (string->abi-signature/who 'function-selector signature))]))
+  (cond
+    [(bytes? signature) (subbytes (keccak256 signature) 0 4)]
+    [else (signature-selector (string->abi-signature/who 'function-selector signature))]))
 
 (define (signature-selector sig)
   (subbytes (keccak256 (abi-signature->string sig)) 0 4))
@@ -118,10 +139,7 @@
     [(arguments-failure ts vs) => (lambda (failure) (raise-abi-value-error who failure))]
     [else (encode-sequence ts vs)]))
 
-(define (abi-encode types vs)
-  (abi-encode/who 'abi-encode types vs))
-
-(define (abi-encode/who who types vs)
+(define/who (abi-encode who types vs)
   (encode-arguments who (types/who who types) vs))
 
 (define (packable? t)
@@ -154,28 +172,17 @@
      => (lambda (failure) (raise-abi-value-error 'abi-encode-packed failure))]
     [else (apply bytes-append (map encode-packed ts vs))]))
 
-(define (encode-call signature . vs)
-  (encode-call/who 'encode-call signature vs))
-
-(define (encode-call/who who signature vs)
+(define/who (encode-call who signature . vs)
   (define sig (string->abi-signature/who who signature))
   (bytes-append (signature-selector sig) (encode-arguments who (abi-signature-inputs sig) vs)))
-
-;;;; decoding
 
 (define (string->abi-signature/who who signature)
   (if (string? signature) (string->signature who signature) signature))
 
-(define (abi-decode types data)
-  (abi-decode/who 'abi-decode types data 0))
-
-(define (abi-decode/who who types data base)
+(define/who (abi-decode who types data [base #:public 0])
   (decode-arguments who (types/who who types) data base))
 
-(define (decode-result signature data)
-  (decode-result/who 'decode-result signature data))
-
-(define (decode-result/who who signature data)
+(define/who (decode-result who signature data)
   (define sig (string->abi-signature/who who signature))
   (match (abi-signature-outputs sig)
     [#f (raise-abi-type-error who "signature has no outputs; write name(...)(...)"
@@ -192,20 +199,54 @@
      (raise-abi-decode-error 'decode-call 'selector (abi-signature-inputs sig) 0
                              (format "expected ~a, given ~a" (bytes->hex selector) (bytes->hex given)))]))
 
-;;;; reverts
+;; abi-revert is the struct's static information, for match and struct*,
+;; and as an expression the constructor under a contract that a field
+;; contract cannot state: the arguments are values of the signature's
+;; inputs.  This module builds reverts it decoded with raw-abi-revert.
+(struct abi-revert (signature arguments data) #:transparent
+  #:name abi-revert-info
+  #:constructor-name raw-abi-revert)
 
-(struct abi-revert (signature arguments data) #:transparent)
+(define (revert-arguments/c signature)
+  (cond
+    [signature
+     (define inputs (abi-signature-inputs signature))
+     (flat-named-contract `(arguments-of ,(abi-signature->string signature))
+                          (lambda (vs) (and (list? vs) (not (arguments-failure inputs vs)))))]
+    [else list?]))
+
+(define-module-boundary-contract checked-abi-revert raw-abi-revert
+  (->i ([signature (or/c #f abi-signature?)]
+        [arguments (signature) (revert-arguments/c signature)]
+        [data bytes?])
+       [_ abi-revert?])
+  #:name-for-blame abi-revert)
+
+(begin-for-syntax
+  (struct constructor-info (info)
+    #:property prop:struct-info (lambda (self) (constructor-info-info self))
+    #:property prop:procedure
+    (lambda (self stx)
+      (syntax-parse stx
+        [(_ . args) (syntax/loc stx (checked-abi-revert . args))]
+        [_:id #'checked-abi-revert]))))
+
+(define-syntax abi-revert
+  (constructor-info
+   (let ([info (extract-struct-info (syntax-local-value #'abi-revert-info))])
+     (list* (car info) #'checked-abi-revert (cddr info)))))
 
 (define (abi-revert-name r)
-  (define sig (abi-revert-signature r))
-  (and sig (abi-signature-name sig)))
+  (match r
+    [(struct* abi-revert ([signature (struct* abi-signature ([name name]))])) name]
+    [_ #f]))
 
 (define (abi-revert-selector r)
-  (define data (abi-revert-data r))
+  (match-define (struct* abi-revert ([data data])) r)
   (and (>= (bytes-length data) 4) (subbytes data 0 4)))
 
-(define builtin-errors
-  (map (lambda (s) (string->signature 'decode-revert s)) '("Error(string)" "Panic(uint256)")))
+(define error-signature (string->signature 'decode-revert "Error(string)"))
+(define panic-signature (string->signature 'decode-revert "Panic(uint256)"))
 
 (define (error-signature/who who signature)
   (define sig (string->abi-signature/who who signature))
@@ -218,11 +259,11 @@
 (define (error-selector signature)
   (signature-selector (error-signature/who 'error-selector signature)))
 
-;; The built-in errors and errors by selector.
 (define (check-error-signatures/who who errors)
   (for/fold ([lookup (hash)])
-            ([sig (in-list (append builtin-errors
-                                   (map (lambda (s) (error-signature/who who s)) errors)))])
+            ([sig (in-list (list* error-signature
+                                  panic-signature
+                                  (map (lambda (s) (error-signature/who who s)) errors)))])
     (define selector (signature-selector sig))
     (match (hash-ref lookup selector #f)
       [#f (hash-set lookup selector sig)]
@@ -237,8 +278,8 @@
 (define (lookup-revert who lookup data)
   (cond
     [(and (>= (bytes-length data) 4) (hash-ref lookup (subbytes data 0 4) #f))
-     => (lambda (sig) (abi-revert sig (decode-arguments who (abi-signature-inputs sig) data 4) data))]
-    [else (abi-revert #f '() data)]))
+     => (lambda (sig) (raw-abi-revert sig (decode-arguments who (abi-signature-inputs sig) data 4) data))]
+    [else (raw-abi-revert #f '() data)]))
 
 (define (decode-revert data #:errors [errors '()])
   (lookup-revert 'decode-revert (check-error-signatures/who 'decode-revert errors) data))
@@ -258,31 +299,36 @@
 (define (panic-description code)
   (hash-ref panic-descriptions code #f))
 
+(define (panic-label code)
+  (format "Panic(0x~a)" (number->string code 16)))
+
+(define (value->display-string type v)
+  (fold-abi-value
+   (lambda (t v)
+     (match t
+       [(or (struct* abi-uint ()) (struct* abi-int ())) (number->string v)]
+       [(struct* abi-bool ()) (if v "true" "false")]
+       [(struct* abi-address ()) (address->checksum-string v)]
+       [(or (struct* abi-bytes ()) (struct* abi-fixed-bytes ())) (bytes->hex v)]
+       [(struct* abi-string ()) (format "~s" v)]))
+   (lambda (t parts)
+     (define joined (string-join parts ", "))
+     (if (abi-tuple? t) (format "(~a)" joined) (format "[~a]" joined)))
+   type
+   v))
+
 (define (abi-value->display-string type v)
-  (let loop ([t (abi-type/who 'abi-value->display-string type)] [v v])
-    (match t
-      [(or (struct* abi-uint ()) (struct* abi-int ())) (number->string v)]
-      [(struct* abi-bool ()) (if v "true" "false")]
-      [(struct* abi-address ()) (address->checksum-string v)]
-      [(or (struct* abi-bytes ()) (struct* abi-fixed-bytes ())) (bytes->hex v)]
-      [(struct* abi-string ()) (format "~s" v)]
-      [(or (struct* abi-array ([element e])) (struct* abi-fixed-array ([element e])))
-       (format "[~a]" (string-join (map (lambda (x) (loop e x)) v) ", "))]
-      [(struct* abi-tuple ([components cs])) (format "(~a)" (string-join (map loop cs v) ", "))])))
+  (value->display-string (abi-type/who 'abi-value->display-string type) v))
 
 (define (abi-revert->string r)
   (match r
-    [(struct* abi-revert ([signature (? abi-signature? sig)] [arguments args]))
-     (match* ((abi-signature->string sig) args)
-       [("Panic(uint256)" (list code))
-        (define description (panic-description code))
-        (format "Panic(0x~a)~a"
-                (number->string code 16)
-                (if description (string-append ": " description) ""))]
-       [(_ _)
-        (format "~a(~a)"
-                (abi-signature-name sig)
-                (string-join (map abi-value->display-string (abi-signature-inputs sig) args) ", "))])]
+    [(struct* abi-revert ([signature (== panic-signature)] [arguments (list code)]))
+     (match (panic-description code)
+       [#f (panic-label code)]
+       [description (format "~a: ~a" (panic-label code) description)])]
+    [(struct* abi-revert ([signature (struct* abi-signature ([name name] [inputs ts]))]
+                          [arguments args]))
+     (format "~a(~a)" name (string-join (map value->display-string ts args) ", "))]
     [(struct* abi-revert ([data data]))
      (define n (bytes-length data))
      (cond
@@ -293,11 +339,10 @@
 
 (define (hex-payload v)
   (match v
-    [(? string? (pregexp #px"^(?:Reverted )?0x((?:[0-9a-fA-F]{2})*)$" (list _ digits)))
-     (hex-digits->bytes digits)]
+    [(? string? (pregexp #px"^(?:Reverted )?(0x(?:[0-9a-fA-F]{2})*)$" (list _ hex)))
+     (hex->bytes hex)]
     [_ #f]))
 
-;; The revert data a node put in an error response, or #f.
 (define (revert-payload e)
   (match-define (struct* exn:fail:web3:rpc ([rpc-message message] [data data])) e)
   (match data
@@ -305,15 +350,12 @@
     [(? hash?) (hex-payload (hash-ref data 'data #f))]
     [_ (hex-payload data)]))
 
-(define (rpc-exn->revert/who who e errors)
+(define/who (rpc-exn->revert who e #:errors [errors '()])
   (define lookup (check-error-signatures/who who errors))
   (define payload (revert-payload e))
   (and payload
-       (with-handlers ([exn:fail:web3:abi:decode? (lambda (_) (abi-revert #f '() payload))])
+       (with-handlers ([exn:fail:web3:abi:decode? (lambda (_) (raw-abi-revert #f '() payload))])
          (lookup-revert who lookup payload))))
-
-(define (rpc-exn->revert e #:errors [errors '()])
-  (rpc-exn->revert/who 'rpc-exn->revert e errors))
 
 (define (rpc-exn->revert-exn e #:errors [errors '()])
   (match-define
@@ -331,17 +373,12 @@
 
 (define (decode-revert-reason data)
   (with-handlers ([exn:fail:web3:abi:decode? (lambda (_) #f)])
-    (define r (decode-revert data))
-    (match r
-      [(struct* abi-revert ([signature (struct* abi-signature ([name "Error"]))]))
-       (abi-revert->string r)]
-      [(struct* abi-revert ([signature (struct* abi-signature ([name "Panic"]))]
-                            [arguments (list code)]))
-       (format "Panic(0x~a)" (number->string code 16))]
+    (match (decode-revert data)
+      [(and r (struct* abi-revert ([signature (== error-signature)]))) (abi-revert->string r)]
+      [(struct* abi-revert ([signature (== panic-signature)] [arguments (list code)]))
+       (panic-label code)]
       [_ #f])))
 
-;; Uncontracted entry points for web3's own modules, which raise under
-;; the name of the function their caller called.
 (module* internal #f
   (provide abi-decode/who
            abi-encode/who

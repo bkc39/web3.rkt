@@ -17,19 +17,16 @@
 
 (define order-type "(address,uint256,(string,bytes)[])")
 (define order
-  (list "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed" 1000 '(("gold" #"\1\2") ("silver" #""))))
+  (list "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed" 1000 '(("gold" #"\1\2") ("silver" #""))))
 
 (define encoded (abi-encode (list order-type) (list order)))
 (show-words encoded)
-
-(define decoded (abi-decode (list order-type) encoded))
-(show decoded)
-;; Not equal: the address comes back in its EIP-55 form.
-(show (equal? decoded (list order)))
-(show (car (car decoded)))
+(show (abi-decode (list order-type) encoded))
+(show (equal? (abi-decode (list order-type) encoded) (list order)))
 
 (section "addresses")
 
+(show (abi-decode '(address) (abi-encode '(address) '("0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed"))))
 (show (address->checksum-string "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed"))
 (show (checksum-address? "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"))
 (show (checksum-address? "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed"))
@@ -81,20 +78,15 @@
 (show (abi-revert->string (rpc-exn->revert overflow-exn)))
 (show (panic-description #x11))
 
-;; anvil's message for a custom error holds its raw argument bytes, so this
-;; one is caught without printing it.  A custom error is recognised when its
-;; signature is passed.
 (define balance (encode-call "InsufficientBalance(uint256,uint256)" 10 20))
-(define balance-exn
-  (with-handlers ([exn:fail:web3:rpc? values])
-    (eth-call (hasheq 'to reverter 'data (bytes->hex-string balance)) "latest")))
+(show-error (eth-call (hasheq 'to reverter 'data (bytes->hex-string balance)) "latest")
+            #:as balance-exn)
 (show (exn:fail:web3:rpc-data balance-exn))
 (define balance-revert (rpc-exn->revert balance-exn #:errors errors))
 (show (abi-revert-name balance-revert))
 (show (abi-revert-arguments balance-revert))
 (show (abi-revert->string balance-revert))
 
-;; Without it, the revert is kept unrecognised, with its data.
 (show (abi-revert->string (decode-revert balance)))
 (show (bytes->hex-string (abi-revert-selector (decode-revert balance))))
 (show (bytes->hex-string (error-selector "InsufficientBalance(uint256,uint256)")))
@@ -105,11 +97,8 @@
 (show (decode-revert-reason funds))
 (show (decode-revert-reason balance))
 
-;; Re-raised as the typed exception, which is still an exn:fail:web3:rpc.
-(show-error (raise (or (rpc-exn->revert-exn balance-exn #:errors errors) balance-exn))
-            #:as typed)
-(show (exn:fail:web3:rpc? typed))
-(show (abi-revert->string (exn:fail:web3:rpc:revert-revert typed)))
+(show (exn-message (rpc-exn->revert-exn balance-exn #:errors errors)))
+(show (exn:fail:web3:rpc:revert? (rpc-exn->revert-exn balance-exn #:errors errors)))
 
 (section "malformed data")
 
@@ -118,15 +107,12 @@
 (show (exn:fail:web3:abi:decode-offset dirty))
 (show (exn:fail:web3:abi:decode-type dirty))
 
-;; A length claiming more bytes than there are; nothing is allocated for it.
 (show-error (abi-decode '(bytes) (bytes-append (word->bytes 32) (word->bytes (sub1 (expt 2 256))))))
 (show-error (abi-decode '(string) (bytes-append (word->bytes 32) (word->bytes 6) #"oops!")))
-;; Two strings sharing one tail.
 (show-error (abi-decode '(string string)
                         (bytes-append (word->bytes 64) (word->bytes 64) (word->bytes 1) #"a"
                                       (make-bytes 31 0))))
 (show-error (abi-decode '(string)
                         (bytes-append (word->bytes 32) (word->bytes 1) #"\377" (make-bytes 31 0))))
 
-;; A wrong Racket shape is a contract violation instead.
 (show-error (abi-decode "uint256" #""))

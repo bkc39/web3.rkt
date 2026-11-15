@@ -107,26 +107,25 @@
   (define n (bytes-length data))
   (define out (bytes-copy data))
   (define (word-at i) (subbytes data (* 32 i) (* 32 (add1 i))))
-  (match kind
-    [_ #:when (and (zero? n) (not (eq? kind 'append))) out]
-    ['flip
+  (define words (word-count data))
+  (cond
+    [(eq? kind 'append) (bytes-append data (random-bytes prng (add1 (random 64 prng))))]
+    [(zero? n) out]
+    [(eq? kind 'flip)
      (define i (random n prng))
      (bytes-set! out i (bitwise-xor (bytes-ref out i) (arithmetic-shift 1 (random 8 prng))))
      out]
-    ['truncate (subbytes data 0 (random n prng))]
-    ['overwrite
-     #:when (positive? (word-count data))
-     (bytes-copy! out (* 32 (random (word-count data) prng)) (random-word prng n))
+    [(eq? kind 'truncate) (subbytes data 0 (random n prng))]
+    [(and (eq? kind 'overwrite) (positive? words))
+     (bytes-copy! out (* 32 (random words prng)) (random-word prng n))
      out]
-    ['swap
-     #:when (positive? (word-count data))
-     (define i (random (word-count data) prng))
-     (define j (random (word-count data) prng))
+    [(and (eq? kind 'swap) (positive? words))
+     (define i (random words prng))
+     (define j (random words prng))
      (bytes-copy! out (* 32 i) (word-at j))
      (bytes-copy! out (* 32 j) (word-at i))
      out]
-    ['append (bytes-append data (random-bytes prng (add1 (random 64 prng))))]
-    [_ out]))
+    [else out]))
 
 ;; (list kind types data original): random data for random types (kind
 ;; 'random, original #f), and each mutation of valid encodings (original
@@ -142,10 +141,11 @@
      (list kind ts (mutate prng kind data) data))))
 
 (module+ test
-  (require rackunit)
+  (require rackunit
+           "util.rkt")
 
   (test-case "random-abi-types draws between min-count and max-count types"
-    (define prng (vector->pseudo-random-generator (vector 3 1 4 1 5 9)))
+    (define prng (seeded 3 1 4 1 5 9))
     (define counts
       (for/list ([_ (in-range 200)])
         (length (random-abi-types prng #:min-count 1 #:max-count 3))))

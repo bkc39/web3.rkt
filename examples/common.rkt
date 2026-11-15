@@ -36,7 +36,7 @@
 (define (print-error e)
   (printf "; ~a\n" (exn-name e))
   (for ([line (in-list (string-split (exn-message e) "\n"))])
-    (printf "; ~a\n" line)))
+    (printf "; ~a\n" (regexp-replace* #px"\\p{Cc}+" line "…"))))
 
 (define (call-and-show-error datum thunk)
   (echo datum)

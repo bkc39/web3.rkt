@@ -35,7 +35,7 @@
       (check-true (checksum-address? a) a)))
 
   (test-case "checksums keep the digits, ignore the input's case and are fixed points"
-    (define prng (vector->pseudo-random-generator (vector 5 5 5 5 5 5)))
+    (define prng (seeded 5 5 5 5 5 5))
     (for ([_ (in-range 200)])
       (define a (random-abi-value prng 'address))
       (define c (address->checksum-string a))
