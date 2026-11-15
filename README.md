@@ -44,6 +44,11 @@ return the call's result (quantities as exact integers), and raise
 
 Keccak-256 comes from [keccak-rkt](https://github.com/bkc39/keccak-rkt).
 
+## Documentation
+
+The manual is in `scribblings/web3.scrbl`; `raco setup web3` renders it
+locally, and `raco docs web3` opens it.
+
 ## Development
 
 The flake pins Racket, foundry (anvil) and keccak-rkt; the build runs the
@@ -57,3 +62,8 @@ nix build                    # hermetic build + tests
 
 Outside Nix the anvil tests use `$WEB3_ANVIL` or `anvil` on `PATH`, and are
 skipped if neither exists.
+
+## License
+
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT), at your option.
