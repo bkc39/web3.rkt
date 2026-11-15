@@ -3,12 +3,14 @@
 (require racket/list
          racket/match
          (only-in web3/abi abi-encode word->bytes)
+         (only-in web3/rpc bytes->hex-string)
          web3/abi/type
          "util.rkt")
 
 (provide random-abi-type
          random-abi-types
          random-abi-value
+         random-address
          random-bytes
          random-decode-inputs)
 
@@ -64,6 +66,9 @@
 
 (define (random-bytes prng n)
   (apply bytes (for/list ([_ (in-range n)]) (random 256 prng))))
+
+(define (random-address prng)
+  (bytes->hex-string (random-bytes prng 20)))
 
 (define (random-abi-value prng type #:max-length [max-length 3] #:cast-safe? [cast-safe? #f])
   (let loop ([t (abi-type type)])

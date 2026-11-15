@@ -14,6 +14,9 @@
 
 (provide alice
          alice-checksummed
+         anvil-alice
+         anvil-bob
+         anvil-carol
          check-blames-here
          check-decode-error
          check-decoded
@@ -24,6 +27,7 @@
          encode-hex
          insufficient-balance
          max-word
+         raised
          seeded
          signature-inputs
          signature-string
@@ -36,6 +40,10 @@
 
 (define alice "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed")
 (define alice-checksummed "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed")
+
+(define anvil-alice "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")
+(define anvil-bob "0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
+(define anvil-carol "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC")
 
 (define insufficient-balance "InsufficientBalance(uint256,uint256)")
 
@@ -105,6 +113,11 @@
      (for/sum ([x (in-list v)]) (decoded-size e x))]
     [(struct* abi-tuple ([components cs])) (for/sum ([t (in-list cs)] [x (in-list v)]) (decoded-size t x))]
     [_ 32]))
+
+(define (raised thunk)
+  (with-handlers ([exn:fail? values])
+    (thunk)
+    #f))
 
 (define (decode-error thunk)
   (with-handlers ([exn:fail:web3:abi:decode? values])

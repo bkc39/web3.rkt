@@ -2,7 +2,6 @@
 
 (require (for-syntax racket/base
                      (only-in racket/struct-info extract-struct-info prop:struct-info)
-                     (only-in racket/syntax format-id)
                      syntax/parse)
          racket/contract/base
          (only-in keccak keccak256)
@@ -10,13 +9,13 @@
          (only-in racket/list make-list)
          (only-in racket/match == match match-define struct*)
          (only-in racket/string string-join string-prefix?)
-         syntax/parse/define
          "abi/type.rkt"
          (submod "abi/type.rkt" private)
          "address.rkt"
          "private/abi-decode.rkt"
          "private/exn.rkt"
-         (only-in "private/hex.rkt" bytes->hex hex->bytes))
+         (only-in "private/hex.rkt" bytes->hex hex->bytes)
+         "private/who.rkt")
 
 (provide (all-from-out "abi/type.rkt")
          (struct-out exn:fail:web3:rpc:revert)
@@ -53,28 +52,6 @@
 (module+ test
   (require rackunit
            (only-in "rpc.rkt" bytes->hex-string)))
-
-;; (define/who (name who formal ...) body ...) defines name/who, which
-;; takes the name to raise under first, and name, which passes 'name.  A
-;; formal [x #:public v] is passed v by name; a rest argument reaches
-;; name/who as a list.
-(begin-for-syntax
-  (define-splicing-syntax-class formal
-    (pattern x:id
-             #:with (public ...) #'(x)
-             #:with value #'x)
-    (pattern [x:id #:public value:expr]
-             #:with (public ...) #'())
-    (pattern (~seq kw:keyword [x:id default:expr])
-             #:with (public ...) #'(kw [x default])
-             #:with value #'x)))
-
-(define-syntax-parse-rule (define/who (name:id who:id f:formal ... . (~or* () rest:id))
-                            body:expr ...+)
-  #:with name/who (format-id #'name "~a/who" #'name #:source #'name)
-  (begin
-    (define (name/who who f.x ... (~? rest)) body ...)
-    (define (name f.public ... ... . (~? rest ())) (name/who 'name f.value ... (~? rest)))))
 
 (define (function-selector signature)
   (cond
@@ -182,12 +159,16 @@
 (define/who (abi-decode who types data [base #:public 0])
   (decode-arguments who (types/who who types) data base))
 
-(define/who (decode-result who signature data)
+(define (result-signature/who who signature)
   (define sig (string->abi-signature/who who signature))
-  (match (abi-signature-outputs sig)
-    [#f (raise-abi-type-error who "signature has no outputs; write name(...)(...)"
-                              (abi-signature->string sig) #f)]
-    [outputs (decode-arguments who outputs data 0)]))
+  (cond
+    [(abi-signature-outputs sig) sig]
+    [else (raise-abi-type-error who "signature has no outputs; write name(...)(...)"
+                                (abi-signature->string sig) #f)]))
+
+(define/who (decode-result who signature data)
+  (define sig (result-signature/who who signature))
+  (decode-arguments who (abi-signature-outputs sig) data 0))
 
 (define (decode-call signature data)
   (define sig (string->abi-signature/who 'decode-call signature))
@@ -361,7 +342,7 @@
   (match-define
     (struct* exn:fail:web3:rpc ([method method] [code code] [rpc-message message] [data data]))
     e)
-  (define r (rpc-exn->revert/who 'rpc-exn->revert-exn e errors))
+  (define r (rpc-exn->revert/who 'rpc-exn->revert-exn e #:errors errors))
   (and r
        (exn:fail:web3:rpc:revert (format "~a: reverted with ~a" method (abi-revert->string r))
                                  (exn-continuation-marks e)
@@ -386,6 +367,7 @@
            check-error-signatures/who
            decode-result/who
            encode-call/who
+           result-signature/who
            string->abi-signature/who))
 
 (module+ test

@@ -19,6 +19,13 @@
       ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
       version = "0.1";
+      # solc 0.8.33 does not build on x86_64-darwin; the fixture tests that
+      # need it skip there.
+      solcFor = pkgs:
+        pkgs.lib.optional (pkgs.lib.meta.availableOn pkgs.stdenv.hostPlatform pkgs.solc) pkgs.solc;
+      solcEnv = pkgs:
+        pkgs.lib.optionalString (pkgs.lib.meta.availableOn pkgs.stdenv.hostPlatform pkgs.solc)
+          "export WEB3_SOLC=${pkgs.solc}/bin/solc";
     in
     {
       packages = forAllSystems (system:
@@ -62,7 +69,7 @@
             pname = "web3";
             inherit version;
             src = pkgs.lib.cleanSource ./.;
-            nativeBuildInputs = [ pkgs.racket pkgs.foundry ];
+            nativeBuildInputs = [ pkgs.racket pkgs.foundry ] ++ solcFor pkgs;
             buildPhase = ''
               runHook preBuild
               export HOME=$TMPDIR/home
@@ -84,6 +91,7 @@
             checkPhase = ''
               runHook preCheck
               export WEB3_ANVIL=${pkgs.foundry}/bin/anvil
+              ${solcEnv pkgs}
               raco test -x --timeout 120 -p web3
               runHook postCheck
             '';
@@ -111,9 +119,10 @@
         in
         {
           default = pkgs.mkShell {
-            buildInputs = [ pkgs.racket pkgs.foundry ];
+            buildInputs = [ pkgs.racket pkgs.foundry ] ++ solcFor pkgs;
             shellHook = ''
               export WEB3_ANVIL=${pkgs.foundry}/bin/anvil
+              ${solcEnv pkgs}
               # Outside $PWD: raco pkg install --link rejects overlapping collects dirs.
               cache_root="''${XDG_CACHE_HOME:-$HOME/.cache}/web3-devshell"
               project_id=$(printf '%s' "$PWD" | ${pkgs.coreutils}/bin/sha256sum | cut -c1-12)

@@ -10,7 +10,8 @@
            racket/match
            racket/tcp
            rackunit
-           web3)
+           web3
+           (only-in "util.rkt" raised))
 
   ;; A reply is a body string, a procedure from the request to one, or one
   ;; of these wrapping a reply.  A `closing` reply ends its connection and
@@ -115,9 +116,6 @@
       (lambda ()
         (custodian-shutdown-all server-custodian)
         (within 5 (lambda () (provider-close p))))))
-
-  (define (raised thunk)
-    (with-handlers ([exn:fail:web3? values]) (thunk) #f))
 
   (test-case "HTTP: the request envelope and the result"
     (call-with-canned-node

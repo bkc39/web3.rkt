@@ -8,6 +8,7 @@
 
 (require json
          racket/contract
+         (only-in "private/node.rkt" receipt-status->boolean)
          "rpc.rkt")
 
 (provide block-param/c
@@ -40,9 +41,13 @@
          eth-get-transaction-by-hash
          eth-get-transaction-receipt
          eth-get-logs
-         wait-for-receipt
-         send-transaction/receipt
-         receipt-succeeded?)
+         (contract-out
+          [wait-for-receipt
+           (->* (hex-string?)
+                (#:timeout real? #:interval real? #:provider (or/c #f provider?))
+                hash?)]
+          [send-transaction/receipt (->* (tx/c) (#:provider (or/c #f provider?)) hash?)]
+          [receipt-succeeded? (-> hash? boolean?)]))
 
 (define block-param/c
   (or/c exact-nonnegative-integer? "latest" "earliest" "pending" "safe" "finalized"))
@@ -131,4 +136,4 @@
   (wait-for-receipt (eth-send-transaction tx #:provider provider) #:provider provider))
 
 (define (receipt-succeeded? receipt)
-  (equal? (hash-ref receipt 'status #f) "0x1"))
+  (receipt-status->boolean 'receipt-succeeded? (hash-ref receipt 'status #f)))

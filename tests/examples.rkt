@@ -31,7 +31,8 @@
         (with-output-to-string
           (lambda ()
             (parameterize ([current-custodian custodian]
-                           [current-provider #f])
+                           [current-provider #f]
+                           [current-account #f])
               (dynamic-require (build-path examples-dir name) #f)))))
       (lambda () (custodian-shutdown-all custodian))))
 
@@ -75,6 +76,14 @@
         (lambda ()
           (show-error (error 'h "a\0\1b\tc\r\nd\e")))))
     (check-equal? out "> (error 'h \"a\\u0000\\u0001b\\tc\\r\\nd\\e\")\n; exn:fail\n; h: a…b…c…\n; d…\n"))
+
+  (test-case "show-error drops lines of control characters and a trailing colon before them"
+    (define out
+      (with-output-to-string
+        (lambda ()
+          (show-error (error 'eth_call "execution reverted: custom error 0xcf479181: \0\0\1\n\0\5")))))
+    (check-equal? (member "; exn:fail" (string-split out "\n" #:trim? #f))
+                  '("; exn:fail" "; eth_call: execution reverted: custom error 0xcf479181" "")))
 
   (test-case "show-error fails when nothing is raised"
     (check-exn #rx"^show-error: 1 raised no exception$"

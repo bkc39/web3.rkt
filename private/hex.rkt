@@ -4,7 +4,11 @@
 ;; their input.  Hex strings here always start with 0x.
 
 (provide bytes->hex
-         hex->bytes)
+         hex->bytes
+         hex-data-string?)
+
+(define (hex-data-string? v)
+  (and (string? v) (regexp-match? #px"^0x(?:[0-9a-fA-F]{2})*$" v)))
 
 (define (bytes->hex bs)
   (string-append

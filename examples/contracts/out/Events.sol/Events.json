@@ -1,0 +1,949 @@
+{
+  "abi": [
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "",
+          "type": "string"
+        }
+      ],
+      "name": "Bare",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "i",
+          "type": "uint256"
+        }
+      ],
+      "name": "Counted",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "bool",
+          "name": "flag",
+          "type": "bool"
+        },
+        {
+          "indexed": true,
+          "internalType": "int8",
+          "name": "delta",
+          "type": "int8"
+        },
+        {
+          "indexed": true,
+          "internalType": "bytes3",
+          "name": "code",
+          "type": "bytes3"
+        }
+      ],
+      "name": "Flags",
+      "type": "event"
+    },
+    {
+      "anonymous": true,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "a",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "b",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "c",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "d",
+          "type": "uint256"
+        }
+      ],
+      "name": "Four",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256[]",
+          "name": "ids",
+          "type": "uint256[]"
+        },
+        {
+          "indexed": true,
+          "internalType": "string[]",
+          "name": "names",
+          "type": "string[]"
+        },
+        {
+          "indexed": true,
+          "internalType": "uint8[2]",
+          "name": "pair",
+          "type": "uint8[2]"
+        }
+      ],
+      "name": "Lists",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256[][]",
+          "name": "grid",
+          "type": "uint256[][]"
+        },
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "id",
+              "type": "uint256"
+            },
+            {
+              "internalType": "string",
+              "name": "label",
+              "type": "string"
+            }
+          ],
+          "indexed": true,
+          "internalType": "struct Events.Pair[]",
+          "name": "pairs",
+          "type": "tuple[]"
+        }
+      ],
+      "name": "Nested",
+      "type": "event"
+    },
+    {
+      "anonymous": true,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "sender",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "value",
+          "type": "uint256"
+        }
+      ],
+      "name": "Note",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "id",
+              "type": "uint256"
+            },
+            {
+              "internalType": "string",
+              "name": "label",
+              "type": "string"
+            }
+          ],
+          "indexed": true,
+          "internalType": "struct Events.Pair",
+          "name": "pair",
+          "type": "tuple"
+        },
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "id",
+              "type": "uint256"
+            },
+            {
+              "internalType": "string",
+              "name": "label",
+              "type": "string"
+            }
+          ],
+          "indexed": false,
+          "internalType": "struct Events.Pair",
+          "name": "plain",
+          "type": "tuple"
+        }
+      ],
+      "name": "Paired",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "string",
+          "name": "tag",
+          "type": "string"
+        },
+        {
+          "indexed": true,
+          "internalType": "bytes",
+          "name": "blob",
+          "type": "bytes"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "sender",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "text",
+          "type": "string"
+        }
+      ],
+      "name": "Tagged",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "from",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "to",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "tokenId",
+          "type": "uint256"
+        }
+      ],
+      "name": "Transfer",
+      "type": "event"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "x",
+          "type": "uint256"
+        },
+        {
+          "internalType": "string",
+          "name": "s",
+          "type": "string"
+        }
+      ],
+      "name": "bare",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "n",
+          "type": "uint256"
+        }
+      ],
+      "name": "count",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bool",
+          "name": "flag",
+          "type": "bool"
+        },
+        {
+          "internalType": "int8",
+          "name": "delta",
+          "type": "int8"
+        },
+        {
+          "internalType": "bytes3",
+          "name": "code",
+          "type": "bytes3"
+        }
+      ],
+      "name": "flags",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256[]",
+          "name": "ids",
+          "type": "uint256[]"
+        },
+        {
+          "internalType": "string[]",
+          "name": "names",
+          "type": "string[]"
+        },
+        {
+          "internalType": "uint8[2]",
+          "name": "pair",
+          "type": "uint8[2]"
+        }
+      ],
+      "name": "lists",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256[][]",
+          "name": "grid",
+          "type": "uint256[][]"
+        },
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "id",
+              "type": "uint256"
+            },
+            {
+              "internalType": "string",
+              "name": "label",
+              "type": "string"
+            }
+          ],
+          "internalType": "struct Events.Pair[]",
+          "name": "pairs",
+          "type": "tuple[]"
+        }
+      ],
+      "name": "nested",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "value",
+          "type": "uint256"
+        }
+      ],
+      "name": "note",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "string",
+          "name": "label",
+          "type": "string"
+        }
+      ],
+      "name": "paired",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "tag_",
+          "type": "string"
+        },
+        {
+          "internalType": "bytes",
+          "name": "blob",
+          "type": "bytes"
+        },
+        {
+          "internalType": "string",
+          "name": "text",
+          "type": "string"
+        }
+      ],
+      "name": "tag",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "to",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "tokenId",
+          "type": "uint256"
+        }
+      ],
+      "name": "transferNft",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
+  ],
+  "bytecode": {
+    "object": "0x6080604052348015600e575f5ffd5b506114108061001c5f395ff3fe608060405234801561000f575f5ffd5b5060043610610091575f3560e01c80635d9b070f116100645780635d9b070f1461010557806360cc1121146101215780636165bc1e1461013d5780636b742a3f14610159578063b8f277d91461017557610091565b8063244109fd146100955780633b3546c8146100b15780635284a245146100cd57806353bcc9c5146100e9575b5f5ffd5b6100af60048036038101906100aa91906105ed565b610191565b005b6100cb60048036038101906100c69190610670565b6101e9565b005b6100e760048036038101906100e29190610670565b610234565b005b61010360048036038101906100fe9190610772565b610276565b005b61011f600480360381019061011a9190610858565b6102ef565b005b61013b6004803603810190610136919061090f565b61032f565b005b610157600480360381019061015291906109a2565b61038e565b005b610173600480360381019061016e9190610858565b610416565b005b61018f600480360381019061018a9190610afc565b6104c4565b005b807cffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1916825f0b8415157fb2e3cf2c1dd3a68f5412a6eba0b8dbfce1d0e75c8fe697a8a410e1b19d17b37b60405160405180910390a4505050565b5f5f90505b8181101561023057807f15df0a6785153dfd625c8af51397704c7ddaff0690e5076243b5e52f4a0d540960405160405180910390a280806001019150506101ee565b5050565b3373ffffffffffffffffffffffffffffffffffffffff16816040516102599190610b89565b60405180910390a18060036002600160405160405180910390a450565b806040516102849190610c9b565b6040518091039020838360405161029c929190610e08565b604051809103902086866040516102b4929190610e92565b60405180910390207f58f467372b4f54586d5c6e4a656fbfad514cc4c491b6570c229b2cc8502b99f160405160405180910390a45050505050565b7f8cccb0c5b28f620a5e57ab28294c9328b43da0c2b64b1c4c4680b4f8a3d42d3c83838360405161032293929190610ee6565b60405180910390a1505050565b808273ffffffffffffffffffffffffffffffffffffffff163373ffffffffffffffffffffffffffffffffffffffff167fddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef60405160405180910390a45050565b3373ffffffffffffffffffffffffffffffffffffffff1684846040516103b5929190610f44565b604051809103902087876040516103cd929190610f8a565b60405180910390207f56674d9d23bd3ef0d98e964e72b0cd1c72ea99340fbb1850c3cd4e9996d3b73a8585604051610406929190610fa2565b60405180910390a4505050505050565b5f604051806040016040528085815260200184848080601f0160208091040260200160405190810160405280939291908181526020018383808284375f81840152601f19601f8201169050808301925050505050505081525090508060405161047f919061107e565b60405180910390207fec4f9132e752f135bc5fbb7e34044b5354ead3c3ca29ec16ce7be28d53fdc414826040516104b69190611125565b60405180910390a250505050565b81816040516104d4929190611252565b604051809103902084846040516104ec9291906113c2565b60405180910390207f7d18048971f2ec5a741a98089e81f036a07f92da1a4321c2dc35c6ce55f8915560405160405180910390a350505050565b5f5ffd5b5f5ffd5b5f8115159050919050565b6105428161052e565b811461054c575f5ffd5b50565b5f8135905061055d81610539565b92915050565b5f815f0b9050919050565b61057781610563565b8114610581575f5ffd5b50565b5f813590506105928161056e565b92915050565b5f7fffffff000000000000000000000000000000000000000000000000000000000082169050919050565b6105cc81610598565b81146105d6575f5ffd5b50565b5f813590506105e7816105c3565b92915050565b5f5f5f6060848603121561060457610603610526565b5b5f6106118682870161054f565b935050602061062286828701610584565b9250506040610633868287016105d9565b9150509250925092565b5f819050919050565b61064f8161063d565b8114610659575f5ffd5b50565b5f8135905061066a81610646565b92915050565b5f6020828403121561068557610684610526565b5b5f6106928482850161065c565b91505092915050565b5f5ffd5b5f5ffd5b5f5ffd5b5f5f83601f8401126106bc576106bb61069b565b5b8235905067ffffffffffffffff8111156106d9576106d861069f565b5b6020830191508360208202830111156106f5576106f46106a3565b5b9250929050565b5f5f83601f8401126107115761071061069b565b5b8235905067ffffffffffffffff81111561072e5761072d61069f565b5b60208301915083602082028301111561074a576107496106a3565b5b9250929050565b5f8190508260206002028201111561076c5761076b6106a3565b5b92915050565b5f5f5f5f5f6080868803121561078b5761078a610526565b5b5f86013567ffffffffffffffff8111156107a8576107a761052a565b5b6107b4888289016106a7565b9550955050602086013567ffffffffffffffff8111156107d7576107d661052a565b5b6107e3888289016106fc565b935093505060406107f688828901610751565b9150509295509295909350565b5f5f83601f8401126108185761081761069b565b5b8235905067ffffffffffffffff8111156108355761083461069f565b5b602083019150836001820283011115610851576108506106a3565b5b9250929050565b5f5f5f6040848603121561086f5761086e610526565b5b5f61087c8682870161065c565b935050602084013567ffffffffffffffff81111561089d5761089c61052a565b5b6108a986828701610803565b92509250509250925092565b5f73ffffffffffffffffffffffffffffffffffffffff82169050919050565b5f6108de826108b5565b9050919050565b6108ee816108d4565b81146108f8575f5ffd5b50565b5f81359050610909816108e5565b92915050565b5f5f6040838503121561092557610924610526565b5b5f610932858286016108fb565b92505060206109438582860161065c565b9150509250929050565b5f5f83601f8401126109625761096161069b565b5b8235905067ffffffffffffffff81111561097f5761097e61069f565b5b60208301915083600182028301111561099b5761099a6106a3565b5b9250929050565b5f5f5f5f5f5f606087890312156109bc576109bb610526565b5b5f87013567ffffffffffffffff8111156109d9576109d861052a565b5b6109e589828a01610803565b9650965050602087013567ffffffffffffffff811115610a0857610a0761052a565b5b610a1489828a0161094d565b9450945050604087013567ffffffffffffffff811115610a3757610a3661052a565b5b610a4389828a01610803565b92509250509295509295509295565b5f5f83601f840112610a6757610a6661069b565b5b8235905067ffffffffffffffff811115610a8457610a8361069f565b5b602083019150836020820283011115610aa057610a9f6106a3565b5b9250929050565b5f5f83601f840112610abc57610abb61069b565b5b8235905067ffffffffffffffff811115610ad957610ad861069f565b5b602083019150836020820283011115610af557610af46106a3565b5b9250929050565b5f5f5f5f60408587031215610b1457610b13610526565b5b5f85013567ffffffffffffffff811115610b3157610b3061052a565b5b610b3d87828801610a52565b9450945050602085013567ffffffffffffffff811115610b6057610b5f61052a565b5b610b6c87828801610aa7565b925092505092959194509250565b610b838161063d565b82525050565b5f602082019050610b9c5f830184610b7a565b92915050565b5f60029050919050565b5f81905092915050565b5f819050919050565b5f60ff82169050919050565b610bd481610bbf565b82525050565b5f610be58383610bcb565b60208301905092915050565b610bfa81610bbf565b8114610c04575f5ffd5b50565b5f81359050610c1581610bf1565b92915050565b5f610c296020840184610c07565b905092915050565b5f602082019050919050565b610c4681610ba2565b610c508184610bac565b9250610c5b82610bb6565b805f5b83811015610c9357610c708284610c1b565b610c7a8782610bda565b9650610c8583610c31565b925050600181019050610c5e565b505050505050565b5f610ca68284610c3d565b60408201915081905092915050565b5f81905092915050565b5f819050919050565b5f81905092915050565b828183375f83830152505050565b5f601f19601f8301169050919050565b5f610cfb8385610cc8565b9350610d08838584610cd2565b610d1183610ce0565b840190509392505050565b5f610d28848484610cf0565b90509392505050565b5f5ffd5b5f5ffd5b5f5ffd5b5f5f83356001602003843603038112610d5957610d58610d39565b5b83810192508235915060208301925067ffffffffffffffff821115610d8157610d80610d31565b5b600182023603831315610d9757610d96610d35565b5b509250929050565b5f602082019050919050565b5f610db68385610cb5565b9350610dc182610cbf565b805f5b85811015610dfb57610dd68284610d3d565b610de1898284610d1c565b9850610dec84610d9f565b93505050600181019050610dc4565b5085925050509392505050565b5f610e14828486610dab565b91508190509392505050565b5f81905092915050565b5f5ffd5b82818337505050565b5f610e428385610e20565b93507f07ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff831115610e7557610e74610e2a565b5b602083029250610e86838584610e2e565b82840190509392505050565b5f610e9e828486610e37565b91508190509392505050565b5f82825260208201905092915050565b5f610ec58385610eaa565b9350610ed2838584610cd2565b610edb83610ce0565b840190509392505050565b5f604082019050610ef95f830186610b7a565b8181036020830152610f0c818486610eba565b9050949350505050565b5f81905092915050565b5f610f2b8385610f16565b9350610f38838584610cd2565b82840190509392505050565b5f610f50828486610f20565b91508190509392505050565b5f81905092915050565b5f610f718385610f5c565b9350610f7e838584610cd2565b82840190509392505050565b5f610f96828486610f66565b91508190509392505050565b5f6020820190508181035f830152610fbb818486610eba565b90509392505050565b610fcd8161063d565b82525050565b5f610fde8383610fc4565b60208301905092915050565b5f81519050919050565b8281835e5f83830152505050565b5f61100c82610fea565b6110168185610cc8565b9350611026818560208601610ff4565b61102f81610ce0565b840191505092915050565b5f6110458383611002565b905092915050565b5f5f83015f83015161105f8582610fd3565b9450506020830151611071858261103a565b9450508391505092915050565b5f611089828461104d565b915081905092915050565b61109d8161063d565b82525050565b5f82825260208201905092915050565b5f6110bd82610fea565b6110c781856110a3565b93506110d7818560208601610ff4565b6110e081610ce0565b840191505092915050565b5f604083015f8301516111005f860182611094565b506020830151848203602086015261111882826110b3565b9150508091505092915050565b5f6020820190508181035f83015261113d81846110eb565b905092915050565b5f81905092915050565b5f819050919050565b5f611166602084018461065c565b905092915050565b5f5f830161117e5f840184611158565b6111888582610fd3565b9450506111986020840184610d3d565b6111a3868284610d1c565b955050508391505092915050565b5f6111bc838361116e565b905092915050565b5f823560016040038336030381126111df576111de610d39565b5b82810191505092915050565b5f602082019050919050565b5f6112028385611145565b935061120d8261114f565b805f5b858110156112455761122282846111c4565b61122c88826111b1565b9750611237836111eb565b925050600181019050611210565b5085925050509392505050565b5f61125e8284866111f7565b91508190509392505050565b5f81905092915050565b5f819050919050565b5f81905092915050565b5f611292838561127d565b93507f07ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8311156112c5576112c4610e2a565b5b6020830292506112d6838584610e2e565b82840190509392505050565b5f6112ee848484611287565b90509392505050565b5f5f8335600160200384360303811261131357611312610d39565b5b83810192508235915060208301925067ffffffffffffffff82111561133b5761133a610d31565b5b60208202360383131561135157611350610d35565b5b509250929050565b5f602082019050919050565b5f611370838561126a565b935061137b82611274565b805f5b858110156113b55761139082846112f7565b61139b8982846112e2565b98506113a684611359565b9350505060018101905061137e565b5085925050509392505050565b5f6113ce828486611365565b9150819050939250505056fea26469706673582212207c622600ba8756ac2f56a474977445182a0454333321468bca65db9d035e038664736f6c63430008210033"
+  },
+  "deployedBytecode": {
+    "object": "0x608060405234801561000f575f5ffd5b5060043610610091575f3560e01c80635d9b070f116100645780635d9b070f1461010557806360cc1121146101215780636165bc1e1461013d5780636b742a3f14610159578063b8f277d91461017557610091565b8063244109fd146100955780633b3546c8146100b15780635284a245146100cd57806353bcc9c5146100e9575b5f5ffd5b6100af60048036038101906100aa91906105ed565b610191565b005b6100cb60048036038101906100c69190610670565b6101e9565b005b6100e760048036038101906100e29190610670565b610234565b005b61010360048036038101906100fe9190610772565b610276565b005b61011f600480360381019061011a9190610858565b6102ef565b005b61013b6004803603810190610136919061090f565b61032f565b005b610157600480360381019061015291906109a2565b61038e565b005b610173600480360381019061016e9190610858565b610416565b005b61018f600480360381019061018a9190610afc565b6104c4565b005b807cffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1916825f0b8415157fb2e3cf2c1dd3a68f5412a6eba0b8dbfce1d0e75c8fe697a8a410e1b19d17b37b60405160405180910390a4505050565b5f5f90505b8181101561023057807f15df0a6785153dfd625c8af51397704c7ddaff0690e5076243b5e52f4a0d540960405160405180910390a280806001019150506101ee565b5050565b3373ffffffffffffffffffffffffffffffffffffffff16816040516102599190610b89565b60405180910390a18060036002600160405160405180910390a450565b806040516102849190610c9b565b6040518091039020838360405161029c929190610e08565b604051809103902086866040516102b4929190610e92565b60405180910390207f58f467372b4f54586d5c6e4a656fbfad514cc4c491b6570c229b2cc8502b99f160405160405180910390a45050505050565b7f8cccb0c5b28f620a5e57ab28294c9328b43da0c2b64b1c4c4680b4f8a3d42d3c83838360405161032293929190610ee6565b60405180910390a1505050565b808273ffffffffffffffffffffffffffffffffffffffff163373ffffffffffffffffffffffffffffffffffffffff167fddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef60405160405180910390a45050565b3373ffffffffffffffffffffffffffffffffffffffff1684846040516103b5929190610f44565b604051809103902087876040516103cd929190610f8a565b60405180910390207f56674d9d23bd3ef0d98e964e72b0cd1c72ea99340fbb1850c3cd4e9996d3b73a8585604051610406929190610fa2565b60405180910390a4505050505050565b5f604051806040016040528085815260200184848080601f0160208091040260200160405190810160405280939291908181526020018383808284375f81840152601f19601f8201169050808301925050505050505081525090508060405161047f919061107e565b60405180910390207fec4f9132e752f135bc5fbb7e34044b5354ead3c3ca29ec16ce7be28d53fdc414826040516104b69190611125565b60405180910390a250505050565b81816040516104d4929190611252565b604051809103902084846040516104ec9291906113c2565b60405180910390207f7d18048971f2ec5a741a98089e81f036a07f92da1a4321c2dc35c6ce55f8915560405160405180910390a350505050565b5f5ffd5b5f5ffd5b5f8115159050919050565b6105428161052e565b811461054c575f5ffd5b50565b5f8135905061055d81610539565b92915050565b5f815f0b9050919050565b61057781610563565b8114610581575f5ffd5b50565b5f813590506105928161056e565b92915050565b5f7fffffff000000000000000000000000000000000000000000000000000000000082169050919050565b6105cc81610598565b81146105d6575f5ffd5b50565b5f813590506105e7816105c3565b92915050565b5f5f5f6060848603121561060457610603610526565b5b5f6106118682870161054f565b935050602061062286828701610584565b9250506040610633868287016105d9565b9150509250925092565b5f819050919050565b61064f8161063d565b8114610659575f5ffd5b50565b5f8135905061066a81610646565b92915050565b5f6020828403121561068557610684610526565b5b5f6106928482850161065c565b91505092915050565b5f5ffd5b5f5ffd5b5f5ffd5b5f5f83601f8401126106bc576106bb61069b565b5b8235905067ffffffffffffffff8111156106d9576106d861069f565b5b6020830191508360208202830111156106f5576106f46106a3565b5b9250929050565b5f5f83601f8401126107115761071061069b565b5b8235905067ffffffffffffffff81111561072e5761072d61069f565b5b60208301915083602082028301111561074a576107496106a3565b5b9250929050565b5f8190508260206002028201111561076c5761076b6106a3565b5b92915050565b5f5f5f5f5f6080868803121561078b5761078a610526565b5b5f86013567ffffffffffffffff8111156107a8576107a761052a565b5b6107b4888289016106a7565b9550955050602086013567ffffffffffffffff8111156107d7576107d661052a565b5b6107e3888289016106fc565b935093505060406107f688828901610751565b9150509295509295909350565b5f5f83601f8401126108185761081761069b565b5b8235905067ffffffffffffffff8111156108355761083461069f565b5b602083019150836001820283011115610851576108506106a3565b5b9250929050565b5f5f5f6040848603121561086f5761086e610526565b5b5f61087c8682870161065c565b935050602084013567ffffffffffffffff81111561089d5761089c61052a565b5b6108a986828701610803565b92509250509250925092565b5f73ffffffffffffffffffffffffffffffffffffffff82169050919050565b5f6108de826108b5565b9050919050565b6108ee816108d4565b81146108f8575f5ffd5b50565b5f81359050610909816108e5565b92915050565b5f5f6040838503121561092557610924610526565b5b5f610932858286016108fb565b92505060206109438582860161065c565b9150509250929050565b5f5f83601f8401126109625761096161069b565b5b8235905067ffffffffffffffff81111561097f5761097e61069f565b5b60208301915083600182028301111561099b5761099a6106a3565b5b9250929050565b5f5f5f5f5f5f606087890312156109bc576109bb610526565b5b5f87013567ffffffffffffffff8111156109d9576109d861052a565b5b6109e589828a01610803565b9650965050602087013567ffffffffffffffff811115610a0857610a0761052a565b5b610a1489828a0161094d565b9450945050604087013567ffffffffffffffff811115610a3757610a3661052a565b5b610a4389828a01610803565b92509250509295509295509295565b5f5f83601f840112610a6757610a6661069b565b5b8235905067ffffffffffffffff811115610a8457610a8361069f565b5b602083019150836020820283011115610aa057610a9f6106a3565b5b9250929050565b5f5f83601f840112610abc57610abb61069b565b5b8235905067ffffffffffffffff811115610ad957610ad861069f565b5b602083019150836020820283011115610af557610af46106a3565b5b9250929050565b5f5f5f5f60408587031215610b1457610b13610526565b5b5f85013567ffffffffffffffff811115610b3157610b3061052a565b5b610b3d87828801610a52565b9450945050602085013567ffffffffffffffff811115610b6057610b5f61052a565b5b610b6c87828801610aa7565b925092505092959194509250565b610b838161063d565b82525050565b5f602082019050610b9c5f830184610b7a565b92915050565b5f60029050919050565b5f81905092915050565b5f819050919050565b5f60ff82169050919050565b610bd481610bbf565b82525050565b5f610be58383610bcb565b60208301905092915050565b610bfa81610bbf565b8114610c04575f5ffd5b50565b5f81359050610c1581610bf1565b92915050565b5f610c296020840184610c07565b905092915050565b5f602082019050919050565b610c4681610ba2565b610c508184610bac565b9250610c5b82610bb6565b805f5b83811015610c9357610c708284610c1b565b610c7a8782610bda565b9650610c8583610c31565b925050600181019050610c5e565b505050505050565b5f610ca68284610c3d565b60408201915081905092915050565b5f81905092915050565b5f819050919050565b5f81905092915050565b828183375f83830152505050565b5f601f19601f8301169050919050565b5f610cfb8385610cc8565b9350610d08838584610cd2565b610d1183610ce0565b840190509392505050565b5f610d28848484610cf0565b90509392505050565b5f5ffd5b5f5ffd5b5f5ffd5b5f5f83356001602003843603038112610d5957610d58610d39565b5b83810192508235915060208301925067ffffffffffffffff821115610d8157610d80610d31565b5b600182023603831315610d9757610d96610d35565b5b509250929050565b5f602082019050919050565b5f610db68385610cb5565b9350610dc182610cbf565b805f5b85811015610dfb57610dd68284610d3d565b610de1898284610d1c565b9850610dec84610d9f565b93505050600181019050610dc4565b5085925050509392505050565b5f610e14828486610dab565b91508190509392505050565b5f81905092915050565b5f5ffd5b82818337505050565b5f610e428385610e20565b93507f07ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff831115610e7557610e74610e2a565b5b602083029250610e86838584610e2e565b82840190509392505050565b5f610e9e828486610e37565b91508190509392505050565b5f82825260208201905092915050565b5f610ec58385610eaa565b9350610ed2838584610cd2565b610edb83610ce0565b840190509392505050565b5f604082019050610ef95f830186610b7a565b8181036020830152610f0c818486610eba565b9050949350505050565b5f81905092915050565b5f610f2b8385610f16565b9350610f38838584610cd2565b82840190509392505050565b5f610f50828486610f20565b91508190509392505050565b5f81905092915050565b5f610f718385610f5c565b9350610f7e838584610cd2565b82840190509392505050565b5f610f96828486610f66565b91508190509392505050565b5f6020820190508181035f830152610fbb818486610eba565b90509392505050565b610fcd8161063d565b82525050565b5f610fde8383610fc4565b60208301905092915050565b5f81519050919050565b8281835e5f83830152505050565b5f61100c82610fea565b6110168185610cc8565b9350611026818560208601610ff4565b61102f81610ce0565b840191505092915050565b5f6110458383611002565b905092915050565b5f5f83015f83015161105f8582610fd3565b9450506020830151611071858261103a565b9450508391505092915050565b5f611089828461104d565b915081905092915050565b61109d8161063d565b82525050565b5f82825260208201905092915050565b5f6110bd82610fea565b6110c781856110a3565b93506110d7818560208601610ff4565b6110e081610ce0565b840191505092915050565b5f604083015f8301516111005f860182611094565b506020830151848203602086015261111882826110b3565b9150508091505092915050565b5f6020820190508181035f83015261113d81846110eb565b905092915050565b5f81905092915050565b5f819050919050565b5f611166602084018461065c565b905092915050565b5f5f830161117e5f840184611158565b6111888582610fd3565b9450506111986020840184610d3d565b6111a3868284610d1c565b955050508391505092915050565b5f6111bc838361116e565b905092915050565b5f823560016040038336030381126111df576111de610d39565b5b82810191505092915050565b5f602082019050919050565b5f6112028385611145565b935061120d8261114f565b805f5b858110156112455761122282846111c4565b61122c88826111b1565b9750611237836111eb565b925050600181019050611210565b5085925050509392505050565b5f61125e8284866111f7565b91508190509392505050565b5f81905092915050565b5f819050919050565b5f81905092915050565b5f611292838561127d565b93507f07ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8311156112c5576112c4610e2a565b5b6020830292506112d6838584610e2e565b82840190509392505050565b5f6112ee848484611287565b90509392505050565b5f5f8335600160200384360303811261131357611312610d39565b5b83810192508235915060208301925067ffffffffffffffff82111561133b5761133a610d31565b5b60208202360383131561135157611350610d35565b5b509250929050565b5f602082019050919050565b5f611370838561126a565b935061137b82611274565b805f5b858110156113b55761139082846112f7565b61139b8982846112e2565b98506113a684611359565b9350505060018101905061137e565b5085925050509392505050565b5f6113ce828486611365565b9150819050939250505056fea26469706673582212207c622600ba8756ac2f56a474977445182a0454333321468bca65db9d035e038664736f6c63430008210033"
+  },
+  "metadata": {
+    "compiler": {
+      "version": "0.8.33+commit.64118f21"
+    },
+    "language": "Solidity",
+    "output": {
+      "abi": [
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": false,
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            },
+            {
+              "indexed": false,
+              "internalType": "string",
+              "name": "",
+              "type": "string"
+            }
+          ],
+          "name": "Bare",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "i",
+              "type": "uint256"
+            }
+          ],
+          "name": "Counted",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "bool",
+              "name": "flag",
+              "type": "bool"
+            },
+            {
+              "indexed": true,
+              "internalType": "int8",
+              "name": "delta",
+              "type": "int8"
+            },
+            {
+              "indexed": true,
+              "internalType": "bytes3",
+              "name": "code",
+              "type": "bytes3"
+            }
+          ],
+          "name": "Flags",
+          "type": "event"
+        },
+        {
+          "anonymous": true,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "a",
+              "type": "uint256"
+            },
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "b",
+              "type": "uint256"
+            },
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "c",
+              "type": "uint256"
+            },
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "d",
+              "type": "uint256"
+            }
+          ],
+          "name": "Four",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "uint256[]",
+              "name": "ids",
+              "type": "uint256[]"
+            },
+            {
+              "indexed": true,
+              "internalType": "string[]",
+              "name": "names",
+              "type": "string[]"
+            },
+            {
+              "indexed": true,
+              "internalType": "uint8[2]",
+              "name": "pair",
+              "type": "uint8[2]"
+            }
+          ],
+          "name": "Lists",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "uint256[][]",
+              "name": "grid",
+              "type": "uint256[][]"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "uint256",
+                  "name": "id",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "string",
+                  "name": "label",
+                  "type": "string"
+                }
+              ],
+              "indexed": true,
+              "internalType": "struct Events.Pair[]",
+              "name": "pairs",
+              "type": "tuple[]"
+            }
+          ],
+          "name": "Nested",
+          "type": "event"
+        },
+        {
+          "anonymous": true,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "address",
+              "name": "sender",
+              "type": "address"
+            },
+            {
+              "indexed": false,
+              "internalType": "uint256",
+              "name": "value",
+              "type": "uint256"
+            }
+          ],
+          "name": "Note",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "components": [
+                {
+                  "internalType": "uint256",
+                  "name": "id",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "string",
+                  "name": "label",
+                  "type": "string"
+                }
+              ],
+              "indexed": true,
+              "internalType": "struct Events.Pair",
+              "name": "pair",
+              "type": "tuple"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "uint256",
+                  "name": "id",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "string",
+                  "name": "label",
+                  "type": "string"
+                }
+              ],
+              "indexed": false,
+              "internalType": "struct Events.Pair",
+              "name": "plain",
+              "type": "tuple"
+            }
+          ],
+          "name": "Paired",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "string",
+              "name": "tag",
+              "type": "string"
+            },
+            {
+              "indexed": true,
+              "internalType": "bytes",
+              "name": "blob",
+              "type": "bytes"
+            },
+            {
+              "indexed": true,
+              "internalType": "address",
+              "name": "sender",
+              "type": "address"
+            },
+            {
+              "indexed": false,
+              "internalType": "string",
+              "name": "text",
+              "type": "string"
+            }
+          ],
+          "name": "Tagged",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "address",
+              "name": "from",
+              "type": "address"
+            },
+            {
+              "indexed": true,
+              "internalType": "address",
+              "name": "to",
+              "type": "address"
+            },
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "tokenId",
+              "type": "uint256"
+            }
+          ],
+          "name": "Transfer",
+          "type": "event"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "x",
+              "type": "uint256"
+            },
+            {
+              "internalType": "string",
+              "name": "s",
+              "type": "string"
+            }
+          ],
+          "name": "bare",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "n",
+              "type": "uint256"
+            }
+          ],
+          "name": "count",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "bool",
+              "name": "flag",
+              "type": "bool"
+            },
+            {
+              "internalType": "int8",
+              "name": "delta",
+              "type": "int8"
+            },
+            {
+              "internalType": "bytes3",
+              "name": "code",
+              "type": "bytes3"
+            }
+          ],
+          "name": "flags",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256[]",
+              "name": "ids",
+              "type": "uint256[]"
+            },
+            {
+              "internalType": "string[]",
+              "name": "names",
+              "type": "string[]"
+            },
+            {
+              "internalType": "uint8[2]",
+              "name": "pair",
+              "type": "uint8[2]"
+            }
+          ],
+          "name": "lists",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256[][]",
+              "name": "grid",
+              "type": "uint256[][]"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "uint256",
+                  "name": "id",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "string",
+                  "name": "label",
+                  "type": "string"
+                }
+              ],
+              "internalType": "struct Events.Pair[]",
+              "name": "pairs",
+              "type": "tuple[]"
+            }
+          ],
+          "name": "nested",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "value",
+              "type": "uint256"
+            }
+          ],
+          "name": "note",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "id",
+              "type": "uint256"
+            },
+            {
+              "internalType": "string",
+              "name": "label",
+              "type": "string"
+            }
+          ],
+          "name": "paired",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "string",
+              "name": "tag_",
+              "type": "string"
+            },
+            {
+              "internalType": "bytes",
+              "name": "blob",
+              "type": "bytes"
+            },
+            {
+              "internalType": "string",
+              "name": "text",
+              "type": "string"
+            }
+          ],
+          "name": "tag",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "address",
+              "name": "to",
+              "type": "address"
+            },
+            {
+              "internalType": "uint256",
+              "name": "tokenId",
+              "type": "uint256"
+            }
+          ],
+          "name": "transferNft",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        }
+      ],
+      "devdoc": {
+        "kind": "dev",
+        "methods": {},
+        "version": 1
+      },
+      "userdoc": {
+        "kind": "user",
+        "methods": {},
+        "version": 1
+      }
+    },
+    "settings": {
+      "compilationTarget": {
+        "Events.sol": "Events"
+      },
+      "evmVersion": "cancun",
+      "libraries": {},
+      "metadata": {
+        "bytecodeHash": "ipfs"
+      },
+      "optimizer": {
+        "enabled": false,
+        "runs": 200
+      },
+      "remappings": []
+    },
+    "sources": {
+      "Events.sol": {
+        "keccak256": "0xa78e4578d9c6160064ea06276bff973049828281d4aa5cfe69dcd501fde76acc",
+        "license": "Apache-2.0 OR MIT",
+        "urls": [
+          "bzz-raw://8c223798e35db923c927e14f21cfaddb23133dd31c5263b43ce097e4f644e934",
+          "dweb:/ipfs/QmQqbgDuGPFdnGbAD1tuEw9sUGYwNmizsi6mCZpijbBCvR"
+        ]
+      }
+    },
+    "version": 1
+  },
+  "methodIdentifiers": {
+    "bare(uint256,string)": "5d9b070f",
+    "count(uint256)": "3b3546c8",
+    "flags(bool,int8,bytes3)": "244109fd",
+    "lists(uint256[],string[],uint8[2])": "53bcc9c5",
+    "nested(uint256[][],(uint256,string)[])": "b8f277d9",
+    "note(uint256)": "5284a245",
+    "paired(uint256,string)": "6b742a3f",
+    "tag(string,bytes,string)": "6165bc1e",
+    "transferNft(address,uint256)": "60cc1121"
+  }
+}

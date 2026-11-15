@@ -204,7 +204,7 @@
       (check-raises-type s position (string->abi-signature s))))
 
   (test-case "ABI errors are web3 errors"
-    (check-pred exn:fail:web3? (with-handlers ([exn:fail? values]) (abi-type "uint7")))
+    (check-pred exn:fail:web3? (raised (lambda () (abi-type "uint7"))))
     (check-true (exn:fail:web3?
                  (exn:fail:web3:abi:value "m" (current-continuation-marks) (abi-bool) 0 '(0)))))
 
