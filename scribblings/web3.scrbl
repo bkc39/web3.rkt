@@ -5,6 +5,7 @@
                     racket/generic
                     web3
                     web3/abi
+                    web3/abi/description
                     web3/abi/event-type
                     web3/abi/type
                     web3/abi/vectors
@@ -490,7 +491,8 @@ Whether @racket[v] is an address string in its EIP-55 form.
 Encodes and decodes values for the
 @hyperlink["https://docs.soliditylang.org/en/latest/abi-spec.html"]{contract ABI}
 and decodes reverts.  Also provides everything in
-@racketmodname[web3/abi/type] and @racketmodname[web3/abi/event-type].
+@racketmodname[web3/abi/type], @racketmodname[web3/abi/event-type] and
+@racketmodname[web3/abi/description].
 
 @subsection{ABI Types}
 
@@ -900,6 +902,186 @@ Solidity's decoder accepts them.}
 @defthing[abi-reject-vectors (listof abi-reject-vector?)]{
 The rejected inputs.}
 
+@subsection{ABI Descriptions}
+
+@defmodule[web3/abi/description]
+
+A contract's interface: its functions, events, errors, constructor,
+fallback and receive, as @deftech{items}.  An item is written as a struct,
+a Solidity declaration string, an s-expression or a JSON ABI object, and
+every form converts to every other.  Like @racketmodname[web3/abi/type],
+this module can be used at phase 1.
+
+@racketgrammar*[#:literals (function error constructor fallback receive event)
+ [item (function name (param ...) clause ...)
+       (error name (param ...))
+       (constructor (param ...) maybe-payable)
+       (fallback maybe-payable)
+       (receive)
+       event]
+ [clause (code:line #:returns (param ...)) #:view #:pure #:payable]
+ [param [param-name type]]
+ [param-name identifier #f]
+ [maybe-payable code:blank #:payable]]
+
+@defproc[(abi-parameter [name (or/c #f abi-parameter-name/c)] [type abi-type-spec/c]) abi-parameter?]{
+A named or unnamed parameter.  @racket[name] is an identifier that is not a
+keyword or a type.}
+
+@deftogether[(@defproc[(abi-parameter? [v any/c]) boolean?]
+              @defproc[(abi-parameter-name [p abi-parameter?]) (or/c #f string?)]
+              @defproc[(abi-parameter-type [p abi-parameter?]) abi-type?])]{}
+
+@defproc[(abi-function [name abi-identifier/c]
+                       [inputs (listof (or/c abi-parameter? abi-type-spec/c))]
+                       [outputs (listof (or/c abi-parameter? abi-type-spec/c))]
+                       [state-mutability (or/c 'pure 'view 'nonpayable 'payable) 'nonpayable])
+         abi-function?]{
+A function.  An @racket[abi-function] is an @racket[abi-signature] with its
+outputs, so it works wherever a signature does: @racket[encode-call],
+@racket[decode-result], @racket[contract-call].  A type in place of a
+parameter is an unnamed parameter.  Two parameters with one name raise
+@racket[exn:fail:web3:abi:type].
+
+@examples[#:eval abi-eval
+ (define balance-of
+   (abi-function "balanceOf" (list (abi-parameter "owner" 'address)) '(uint256) 'view))
+ balance-of
+ (abi-signature->string balance-of #:outputs? #t)
+ (bytes->hex-string (function-selector balance-of))]}
+
+@deftogether[(@defproc[(abi-function? [v any/c]) boolean?]
+              @defproc[(abi-function-parameters [f abi-function?]) (listof abi-parameter?)]
+              @defproc[(abi-function-returns [f abi-function?]) (listof abi-parameter?)]
+              @defproc[(abi-function-state-mutability [f abi-function?])
+                       (or/c 'pure 'view 'nonpayable 'payable)])]{}
+
+@defproc[(abi-error [name abi-identifier/c] [inputs (listof (or/c abi-parameter? abi-type-spec/c))])
+         abi-error?]{
+A custom error; also an @racket[abi-signature], for @racket[decode-revert]'s
+@racket[#:errors].}
+
+@deftogether[(@defproc[(abi-error? [v any/c]) boolean?]
+              @defproc[(abi-error-parameters [e abi-error?]) (listof abi-parameter?)])]{}
+
+@defproc[(abi-constructor [inputs (listof (or/c abi-parameter? abi-type-spec/c))]
+                          [state-mutability (or/c 'nonpayable 'payable) 'nonpayable])
+         abi-constructor?]{
+A constructor; also the @racket["constructor(...)"] signature
+@racket[deploy-contract] takes.}
+
+@deftogether[(@defproc[(abi-constructor? [v any/c]) boolean?]
+              @defproc[(abi-constructor-parameters [c abi-constructor?]) (listof abi-parameter?)]
+              @defproc[(abi-constructor-state-mutability [c abi-constructor?])
+                       (or/c 'nonpayable 'payable)]
+              @defproc[(abi-fallback [state-mutability (or/c 'nonpayable 'payable) 'nonpayable])
+                       abi-fallback?]
+              @defproc[(abi-fallback? [v any/c]) boolean?]
+              @defproc[(abi-fallback-state-mutability [f abi-fallback?]) (or/c 'nonpayable 'payable)]
+              @defproc[(abi-receive) abi-receive?]
+              @defproc[(abi-receive? [v any/c]) boolean?])]{
+The constructor, fallback and receive items.}
+
+@defproc[(abi-item? [v any/c]) boolean?]{Recognizes items, @racket[abi-event] included.}
+
+@defthing[abi-item-spec/c flat-contract?]{An item, a string or an s-expression:
+@racket[(or/c abi-item? string? pair?)].}
+
+@defproc[(abi-item [spec abi-item-spec/c]) abi-item?]{The item @racket[spec] denotes.}
+
+@deftogether[(@defproc[(string->abi-item [s string?]) abi-item?]
+              @defproc[(sexp->abi-item [v pair?]) abi-item?])]{
+Parse one item.  The string is a Solidity declaration without its
+semicolon, starting with @tt{function}, @tt{event}, @tt{error},
+@tt{constructor}, @tt{fallback} or @tt{receive}; @tt{external},
+@tt{public}, data locations and names of tuple components are allowed and
+dropped.  Anything else raises @racket[exn:fail:web3:abi:type], with the
+position of the offending token for a string.
+
+@examples[#:eval abi-eval
+ (string->abi-item "function balanceOf(address owner) external view returns (uint256)")
+ (eval:error (string->abi-item "function balanceOf(address owner) veiw returns (uint256)"))]}
+
+@deftogether[(@defproc[(abi-item->string [i abi-item-spec/c]) string?]
+              @defproc[(abi-item->sexp [i abi-item-spec/c]) pair?])]{
+The canonical forms.
+
+@examples[#:eval abi-eval
+ (abi-item->string '(function transfer ([to address] [amount uint256]) #:returns ([#f bool])))
+ (abi-item->sexp "constructor(string name_, uint256 supply) payable")]}
+
+@deftogether[(@defproc[(jsexpr->abi-item [v any/c]) abi-item?]
+              @defproc[(abi-item->jsexpr [i abi-item-spec/c]) hash?])]{
+An item of a Solidity JSON ABI.  @tt{internalType} and the names of tuple
+components are not kept; the legacy @tt{constant} and @tt{payable} keys
+are read.  Anything else raises @racket[exn:fail:web3:abi:type].
+
+@examples[#:eval abi-eval
+ (abi-item->jsexpr "error InsufficientBalance(uint256 have, uint256 want)")]}
+
+@defproc[(contract-abi [items (listof abi-item-spec/c)]
+                       [#:bytecode bytecode
+                                   (or/c #f bytes? (and/c string? #px"^0x(?:[0-9a-fA-F]{2})*$"))
+                                   #f])
+         contract-abi?]{
+A contract's description: its items, in order, and the init code that
+deploys it, if known.  Two functions, errors or events with one signature,
+or two constructors, fallbacks or receives, raise
+@racket[exn:fail:web3:abi:type].
+
+@examples[#:eval abi-eval
+ (define erc20
+   (contract-abi
+    (list "function balanceOf(address owner) view returns (uint256)"
+          "function transfer(address to, uint256 amount) returns (bool)"
+          "event Transfer(address indexed from, address indexed to, uint256 value)")))
+ erc20
+ (bytes->hex-string (encode-call (contract-abi-function erc20 'transfer)
+                                 "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" 250))]}
+
+@deftogether[(@defproc[(contract-abi? [v any/c]) boolean?]
+              @defproc[(contract-abi-items [d contract-abi?]) (listof abi-item?)]
+              @defproc[(contract-abi-bytecode [d contract-abi?]) (or/c #f bytes?)]
+              @defproc[(contract-abi-functions [d contract-abi?]) (listof abi-function?)]
+              @defproc[(contract-abi-events [d contract-abi?]) (listof abi-event?)]
+              @defproc[(contract-abi-errors [d contract-abi?]) (listof abi-error?)]
+              @defproc[(contract-abi-constructor [d contract-abi?]) (or/c #f abi-constructor?)]
+              @defproc[(contract-abi-fallback [d contract-abi?]) (or/c #f abi-fallback?)]
+              @defproc[(contract-abi-receive [d contract-abi?]) (or/c #f abi-receive?)])]{
+The items of each kind, in order.}
+
+@defproc[(contract-abi-function [d contract-abi?] [key (or/c symbol? string?)]
+                                [#:arity arity exact-nonnegative-integer?])
+         abi-function?]{
+The function named @racket[key], or with the signature @racket[key].  An
+overloaded name needs @racket[arity], the number of inputs, to pick one.
+A key that names no function, or more than one, is a contract violation.
+
+@examples[#:eval abi-eval
+ (define nft
+   (contract-abi
+    (list "function safeTransferFrom(address from, address to, uint256 id)"
+          "function safeTransferFrom(address from, address to, uint256 id, bytes data)")))
+ (abi-item->string (contract-abi-function nft 'safeTransferFrom #:arity 4))
+ (abi-item->string (contract-abi-function nft "safeTransferFrom(address,address,uint256)"))
+ (eval:error (contract-abi-function nft 'safeTransferFrom))]}
+
+@deftogether[(@defproc[(contract-abi-event [d contract-abi?] [key (or/c symbol? string?)]) abi-event?]
+              @defproc[(contract-abi-error [d contract-abi?] [key (or/c symbol? string?)]) abi-error?])]{
+The event or error named @racket[key], or with that signature.}
+
+@defproc[(jsexpr->contract-abi [v any/c]) contract-abi?]{
+A description from a JSON ABI (a list of items) or a compiled artifact with
+an @tt{abi}, as forge, solc, Hardhat and Truffle write them; the bytecode
+is read from the artifact.  Anything else raises
+@racket[exn:fail:web3:abi:type].}
+
+@defproc[(contract-abi->jsexpr [d contract-abi?]) (listof hash?)]{
+The JSON ABI of @racket[d].
+
+@examples[#:eval abi-eval
+ (contract-abi->jsexpr (contract-abi '((function count () #:view #:returns ([#f uint256])))))]}
+
 @section{Contracts}
 
 @defmodule[web3/contract]
@@ -915,8 +1097,8 @@ built-in @tt{Error} and @tt{Panic}.
 The sender when no @racket[#:from] is given.  Sending with no sender raises
 @racket[exn:fail:web3]; a call with none has no @tt{from}.}
 
-@defproc[(contract-call [address (abi-value/c 'address)]
-                        [signature (or/c string? abi-signature?)]
+@defproc[(contract-call [target (or/c (abi-value/c 'address) contract-instance?)]
+                        [function (or/c string? symbol? abi-signature?)]
                         [arg any/c] ...
                         [#:from from (or/c #f (abi-value/c 'address)) (current-account)]
                         [#:value value exact-nonnegative-integer? 0]
@@ -925,9 +1107,13 @@ The sender when no @racket[#:from] is given.  Sending with no sender raises
                         [#:errors errors (listof (or/c string? abi-signature?)) '()]
                         [#:provider provider (or/c #f provider?) (current-provider)])
          any]{
-Calls @racket[signature] at @racket[address] with @racket[eth-call] and
+Calls @racket[function] at @racket[target] with @racket[eth-call] and
 returns its outputs as multiple values: one value per output, none for
-@tt{()}.  @racket[signature] must give its outputs.  Nothing is sent.
+@tt{()}.  @racket[function] must give its outputs.  Nothing is sent.  With
+a @racket[contract-instance], @racket[function] may be a name, resolved by
+its number of arguments, and the instance's ABI errors, provider and sender
+are the defaults.  A @racket[value] above 0 for an @racket[abi-function]
+that is not @tt{payable} is a contract violation.
 
 @examples[#:eval contract-eval
           (define token "0x5FbDB2315678afecb367f032d93F642f64180aa3")
@@ -946,8 +1132,8 @@ returns its outputs as multiple values: one value per output, none for
                           #:errors '("InsufficientBalance(uint256,uint256)")
                           #:provider refusing))]}
 
-@defproc[(contract-send [address (abi-value/c 'address)]
-                        [signature (or/c string? abi-signature?)]
+@defproc[(contract-send [target (or/c (abi-value/c 'address) contract-instance?)]
+                        [function (or/c string? symbol? abi-signature?)]
                         [arg any/c] ...
                         [#:from from (or/c #f (abi-value/c 'address)) (current-account)]
                         [#:value value exact-nonnegative-integer? 0]
@@ -955,9 +1141,11 @@ returns its outputs as multiple values: one value per output, none for
                         [#:errors errors (listof (or/c string? abi-signature?)) '()]
                         [#:provider provider (or/c #f provider?) (current-provider)])
          (and/c hash? jsexpr?)]{
-Sends a transaction calling @racket[signature] from @racket[from], an
+Sends a transaction calling @racket[function] from @racket[from], an
 account the node manages, and returns its receipt once mined.  Outputs in
-@racket[signature] are ignored.  Without @racket[gas] the gas is estimated
+@racket[function] are ignored.  With a @racket[contract-instance],
+@racket[function] may be a name, resolved by its number of arguments, and
+the instance's ABI errors, provider and sender are the defaults.  Without @racket[gas] the gas is estimated
 first, so a transaction that would revert raises
 @racket[exn:fail:web3:rpc:revert] and is not sent.  A transaction mined with
 status 0 raises @racket[exn:fail:web3:transaction].  A malformed or zero
@@ -1034,6 +1222,159 @@ it with @racket[eth-call] at its block reverted with, or @racket[#f] when the
 replay did not revert or could not be made.  The replay runs after the whole
 block, so it may not reproduce the failure when other transactions in the
 block changed the state it depends on.}
+
+@subsection{Contract Instances}
+
+@defproc[(contract-instance [abi contract-abi?] [address (abi-value/c 'address)]
+                            [#:provider provider (or/c #f provider?) #f]
+                            [#:from from (or/c #f (abi-value/c 'address)) #f])
+         contract-instance?]{
+A contract at @racket[address] described by @racket[abi]:
+@racket[contract-call], @racket[contract-send],
+@racket[contract-estimate-gas] and @racket[contract-logs] take it with a
+function or event name.  Its errors decode every revert; @racket[provider]
+and @racket[from], when given, replace @racket[current-provider] and
+@racket[current-account].
+
+@examples[#:eval contract-eval
+ (define token-abi
+   (contract-abi (list "function balanceOf(address owner) view returns (uint256)"
+                       "function transfer(address to, uint256 amount) returns (bool)"
+                       "error InsufficientBalance(uint256 have, uint256 want)")))
+ (define node (mock-provider (hash "eth_call" (bytes->hex-string (abi-encode '(uint256) '(1000))))))
+ (define gold
+   (contract-instance token-abi "0x5fbdb2315678afecb367f032d93f642f64180aa3" #:provider node))
+ gold
+ (contract-call gold 'balanceOf "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")
+ (mock-provider-calls node)
+ (define refusing
+   (mock-provider
+    (lambda (method params)
+      (raise-rpc-error method 3 "execution reverted"
+                       (bytes->hex-string (encode-call "InsufficientBalance(uint256,uint256)" 0 5))))))
+ (eval:error (contract-send gold 'transfer "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" 5
+                            #:from "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+                            #:provider refusing))]}
+
+@deftogether[(@defproc[(contract-instance? [v any/c]) boolean?]
+              @defproc[(contract-instance-abi [i contract-instance?]) contract-abi?]
+              @defproc[(contract-instance-address [i contract-instance?]) checksum-address?]
+              @defproc[(contract-instance-provider [i contract-instance?]) (or/c #f provider?)]
+              @defproc[(contract-instance-from [i contract-instance?])
+                       (or/c #f (abi-value/c 'address))])]{}
+
+@defproc[(contract-estimate-gas [target (or/c (abi-value/c 'address) contract-instance?)]
+                                [function (or/c string? symbol? abi-signature?)]
+                                [arg any/c] ...
+                                [#:from from (or/c #f (abi-value/c 'address)) (current-account)]
+                                [#:value value exact-nonnegative-integer? 0]
+                                [#:errors errors (listof (or/c string? abi-signature?)) '()]
+                                [#:provider provider (or/c #f provider?) (current-provider)])
+         exact-nonnegative-integer?]{
+The gas a @racket[contract-send] of the same arguments would be given.  A
+call that would revert raises @racket[exn:fail:web3:rpc:revert].}
+
+@defproc[(contract-logs [target (or/c (abi-value/c 'address) contract-instance?)]
+                        [event (or/c #f abi-event-spec/c symbol?) #f]
+                        [#:where where hash? (hasheq)]
+                        [#:from-block from block-param/c "earliest"]
+                        [#:to-block to block-param/c "latest"]
+                        [#:chunk chunk (or/c #f exact-positive-integer?) #f]
+                        [#:provider provider (or/c #f provider?) (current-provider)])
+         (listof log?)]{
+The logs @racket[target] emitted, as @racket[get-logs] gives them:
+@racket[event]'s, filtered by @racket[where], or all of them, decoded with
+an instance's events.}
+
+@defproc[(deploy-contract-instance [abi (and/c contract-abi? contract-abi-bytecode)]
+                                   [arg any/c] ...
+                                   [#:from from (or/c #f (abi-value/c 'address)) (current-account)]
+                                   [#:value value exact-nonnegative-integer? 0]
+                                   [#:gas gas (or/c #f exact-positive-integer?) #f]
+                                   [#:errors errors (listof (or/c string? abi-signature?)) '()]
+                                   [#:provider provider (or/c #f provider?) (current-provider)])
+         contract-instance?]{
+Deploys @racket[abi]'s bytecode with the @racket[arg]s for its
+constructor, as @racket[deploy-contract] does, and returns the new contract
+as an instance.  A @racket[value] above 0 for a constructor that is not
+payable is a contract violation.}
+
+@deftogether[(@defproc[(read-contract-abi [in input-port? (current-input-port)]) contract-abi?]
+              @defproc[(file->contract-abi [path path-string?]) contract-abi?])]{
+@racket[jsexpr->contract-abi] of the JSON in @racket[in] or the file
+@racket[path].  Text that is not one JSON value raises
+@racket[exn:fail:web3:abi:type]; a file that cannot be read raises
+@racket[exn:fail:filesystem].}
+
+@subsection[#:tag "binding-contracts"]{Binding Contracts}
+
+@defform[#:literals (function error constructor fallback receive event)
+         (define-contract id clause ...+)
+         #:grammar ([clause item
+                            (code:line #:file path-string)
+                            (code:line #:bytecode bytecode-expr)
+                            (code:line #:rename ([key rename-id] ...))]
+                    [item string-literal sexp-item]
+                    [key string-literal])
+         #:contracts ([bytecode-expr (or/c #f bytes? (and/c string? #px"^0x(?:[0-9a-fA-F]{2})*$"))])]{
+Binds @racket[id] to a @racket[contract-abi], read from the JSON ABI or
+artifact @racket[path-string] (relative to the enclosing file) when the
+module is compiled, or written as @tech{items}.  It also binds, for each
+function, a procedure named @racket[id] followed by the function's name in
+the table below; for each event, that name followed by
+@racketidfont{-event}, bound to the @racket[abi-event]; and, when the
+bytecode is known, @racket[id]@racketidfont{-deploy}, which deploys it
+with the constructor's inputs and returns the address.
+
+A function procedure takes the contract's address and the function's
+inputs: a @tt{view} or @tt{pure} function is a @racket[contract-call],
+any other a @racket[contract-send], with their keywords (@racket[#:value]
+only for a @tt{payable} function) and the ABI's errors.  Overloads with
+different numbers of inputs share one procedure; @racket[#:rename] gives a
+function (@racket["name"]), an overload (@racket["name(T,...)"]) or an
+event (@racket["event Name"]) another name.  Arity and keywords are checked
+where a procedure is applied, and mistakes in the items are syntax errors
+at the item.
+
+@tabular[#:sep @hspace[2]
+         (list (list @bold{Solidity} @bold{bound, with @racket[id] @racketidfont{token}})
+               (list @tt{balanceOf} @racketidfont{token-balance-of})
+               (list @tt{tokenURI} @racketidfont{token-token-uri})
+               (list @tt{DOMAIN_SEPARATOR} @racketidfont{token-domain-separator})
+               (list @tt{onERC721Received} @racketidfont{token-on-erc721-received})
+               (list @tt{IPFSHash} @racketidfont{token-ipfs-hash})
+               (list @tt{v2Swap} @racketidfont{token-v2-swap})
+               (list @tt{__ERC20_init} @racketidfont{token-erc20-init})
+               (list @tt{balanceOf$} @racketidfont{token-balance-of$})
+               (list @elem{event @tt{Transfer}} @racketidfont{token-transfer-event})
+               (list "the bytecode" @racketidfont{token-deploy}))]
+
+Words split at underscores, before an uppercase letter that follows a
+lowercase letter or a digit, and before the last letter of an uppercase run
+followed by a lowercase letter; they are lowercased and joined with
+@litchar{-}.  Two bindings with one name are a syntax error naming both.
+
+@examples[#:eval contract-eval
+ (define-contract erc20
+   "function balanceOf(address owner) view returns (uint256)"
+   "function transfer(address to, uint256 amount) returns (bool)"
+   "error InsufficientBalance(uint256 have, uint256 want)")
+ (define token "0x5FbDB2315678afecb367f032d93F642f64180aa3")
+ (define node (mock-provider (hash "eth_call" (bytes->hex-string (abi-encode '(uint256) '(1000))))))
+ (erc20-balance-of token "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" #:provider node)
+ (eval:error (erc20-transfer token token 5 #:from token #:provider refusing))
+ (eval:error (erc20-balance-of token))]
+
+@racketblock[
+(define-contract token #:file "contracts/out/Token.sol/Token.json")
+(define gold (token-deploy "Gold" "GLD" 1000000))
+(token-balance-of gold alice)
+]}
+
+@defform[(contract-bindings-out id ...)]{
+In @racket[provide]: each @racket[id] and every name its
+@racket[define-contract] bound.  @racket[(all-defined-out)] provides them
+too.}
 
 @section{Events}
 

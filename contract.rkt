@@ -2,6 +2,12 @@
 
 (require (for-syntax racket/base)
          racket/contract/base
+         (only-in "abi/description.rkt"
+                  abi-function?
+                  abi-function-state-mutability
+                  contract-abi?
+                  contract-abi-bytecode)
+         (only-in "eth/log.rkt" log?)
          (only-in json jsexpr?)
          (only-in keccak keccak256)
          (only-in racket/match match struct*)
@@ -29,11 +35,42 @@
        result))
 
 (provide (struct-out exn:fail:web3:transaction)
+         define-contract
+         contract-bindings-out
          (contract-out
           [current-account (parameter/c (or/c #f (abi-value/c 'address)))]
-          [contract-call
-           (transaction->* ((abi-value/c 'address) signature/c) (#:block block-param/c) any)]
-          [contract-send (transaction->* ((abi-value/c 'address) signature/c) () receipt/c)]
+          [contract-call call/c]
+          [contract-send send/c]
+          [contract-estimate-gas estimate/c]
+          [contract-instance (->* (contract-abi? (abi-value/c 'address))
+                                  (#:provider (or/c #f provider?)
+                                   #:from (or/c #f (abi-value/c 'address)))
+                                  contract-instance?)]
+          [contract-instance? (-> any/c boolean?)]
+          [contract-instance-abi (-> contract-instance? contract-abi?)]
+          [contract-instance-address (-> contract-instance? checksum-address?)]
+          [contract-instance-provider (-> contract-instance? (or/c #f provider?))]
+          [contract-instance-from (-> contract-instance? (or/c #f (abi-value/c 'address)))]
+          [contract-logs
+           (->i ([target target/c])
+                ([event (target) (event-spec/c target)]
+                 #:where [where (target event) (where-for/c target event)]
+                 #:from-block [from block/c]
+                 #:to-block [to block/c]
+                 #:chunk [chunk (or/c #f exact-positive-integer?)]
+                 #:provider [provider (or/c #f provider?)])
+                [_ (listof log?)])]
+          [deploy-contract-instance
+           (->i ([d deployable-abi/c])
+                (#:from [from (or/c #f (abi-value/c 'address))]
+                 #:value [value (d) (constructor-value/c d)]
+                 #:gas [gas (or/c #f exact-positive-integer?)]
+                 #:errors [errors errors/c]
+                 #:provider [provider (or/c #f provider?)])
+                #:rest [args list?]
+                [_ contract-instance?])]
+          [read-contract-abi (->* () (input-port?) contract-abi?)]
+          [file->contract-abi (-> path-string? contract-abi?)]
           [deploy-contract (transaction->* (init-code/c) (signature/c) checksum-address?)]
           [deploy-contract/receipt
            (transaction->* (init-code/c) (signature/c) (values checksum-address? receipt/c))]
@@ -48,6 +85,73 @@
   (or/c (and/c bytes? (property/c bytes-length (=/c 32))) (integer-in 0 (sub1 (expt 2 256)))))
 (define nonce/c (integer-in 0 (- (expt 2 64) 2)))
 (define receipt/c (and/c hash? jsexpr?))
+(define block/c (flat-named-contract 'block-param/c block-param/c))
+
+(define unimplemented
+  (make-keyword-procedure (lambda _ (error 'unimplemented))))
+
+(struct contract-instance (abi address provider from)
+  #:name contract-instance-struct #:constructor-name raw-contract-instance)
+
+(define (contract-instance abi address #:provider [provider #f] #:from [from #f])
+  (unimplemented))
+
+(define target/c
+  (flat-named-contract 'target/c (or/c (abi-value/c 'address) contract-instance?)))
+
+(define (function-spec/c target args) unimplemented)
+(define (value-ok/c target function args) unimplemented)
+(define (event-spec/c target) unimplemented)
+(define (where-for/c target event) unimplemented)
+(define (constructor-value/c d) unimplemented)
+
+(define deployable-abi/c
+  (flat-named-contract 'deployable-abi/c (lambda (v) (and (contract-abi? v) (contract-abi-bytecode v) #t))))
+
+(define call/c
+  (->i ([target target/c]
+        [function (target args) (function-spec/c target args)])
+       (#:from [from (or/c #f (abi-value/c 'address))]
+        #:value [value (target function args) (value-ok/c target function args)]
+        #:gas [gas (or/c #f exact-positive-integer?)]
+        #:block [block block/c]
+        #:errors [errors errors/c]
+        #:provider [provider (or/c #f provider?)])
+       #:rest [args list?]
+       any))
+
+(define send/c
+  (->i ([target target/c]
+        [function (target args) (function-spec/c target args)])
+       (#:from [from (or/c #f (abi-value/c 'address))]
+        #:value [value (target function args) (value-ok/c target function args)]
+        #:gas [gas (or/c #f exact-positive-integer?)]
+        #:errors [errors errors/c]
+        #:provider [provider (or/c #f provider?)])
+       #:rest [args list?]
+       [_ receipt/c]))
+
+(define estimate/c
+  (->i ([target target/c]
+        [function (target args) (function-spec/c target args)])
+       (#:from [from (or/c #f (abi-value/c 'address))]
+        #:value [value (target function args) (value-ok/c target function args)]
+        #:errors [errors errors/c]
+        #:provider [provider (or/c #f provider?)])
+       #:rest [args list?]
+       [_ exact-nonnegative-integer?]))
+
+(define contract-estimate-gas unimplemented)
+(define contract-logs unimplemented)
+(define deploy-contract-instance unimplemented)
+(define read-contract-abi unimplemented)
+(define file->contract-abi unimplemented)
+
+(define-syntax (define-contract stx)
+  (raise-syntax-error 'define-contract "unimplemented" stx))
+
+(define-syntax (contract-bindings-out stx)
+  (raise-syntax-error 'contract-bindings-out "unimplemented" stx))
 
 (define current-account (make-parameter #f))
 

@@ -9,6 +9,7 @@
          (only-in racket/list make-list)
          (only-in racket/match == match match-define struct*)
          (only-in racket/string string-join string-prefix?)
+         "abi/description.rkt"
          "abi/event-type.rkt"
          "abi/type.rkt"
          (submod "abi/type.rkt" private)
@@ -18,7 +19,7 @@
          (only-in "private/hex.rkt" bytes->hex hex->bytes)
          "private/who.rkt")
 
-(provide (all-from-out "abi/event-type.rkt" "abi/type.rkt")
+(provide (all-from-out "abi/description.rkt" "abi/event-type.rkt" "abi/type.rkt")
          (struct-out exn:fail:web3:rpc:revert)
          abi-revert
          struct:abi-revert

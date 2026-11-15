@@ -13,10 +13,15 @@ bezzle, which pin it as a flake input.
 | `rpc.rkt` | providers, `rpc-call`, errors, hex helpers, `define-jsonrpc-endpoint` |
 | `eth.rkt` | `web3_*`, `net_*`, `eth_*` endpoints, receipts |
 | `abi.rkt` | the contract ABI: encoders, decoders, selectors, reverts; an `internal` submodule of entry points that take the caller's `who` |
-| `contract.rkt` | deploying, calls and sends, contract addresses; an `internal` submodule of entry points that take the caller's `who` |
+| `contract.rkt` | deploying, calls and sends, contract instances, define-contract, contract addresses; an `internal` submodule of entry points that take the caller's `who` |
+| `private/transaction.rkt` | the calls, sends, estimates and deploys `contract.rkt` and bound procedures run, under their caller's `who` |
+| `private/bindings.rkt` | `define-contract` and `contract-bindings-out`, and the procedures they bind |
+| `private/define-contract.rkt` | define-contract's expansion-time half; reads JSON at phase 1, never keccak |
+| `private/abi-json.rkt` | reading JSON ABIs and artifacts from ports and files |
 | `address.rkt` | EIP-55 checksums; requires only `racket/base` libraries, `keccak` and `abi/type.rkt` |
 | `abi/type.rkt` | ABI types, signatures and value checks; phase-1 safe, so it requires only `racket/base` libraries and `private/exn.rkt`; a `private` submodule holds the reader and contracts other modules share |
 | `abi/event-type.rkt` | event descriptions (`abi-event`, string and s-expression forms); phase-1 safe like `abi/type.rkt`, plus `private/who.rkt`; a `private` submodule holds the readers under their caller's `who` |
+| `abi/description.rkt` | ABI items and contract descriptions from strings, s-expressions and JSON; phase-1 safe, as abi/type.rkt |
 | `abi/event.rkt` | event topics, `event-topics`, decoding logs into `event-log`s; an `internal` submodule of entry points that take the caller's `who` |
 | `eth/log.rkt` | the `log` struct, read from and printed like the node's JSON |
 | `event.rkt` | `log-filter`, `get-logs` (chunks, halving on a refused range), `receipt-logs` |
@@ -66,5 +71,8 @@ the `racket-deps` hash in `flake.nix` (the build prints the new one).
 - `master` must always build: the package catalog follows it.  Bump
   `version` in `info.rkt` on API changes.
 - Each review finding that is fixed gets a test that fails without the fix.
+- Names that `define-contract` generates follow the table in the manual's
+  Binding Contracts section.  Changing `solidity-name->racket-name` is a
+  breaking change.
 - The HTTP provider takes over the connection only from a dead holder; a
   suspended holder blocks the provider's other callers until it resumes.
