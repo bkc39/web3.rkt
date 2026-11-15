@@ -11,7 +11,7 @@
            web3/abi/event
            (only-in web3/private/hex bytes->hex)
            "abi-gen.rkt"
-           "events.rkt"
+           "helpers/event-fixtures.rkt"
            "modules.rkt"
            "util.rkt")
 
@@ -27,7 +27,7 @@
 
   (test-case "event topics are the hashes solc and cast give"
     (for ([row (in-list known-topics)])
-      (match-define (list event topic) row)
+      (match-define (struct* known-topic ([event event] [topic topic])) row)
       (check-equal? (event-topic event) topic event)
       (check-equal? (event-topic (abi-event->sexp event)) topic event)
       (check-equal? (event-topic (string->abi-event event)) topic event)))
@@ -60,7 +60,7 @@
       #s(hashed "uint256[1]" (7) "0xa66cc928b5edb82af9bd49922954155ab7b0942694bea4ce44661d9a8736c688")
       #s(hashed "(uint256)" (7) "0xa66cc928b5edb82af9bd49922954155ab7b0942694bea4ce44661d9a8736c688")
       #s(hashed bool #t ,(topic-word 1))
-      #s(hashed int8 -1 ,(string-append "0x" (make-string 64 #\f)))
+      #s(hashed int8 -1 ,(filled-hash #\f))
       #s(hashed bytes3 #"abc" ,(string-append "0x616263" (make-string 58 #\0)))))
 
   (test-case "indexed values have the topics solc emits"
@@ -146,9 +146,9 @@
 
   (test-case "web3/abi/event and web3/eth/log need no JSON or transport modules"
     (define allowed
-      '("web3/abi" "web3/abi/event" "web3/abi/type" "web3/address" "web3/eth/log"
-        "web3/private/abi-decode" "web3/private/abi-event-type" "web3/private/abi-type"
-        "web3/private/exn" "web3/private/hex" "web3/private/node" "web3/private/who"))
+      '("web3/abi" "web3/abi/event" "web3/abi/event-type" "web3/abi/type" "web3/address"
+        "web3/eth/log" "web3/private/abi-decode" "web3/private/exn" "web3/private/hex"
+        "web3/private/node" "web3/private/who"))
     (define keccak-names (map module-name (import-closure 'keccak)))
     (for ([root (in-list '(web3/abi/event web3/eth/log))])
       (define names (filter values (map module-name (import-closure root))))

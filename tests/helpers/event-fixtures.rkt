@@ -4,11 +4,13 @@
 
 (require racket/match
          web3
-         (only-in "util.rkt" checksummed)
-         (only-in (submod web3/abi/type private) spec->abi-event/who)
+         (only-in "../abi-gen.rkt" random-bytes)
+         (only-in "../util.rkt" checksummed filled-hash word)
+         (only-in (submod web3/abi/event-type private) spec->abi-event/who)
          (only-in web3/private/hex bytes->hex))
 
-(provide approval
+(provide (struct-out known-topic)
+         approval
          bare
          counted
          decoded-arguments
@@ -47,29 +49,29 @@
 (define transfer-topic "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
 
 ;; From cast sig-event and solc --hashes.
-(define known-topics
-  `((,transfer ,transfer-topic)
-    (,transfer-721 ,transfer-topic)
-    (,approval "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925")
-    (,deposit "0x643e927b32d5bfd08eccd2fcbd97057ad413850f857a2359639114e8e8dd3d7b")
-    (,tagged "0x56674d9d23bd3ef0d98e964e72b0cd1c72ea99340fbb1850c3cd4e9996d3b73a")
-    (,lists "0x58f467372b4f54586d5c6e4a656fbfad514cc4c491b6570c229b2cc8502b99f1")
-    (,nested "0x7d18048971f2ec5a741a98089e81f036a07f92da1a4321c2dc35c6ce55f89155")
-    (,paired "0xec4f9132e752f135bc5fbb7e34044b5354ead3c3ca29ec16ce7be28d53fdc414")
-    (,flags "0xb2e3cf2c1dd3a68f5412a6eba0b8dbfce1d0e75c8fe697a8a410e1b19d17b37b")
-    (,bare "0x8cccb0c5b28f620a5e57ab28294c9328b43da0c2b64b1c4c4680b4f8a3d42d3c")
-    (,counted "0x15df0a6785153dfd625c8af51397704c7ddaff0690e5076243b5e52f4a0d5409")
-    (,note #f)
-    (,four #f)))
+(struct known-topic (event topic) #:prefab)
 
-;; A 32-byte word as a topic string: an integer, or an address.
+(define known-topics
+  `(#s(known-topic ,transfer ,transfer-topic)
+    #s(known-topic ,transfer-721 ,transfer-topic)
+    #s(known-topic ,approval "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925")
+    #s(known-topic ,deposit "0x643e927b32d5bfd08eccd2fcbd97057ad413850f857a2359639114e8e8dd3d7b")
+    #s(known-topic ,tagged "0x56674d9d23bd3ef0d98e964e72b0cd1c72ea99340fbb1850c3cd4e9996d3b73a")
+    #s(known-topic ,lists "0x58f467372b4f54586d5c6e4a656fbfad514cc4c491b6570c229b2cc8502b99f1")
+    #s(known-topic ,nested "0x7d18048971f2ec5a741a98089e81f036a07f92da1a4321c2dc35c6ce55f89155")
+    #s(known-topic ,paired "0xec4f9132e752f135bc5fbb7e34044b5354ead3c3ca29ec16ce7be28d53fdc414")
+    #s(known-topic ,flags "0xb2e3cf2c1dd3a68f5412a6eba0b8dbfce1d0e75c8fe697a8a410e1b19d17b37b")
+    #s(known-topic ,bare "0x8cccb0c5b28f620a5e57ab28294c9328b43da0c2b64b1c4c4680b4f8a3d42d3c")
+    #s(known-topic ,counted "0x15df0a6785153dfd625c8af51397704c7ddaff0690e5076243b5e52f4a0d5409")
+    #s(known-topic ,note #f)
+    #s(known-topic ,four #f)))
+
 (define (topic-word v)
-  (bytes->hex (word->bytes (if (string? v) (string->number (substring v 2) 16) v))))
+  (bytes->hex (word (if (string? v) (string->number (substring v 2) 16) v))))
 
 (define (random-hash prng)
-  (bytes->hex (apply bytes (for/list ([_ (in-range 32)]) (random 256 prng)))))
+  (bytes->hex (random-bytes prng 32)))
 
-;; The topics and data a log of event e with arguments vs carries.
 (define (topics+data e vs)
   (match-define (struct* abi-event ([parameters ps] [anonymous? anonymous?]))
     (spec->abi-event/who 'topics+data e))
@@ -87,11 +89,9 @@
   (values (if anonymous? indexed-topics (cons (event-topic e) indexed-topics))
           (abi-encode types plain)))
 
-;; Types whose indexed values are hashed.
 (define (hashed-type? t)
   (or (abi-string? t) (abi-bytes? t) (abi-array? t) (abi-fixed-array? t) (abi-tuple? t)))
 
-;; The arguments a log of event e with arguments vs decodes to.
 (define (decoded-arguments e vs)
   (for/list ([p (in-list (abi-event-parameters (spec->abi-event/who 'decoded-arguments e)))]
              [v (in-list vs)])
@@ -110,10 +110,10 @@
   (hasheq 'address address
           'topics topics
           'data (bytes->hex data)
-          'blockHash (string-append "0x" (make-string 64 #\a))
+          'blockHash (filled-hash #\a)
           'blockNumber (format "0x~a" (number->string block 16))
           'blockTimestamp "0x6553f100"
-          'transactionHash (string-append "0x" (make-string 64 #\b))
+          'transactionHash (filled-hash #\b)
           'transactionIndex "0x0"
           'logIndex (format "0x~a" (number->string index 16))
           'removed removed))

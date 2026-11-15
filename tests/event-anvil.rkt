@@ -9,10 +9,8 @@
            rackunit
            web3
            "../examples/common.rkt"
-           "events.rkt"
+           "helpers/event-fixtures.rkt"
            "util.rkt")
-
-  (define zero "0x0000000000000000000000000000000000000000")
 
   (define (hex->number h)
     (string->number (substring h 2) 16))
@@ -20,17 +18,21 @@
   (define (arguments logs)
     (map event-log-arguments logs))
 
-  (define (place l)
-    (list (log-block-number l) (log-index l)))
+  (struct place (block index) #:prefab)
+  (struct fields (address topics data block block-hash transaction transaction-index index removed?)
+    #:prefab)
+
+  (define (log-place l)
+    (place (log-block-number l) (log-index l)))
 
   (define (place<=? a b)
-    (match* ((place a) (place b))
-      [((list block-a index-a) (list block-b index-b))
+    (match* ((log-place a) (log-place b))
+      [((struct* place ([block block-a] [index index-a])) (struct* place ([block block-b] [index index-b])))
        (or (< block-a block-b) (and (= block-a block-b) (<= index-a index-b)))]))
 
-  (define (fields l)
-    (list (log-address l) (log-topics l) (log-data l) (log-block-number l) (log-block-hash l)
-          (log-transaction-hash l) (log-transaction-index l) (log-index l) (log-removed? l)))
+  (define (log-fields l)
+    (fields (log-address l) (log-topics l) (log-data l) (log-block-number l) (log-block-hash l)
+            (log-transaction-hash l) (log-transaction-index l) (log-index l) (log-removed? l)))
 
   (define (sorted? logs)
     (or (null? logs) (andmap place<=? (drop-right logs 1) (rest logs))))
@@ -52,9 +54,9 @@
            (apply contract-send events signature vs))
 
          (test-case "the constructor's mint is a Transfer from zero"
-           (match (token-logs token #:where (hasheq 'from zero))
+           (match (token-logs token #:where (hasheq 'from zero-address))
              [(list minted)
-              (check-equal? (event-log-arguments minted) (list zero anvil-alice 1000000))
+              (check-equal? (event-log-arguments minted) (list zero-address anvil-alice 1000000))
               (check-equal? (log-block-number minted) (hex->number (hash-ref deployed 'blockNumber)))
               (check-equal? (log-transaction-hash minted) (hash-ref deployed 'transactionHash))]
              [other (fail (format "~a" other))]))
@@ -83,8 +85,8 @@
            (check-equal? (length (token-logs token #:where (hasheq 'to (any-of anvil-bob anvil-carol))))
                          4)
            (check-equal? (arguments (token-logs token #:where (hasheq 'to anvil-alice)))
-                         (list (list zero anvil-alice 1000000)))
-           (check-equal? (token-logs token #:where (hasheq 'to zero)) '()))
+                         (list (list zero-address anvil-alice 1000000)))
+           (check-equal? (token-logs token #:where (hasheq 'to zero-address)) '()))
 
          (define deposited (contract-send token "deposit(string)" "hi" #:value 1000))
 
@@ -143,14 +145,23 @@
          (test-case "a token's logs come in chain order, in any chunks, within their range"
            (define all (get-logs (log-filter #:address token)))
            (check-true (sorted? all))
-           (check-equal? (map fields all)
-                         (map fields
+           (check-equal? (map log-fields all)
+                         (map log-fields
                               (append-map receipt-logs (append (list deployed sent) later (list deposited) mixed))))
            (for ([chunk (in-list '(1 2 3 7))])
              (check-equal? (get-logs (log-filter #:address token) #:chunk chunk) all (format "chunk ~a" chunk)))
            (define start (hex->number (hash-ref (first mixed) 'blockNumber)))
            (check-equal? (get-logs (log-filter #:address token #:from-block start #:to-block (+ start 2)))
                          (filter (lambda (l) (<= start (log-block-number l) (+ start 2))) all)))
+
+         (test-case "a pending bound is the latest block, chunked or not"
+           (define f (log-filter #:address token #:to-block "pending"))
+           (define whole (get-logs f))
+           (check-equal? whole (get-logs (log-filter #:address token)))
+           (for ([chunk (in-list '(1 10))])
+             (check-equal? (get-logs f #:chunk chunk) whole (format "chunk ~a" chunk)))
+           (check-equal? (get-logs (log-filter #:address token #:from-block "pending") #:chunk 10)
+                         (get-logs (log-filter #:address token #:from-block "pending"))))
 
          (test-case "one transaction, many logs"
            (define counted-logs (receipt-logs (send-events "count(uint256)" 5) #:events (list counted)))

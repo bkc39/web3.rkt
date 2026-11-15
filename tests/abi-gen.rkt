@@ -4,6 +4,7 @@
          racket/match
          (only-in web3/abi abi-encode word->bytes)
          (only-in web3/rpc bytes->hex-string)
+         web3/abi/event-type
          web3/abi/type
          "util.rkt")
 
@@ -100,7 +101,8 @@
                       (for/list ([_ (in-range (random 9 prng))]) (pick prng identifier-rest)))))
 
 (define parameter-names
-  '("a" "b" "c" "d" "e" "from" "to" "value" "owner" "spender" "id" "memo" "amount" "x_1" "Y"))
+  '("a" "b" "c" "d" "e" "from" "to" "value" "owner" "spender" "id" "memo" "amount" "x_1" "Y"
+    "payableTo" "indexedBy" "anonymousId" "eventId"))
 
 ;; k distinct elements of xs, in their order in xs.
 (define (random-subset prng xs k)

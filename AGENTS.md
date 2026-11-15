@@ -15,7 +15,8 @@ bezzle, which pin it as a flake input.
 | `abi.rkt` | the contract ABI: encoders, decoders, selectors, reverts; an `internal` submodule of entry points that take the caller's `who` |
 | `contract.rkt` | deploying, calls and sends, contract addresses; an `internal` submodule of entry points that take the caller's `who` |
 | `address.rkt` | EIP-55 checksums; requires only `racket/base` libraries, `keccak` and `abi/type.rkt` |
-| `abi/type.rkt` | ABI types, signatures, events and value checks, re-exported from `private/abi-type.rkt` and `private/abi-event-type.rkt`; phase-1 safe, so these require only `racket/base` libraries and `private/exn.rkt`; a `private` submodule holds the reader and contracts other modules share |
+| `abi/type.rkt` | ABI types, signatures and value checks; phase-1 safe, so it requires only `racket/base` libraries and `private/exn.rkt`; a `private` submodule holds the reader and contracts other modules share |
+| `abi/event-type.rkt` | event descriptions (`abi-event`, string and s-expression forms); phase-1 safe like `abi/type.rkt`, plus `private/who.rkt`; a `private` submodule holds the readers under their caller's `who` |
 | `abi/event.rkt` | event topics, `event-topics`, decoding logs into `event-log`s; an `internal` submodule of entry points that take the caller's `who` |
 | `eth/log.rkt` | the `log` struct, read from and printed like the node's JSON |
 | `event.rkt` | `log-filter`, `get-logs` (chunks, halving on a refused range), `receipt-logs` |

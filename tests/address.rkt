@@ -11,7 +11,7 @@
 
   ;; The eight from EIP-55, then two from cast to-check-sum-address.
   (define vectors
-    '("0x52908400098527886E0F7030069857D2E4169EE7"
+    `("0x52908400098527886E0F7030069857D2E4169EE7"
       "0x8617E340B3D01FA5F11F306F4090FD50E238070D"
       "0xde709f2102306220921060314715629080e2fb77"
       "0x27b1fdb04752bbc536007a920d24acb045561c26"
@@ -19,7 +19,7 @@
       "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359"
       "0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB"
       "0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb"
-      "0x0000000000000000000000000000000000000000"
+      ,zero-address
       "0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF"))
 
   (define (upcase-hex a)
@@ -71,5 +71,4 @@
     (check-equal? (filter (lambda (n) (member (collection n) '("net" "json"))) names) '())
     (check-equal? (sort (remove-duplicates (filter (lambda (n) (equal? (collection n) "web3")) names))
                         string<?)
-                  '("web3/abi/type" "web3/address" "web3/private/abi-event-type" "web3/private/abi-type"
-                    "web3/private/exn"))))
+                  '("web3/abi/type" "web3/address" "web3/private/exn"))))

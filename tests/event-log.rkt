@@ -14,8 +14,8 @@
   (define address "0x5fbdb2315678afecb367f032d93f642f64180aa3")
   (define topic-0 "0xDDF252AD1BE2C89B69C2B068FC378DAA952BA7F163C4A11628F55A4DF523B3EF")
   (define topic-1 "0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266")
-  (define block-hash (string-append "0x" (make-string 64 #\A)))
-  (define tx-hash (string-append "0x" (make-string 64 #\b)))
+  (define block-hash (filled-hash #\A))
+  (define tx-hash (filled-hash #\b))
 
   (define anvil-object
     (hasheq 'address address

@@ -5,6 +5,7 @@
                     racket/generic
                     web3
                     web3/abi
+                    web3/abi/event-type
                     web3/abi/type
                     web3/abi/vectors
                     web3/address
@@ -489,7 +490,7 @@ Whether @racket[v] is an address string in its EIP-55 form.
 Encodes and decodes values for the
 @hyperlink["https://docs.soliditylang.org/en/latest/abi-spec.html"]{contract ABI}
 and decodes reverts.  Also provides everything in
-@racketmodname[web3/abi/type].
+@racketmodname[web3/abi/type] and @racketmodname[web3/abi/event-type].
 
 @subsection{ABI Types}
 
@@ -609,6 +610,10 @@ The canonical signature; without outputs it is the selector preimage.
           (abi-signature->string (string->abi-signature "balanceOf(address)(uint)"))]}
 
 @subsubsection[#:tag "abi-events"]{Events}
+
+@defmodule[web3/abi/event-type]
+
+Like @racketmodname[web3/abi/type], usable at phase 1.
 
 @defstruct*[abi-event-parameter ([name (or/c #f (and/c string? #px"^[A-Za-z_$][A-Za-z0-9_$]*$"))]
                                  [type abi-type-spec/c]
@@ -1197,7 +1202,8 @@ The filter as @racket[eth-get-logs] takes it.}
 The logs matching @racket[f], in chain order, decoded with
 @racket[decode-logs]; @racket[events] defaults to the filter's event.  A
 range is fetched in requests of @racket[chunk] blocks; a request the
-node refuses as too large is halved and retried.
+node refuses as too large is halved and retried.  Splitting a range reads
+its tags as block numbers, @racket["pending"] as the latest block.
 
 @examples[#:eval event-eval
           (define node (mock-provider (hash "eth_getLogs" (list transfer-json))))

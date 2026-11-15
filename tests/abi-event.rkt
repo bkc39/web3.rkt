@@ -7,12 +7,14 @@
            racket/match
            rackunit
            syntax/parse/define
+           web3/abi/event-type
            web3/abi/type
            "abi-gen.rkt"
            "modules.rkt"
            "util.rkt"
            (for-syntax racket/base
                        syntax/parse
+                       web3/abi/event-type
                        web3/abi/type))
 
   (struct forms (string sexp structure canonical) #:prefab)
@@ -61,6 +63,12 @@
                                          (abi-event-parameter "pairs" "(uint256,string)[]" #t))
                           #f)
                "event Nested(uint256[][] indexed grid, (uint256,string)[] indexed pairs)")
+      #s(forms "Paid(address payableTo, (address payableBy, uint256 x) indexed y)"
+               (event Paid ([payableTo address] [y (tuple address uint256) #:indexed]))
+               (abi-event "Paid" (list (abi-event-parameter "payableTo" 'address #f)
+                                       (abi-event-parameter "y" "(address,uint256)" #t))
+                          #f)
+               "event Paid(address payableTo, (address,uint256) indexed y)")
       #s(forms "Nothing()" (event Nothing ()) (abi-event "Nothing" '() #f) "event Nothing()")))
 
   (define (generated-events n)
@@ -96,6 +104,7 @@
       #s(rejection "1E()" 0)
       #s(rejection "E(uint7 a)" 2)
       #s(rejection "E(address payable a)" 10)
+      #s(rejection "E((address payable, uint256) a)" 11)
       #s(rejection "E(address indexed indexed)" 18)
       #s(rejection "E(uint256 uint8)" 10)
       #s(rejection "E(address from to)" 15)
@@ -183,7 +192,26 @@
   (test-case "events are described at phase 1, without keccak"
     (check-equal? (event-signature "event Transfer(address indexed from, address indexed to, uint indexed v)")
                   "Transfer(address,address,uint256)")
-    (check-false (member "keccak/main" (filter values (map module-name (import-closure 'web3/abi/type))))))
+    (define names (filter values (map module-name (import-closure 'web3/abi/event-type))))
+    (check-equal? (filter (lambda (n) (member (collection n) '("ffi" "net" "json" "file" "keccak")))
+                          names)
+                  '())
+    (define web3-modules
+      '("web3/abi/event-type" "web3/abi/type" "web3/private/exn" "web3/private/who"))
+    (check-equal? (sort (remove-duplicates (filter (lambda (n) (equal? (collection n) "web3")) names))
+                        string<?)
+                  web3-modules)
+    (define allowed
+      (append '("racket/base" "racket/contract/base" "racket/list" "racket/match" "racket/string"
+                "racket/syntax" "syntax/parse" "syntax/parse/define")
+              web3-modules))
+    (for* ([module (in-list web3-modules)]
+           [name (in-list (filter values
+                                  (map module-name
+                                       (direct-imports
+                                        (module-path-index-resolve
+                                         (module-path-index-join (string->symbol module) #f) #t)))))])
+      (check-not-false (member name allowed) (format "~a requires ~a" module name))))
 
   (test-case "the event constructors and conversions blame their caller"
     (check-blames-here (string->abi-event 'E))

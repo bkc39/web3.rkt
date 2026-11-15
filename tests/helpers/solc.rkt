@@ -12,7 +12,8 @@
          racket/string
          (only-in "../../examples/common.rkt" contracts-dir))
 
-(provide compile-fixture
+(provide (struct-out event-hash)
+         compile-fixture
          fixture-sources
          fixture-event-hashes
          pinned-solc-version
@@ -109,8 +110,9 @@
           'methodIdentifiers (hash-ref evm 'methodIdentifiers)
           'metadata (string->jsexpr metadata)))
 
-;; The "Event signatures" section of solc --hashes, as (list hash signature)
-;; rows with the hash as a 0x-prefixed topic.
+(struct event-hash (topic signature) #:prefab)
+
+;; The "Event signatures" section of solc --hashes.
 (define (fixture-event-hashes path)
   (check-pinned 'fixture-event-hashes)
   (define lines (string-split (run-solc #"" "--evm-version" "cancun" "--hashes" (path->string path)) "\n"))
@@ -120,4 +122,4 @@
      (for/list ([row (in-list rows)]
                 #:break (string=? (string-trim row) ""))
        (match (regexp-match #px"^([0-9a-f]{64}): (.*)$" row)
-         [(list _ hash signature) (list (string-append "0x" hash) signature)]))]))
+         [(list _ hash signature) (event-hash (string-append "0x" hash) signature)]))]))

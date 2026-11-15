@@ -11,7 +11,7 @@
            (only-in web3/private/hex bytes->hex)
            "abi-gen.rkt"
            "bounded.rkt"
-           "events.rkt"
+           "helpers/event-fixtures.rkt"
            "util.rkt")
 
   (define seed '(5 4 3 2 1 0))

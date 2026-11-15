@@ -21,25 +21,24 @@
   [jsexpr->log (-> any/c log?)]
   [log->jsexpr (-> log? hash?)]))
 
-(define (log-place->string l)
-  (format "block ~a index ~a" (or (log-block-number l) "pending") (or (log-index l) "pending")))
-
-(define (log-removed-suffix l)
-  (if (log-removed? l) " removed" ""))
-
 (define (topic-abbreviation topic)
   (string-append (substring topic 0 10) "…"))
 
+(define (log-tail l [detail ""])
+  (format "block ~a index ~a~a~a"
+          (or (log-block-number l) "pending")
+          (or (log-index l) "pending")
+          detail
+          (if (log-removed? l) " removed" "")))
+
 (define (write-log l port _mode)
   (define n (bytes-length (log-data l)))
-  (write-string (format "#<log ~a ~a topics [~a] data ~a byte~a~a>"
-                        (log-address l)
-                        (log-place->string l)
-                        (string-join (map topic-abbreviation (log-topics l)) " ")
-                        n
-                        (if (= n 1) "" "s")
-                        (log-removed-suffix l))
-                port))
+  (fprintf port "#<log ~a ~a>"
+           (log-address l)
+           (log-tail l (format " topics [~a] data ~a byte~a"
+                               (string-join (map topic-abbreviation (log-topics l)) " ")
+                               n
+                               (if (= n 1) "" "s")))))
 
 ;; raw is the node's object, so fields the struct does not name stay
 ;; reachable through log->jsexpr.
@@ -85,6 +84,5 @@
 
 (module* internal #f
   (provide jsexpr->log/who
-           log-place->string
-           log-removed-suffix
-           log))
+           log
+           log-tail))

@@ -11,7 +11,7 @@
            (only-in keccak keccak256)
            web3
            "../examples/common.rkt"
-           "events.rkt"
+           "helpers/event-fixtures.rkt"
            "helpers/solc.rkt")
 
   (define sources (fixture-sources))
@@ -81,7 +81,7 @@
   (test-case "the artifacts' events read from their JSON have the known topics and print back"
     (define known
       (for/list ([row (in-list known-topics)])
-        (match row [(list event topic) (cons (string->abi-event event) topic)])))
+        (cons (string->abi-event (known-topic-event row)) (known-topic-topic row))))
     (define events (append-map artifact-events (map source-name sources)))
     (check-equal? (length events) 12)
     (for ([e (in-list events)])
@@ -111,7 +111,7 @@
          (define expected
            (for/list ([e (in-list (artifact-events name))]
                       #:unless (abi-event-anonymous? e))
-             (list (event-topic e) (abi-signature->string (abi-event->signature e)))))
-         (check-equal? (sort (fixture-event-hashes source) string<? #:key second)
-                       (sort expected string<? #:key second)
+             (event-hash (event-topic e) (abi-signature->string (abi-event->signature e)))))
+         (check-equal? (sort (fixture-event-hashes source) string<? #:key event-hash-signature)
+                       (sort expected string<? #:key event-hash-signature)
                        name)))]))

@@ -11,7 +11,7 @@
            (only-in web3/private/hex bytes->hex)
            "abi-gen.rkt"
            "cast.rkt"
-           "events.rkt"
+           "helpers/event-fixtures.rkt"
            "util.rkt")
 
   (define (encodes-events?)
@@ -55,7 +55,7 @@
            (abi-event->string e)))
        (define known
          (for/list ([row (in-list known-topics)]
-                    #:when (match row [(list _ topic) topic]))
-           (match row [(list event _) event])))
+                    #:when (known-topic-topic row))
+           (known-topic-event row)))
        (for ([e (in-list (append known generated))])
          (check-equal? (string-downcase (run-cast "sig-event" "--" e)) (event-topic e) e)))]))

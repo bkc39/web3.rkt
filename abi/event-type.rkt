@@ -4,8 +4,9 @@
          (only-in racket/list count)
          (only-in racket/match match match-define struct*)
          (only-in racket/string string-join)
-         "abi-type.rkt"
-         (submod "abi-type.rkt" private))
+         "type.rkt"
+         (submod "type.rkt" private)
+         "../private/who.rkt")
 
 (provide
  abi-event-spec/c
@@ -65,7 +66,7 @@
 
 ;;;; reading
 
-(define (string->abi-event/who who s)
+(define/who (string->abi-event who s)
   (define n (string-length s))
   (define (fail reason position)
     (raise-abi-type-error who reason s position))
@@ -130,7 +131,7 @@
 (define (parameter-name-datum? v)
   (or (not v) (and (symbol? v) (parameter-name? (symbol->string v)))))
 
-(define (sexp->abi-event/who who input)
+(define/who (sexp->abi-event who input)
   (define (fail reason form)
     (raise-abi-type-error who reason input #f form))
   (define (parameter name type indexed?)
@@ -180,13 +181,7 @@
 (define (event->signature e)
   (abi-signature (abi-event-name e) (map abi-event-parameter-type (abi-event-parameters e)) #f))
 
-;;;; the public conversions
-
-(define (string->abi-event s)
-  (string->abi-event/who 'string->abi-event s))
-
-(define (sexp->abi-event v)
-  (sexp->abi-event/who 'sexp->abi-event v))
+;;;; the conversions of a spec
 
 (define (abi-event->string spec)
   (event->string (spec->abi-event/who 'abi-event->string spec)))

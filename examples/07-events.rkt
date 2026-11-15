@@ -9,6 +9,7 @@
 ;;   racket -i -e '(enter! "examples/07-events.rkt")'
 
 (require racket/list
+         racket/match
          web3
          "common.rkt")
 
@@ -19,118 +20,108 @@
 (define node (start-anvil))
 (current-provider (anvil-provider node))
 
-(define-values (alice bob carol) (apply values (map address->checksum-string (take (eth-accounts) 3))))
+(match-define (list alice bob carol _ ...) (map address->checksum-string (eth-accounts)))
 (current-account alice)
-(define token (deploy-contract (artifact-bytecode "Token") "constructor(string,string,uint256)" "Token" "TOK" 1000000))
+(define token
+  (deploy-contract (artifact-bytecode "Token") "constructor(string,string,uint256)"
+                   "Token" "TOK" 1000000))
+(show token)
+(show (contract-call token "balanceOf(address)(uint256)" alice))
 
-(section "describing an event")
+(section "describing an event: a string, an s-expression or a struct")
 
-(define transfer (string->abi-event "event Transfer(address indexed from, address indexed to, uint256 value)"))
+(define transfer
+  (string->abi-event "event Transfer(address indexed from, address indexed to, uint256 value)"))
 (show transfer)
 (show (equal? transfer
-              (sexp->abi-event '(event Transfer ([from address #:indexed] [to address #:indexed] [value uint256])))))
+              (sexp->abi-event '(event Transfer ([from address #:indexed]
+                                                 [to address #:indexed]
+                                                 [value uint256])))))
 (show (equal? transfer
               (abi-event "Transfer"
                          (list (abi-event-parameter "from" 'address #t)
                                (abi-event-parameter "to" 'address #t)
                                (abi-event-parameter "value" 'uint256 #f))
                          #f)))
-(show (abi-event->string transfer))
-(show (abi-event->sexp transfer))
-(show (abi-signature->string (abi-event->signature transfer)))
+(show (abi-event->string '(event Deposit ([from address #:indexed] [value uint256] [memo string]))))
 (show (event-topic transfer))
 
-;; A string works wherever an event goes.
-(define deposit "Deposit(address indexed from, uint256 value, string memo)")
-(show (event-topic deposit))
-
-(section "the logs of a receipt")
+(section "one transfer: its receipt's log, decoded")
 
 (define sent-receipt (contract-send token "transfer(address,uint256)" bob 250))
-(show (receipt-logs sent-receipt))
-(define raw (car (receipt-logs sent-receipt)))
-(show (log-topics raw))
-(show (log-data raw))
-(show (log-block-number raw))
-(show (log-address raw))
-
-(section "decoded")
-
+(define raw (first (receipt-logs sent-receipt)))
+(show raw)
 (define sent (decode-log transfer raw))
-(show sent)
-(show (event-log-name sent))
 (show (event-log-arguments sent))
-(show (event-log-ref sent 'value))
 (show (event-log-ref sent 'to))
-;; A decoded log is a log.
-(show (log-transaction-hash sent))
-(show (receipt-logs sent-receipt #:events (list transfer)))
+(show (event-log-ref sent 'value))
 
-(section "more activity")
+(section "every transfer of the token, from get-logs")
 
-(define to-carol (contract-send token "transfer(address,uint256)" carol 100))
-(define to-bob (contract-send token "transfer(address,uint256)" bob 50))
-(define bob-to-carol (parameterize ([current-account bob]) (contract-send token "transfer(address,uint256)" carol 25)))
-(define first-deposit (contract-send token "deposit(string)" "first" #:value 1000))
-(for ([_ (in-range 3)]) (anvil-mine))
-(define second-deposit (contract-send token "deposit(string)" "second" #:value 2000))
-
-(section "all transfers")
-
+(for ([from (list alice alice bob)]
+      [to (list carol bob carol)]
+      [value '(100 50 25)])
+  (parameterize ([current-account from])
+    (contract-send token "transfer(address,uint256)" to value)))
 (define transfers (log-filter #:address token #:event transfer))
-(show (log-filter->jsexpr transfers))
-;; The first is the constructor's mint.
 (show (get-logs transfers))
 
 (section "filtered by an indexed argument")
 
-(show (log-filter->jsexpr (log-filter #:address token #:event transfer #:where (hasheq 'to bob))))
-(show (get-logs (log-filter #:address token #:event transfer #:where (hasheq 'to bob))))
-(show (get-logs (log-filter #:address token #:event transfer #:where (hasheq 'to (any-of bob carol)))))
+(define to-bob (log-filter #:address token #:event transfer #:where (hasheq 'to bob)))
+(show (log-filter->jsexpr to-bob))
+(show (map event-log-arguments (get-logs to-bob)))
+(show (map event-log-arguments
+           (get-logs (log-filter #:address token #:event transfer
+                                 #:where (hasheq 'to (any-of bob carol))))))
 
-(section "the mint in the constructor")
+(section "the mint: a transfer from the zero address")
 
-(define zero "0x0000000000000000000000000000000000000000")
-(show (get-logs (log-filter #:address token #:event transfer #:where (hasheq 'from zero))))
+(define zero-address "0x0000000000000000000000000000000000000000")
+(show (map event-log-arguments
+           (get-logs (log-filter #:address token #:event transfer
+                                 #:where (hasheq 'from zero-address)))))
 
-(section "a block range")
+(section "a block range, and fetching in chunks")
 
 (define start (log-block-number raw))
-(show (get-logs (log-filter #:address token #:event transfer #:from-block start #:to-block (+ start 2))))
-;; The same logs, fetched two blocks at a time.
+(show (map log-block-number
+           (get-logs (log-filter #:address token #:event transfer
+                                 #:from-block start #:to-block (+ start 2)))))
 (show (equal? (get-logs transfers) (get-logs transfers #:chunk 2)))
 
-(section "several events at once")
-
-(show (get-logs (log-filter #:address token) #:events (list transfer deposit)))
-
-(section "logs nobody described, and dynamic indexed values")
+(section "hashed indexed values")
 
 (define events (deploy-contract (artifact-bytecode "Events")))
-(define tagged (contract-send events "tag(string,bytes,string)" "hello" #"\1\2" "body"))
-(define tagged-event "Tagged(string indexed tag, bytes indexed blob, address indexed sender, string text)")
-(show (receipt-logs tagged #:events (list transfer deposit)))
-(show (receipt-logs tagged #:events (list tagged-event)))
+(define tagged
+  "Tagged(string indexed tag, bytes indexed blob, address indexed sender, string text)")
+(define tag-receipt (contract-send events "tag(string,bytes,string)" "hello" #"\1\2" "body"))
+(show (map event-log-arguments (receipt-logs tag-receipt #:events (list tagged))))
 (show (abi-value->topic 'string "hello"))
-(show (get-logs (log-filter #:address events #:event tagged-event #:where (hasheq 'tag "hello"))))
+(show (length (get-logs (log-filter #:address events #:event tagged
+                                    #:where (hasheq 'tag "hello")))))
 
-(section "one topic, two events")
-
-(define nft (contract-send events "transferNft(address,uint256)" bob 7))
-;; Both contracts, told apart by their number of topics.
-(show (get-logs (log-filter #:event transfer)
-                #:events (list transfer "Transfer(address indexed from, address indexed to, uint256 indexed tokenId)")))
-
-(section "an anonymous event")
+(section "several events at once: anonymous, and sharing topic 0")
 
 (define note "Note(address indexed sender, uint256 value) anonymous")
 (show (event-topic note))
-(define noted (contract-send events "note(uint256)" 9))
-;; Four, the second log, stays undecoded.
-(show (receipt-logs noted #:events (list note)))
+(define note-receipt (contract-send events "note(uint256)" 9))
+(show (map event-log? (receipt-logs note-receipt #:events (list note))))
+(define transfer-721 "Transfer(address indexed from, address indexed to, uint256 indexed tokenId)")
+(show (equal? (event-topic transfer) (event-topic transfer-721)))
+(define nft-receipt (contract-send events "transferNft(address,uint256)" bob 7))
+(show (map event-log-arguments (receipt-logs nft-receipt #:events (list transfer transfer-721))))
+(define deposit "Deposit(address indexed from, uint256 value, string memo)")
+(define deposit-receipt (contract-send token "deposit(string)" "first" #:value 1000))
+(show (map event-log-arguments (receipt-logs deposit-receipt #:events (list deposit))))
+(define decoded (get-logs (log-filter) #:events (list transfer transfer-721 deposit tagged note)))
+(show (map abi-event->string (remove-duplicates (map event-log-event (filter event-log? decoded)))))
+(show (count event-log? decoded))
+(show (length decoded))
 
 (section "errors")
 
 (show-error (decode-log deposit raw))
-(show-error (string->abi-event "Transfer(address indexed from, address indexed to, address indexed x, uint256 indexed v)"))
+(show-error (string->abi-event
+             "E(address indexed from, address indexed to, address indexed x, uint256 indexed v)"))
 (show-error (log-filter #:block-hash (log-block-hash raw) #:from-block 1))

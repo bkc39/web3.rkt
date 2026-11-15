@@ -9,7 +9,7 @@
            web3
            (only-in web3/private/hex bytes->hex)
            "abi-gen.rkt"
-           "events.rkt"
+           "helpers/event-fixtures.rkt"
            "util.rkt")
 
   (struct dispatch (log expected) #:prefab)
@@ -210,8 +210,8 @@
                           "0x00000000000000000000000070997970c51812dc3a010c7d01b50e0d17dc79c8")
             'data "0x00000000000000000000000000000000000000000000000000000000000000fa"
             'blockNumber "0x2" 'logIndex "0x0" 'transactionIndex "0x0" 'removed #f
-            'blockHash (string-append "0x" (make-string 64 #\a))
-            'transactionHash (string-append "0x" (make-string 64 #\b))))
+            'blockHash (filled-hash #\a)
+            'transactionHash (filled-hash #\b)))
 
   (test-case "the manual's examples"
     (check-equal? (string->abi-event "event Transfer(address indexed from, address indexed to, uint256 value)")

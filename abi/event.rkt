@@ -7,6 +7,7 @@
          (only-in racket/string string-join)
          "../abi.rkt"
          (submod "../abi.rkt" internal)
+         (submod "event-type.rkt" private)
          "type.rkt"
          (submod "type.rkt" private)
          "../eth/log.rkt"
@@ -41,8 +42,9 @@
 (define topic/c (flat-named-contract '(and/c string? #px"^0x[0-9a-fA-F]{64}$") topic?))
 
 (define topic-positions/c
-  (and/c (listof (or/c #f topic/c (non-empty-listof topic/c)))
-         (property/c length (<=/c 4))))
+  (flat-named-contract 'topic-positions/c
+                       (and/c (listof (or/c #f topic/c (non-empty-listof topic/c)))
+                              (property/c length (<=/c 4)))))
 
 ;; The index of the parameter key names, by name or position, or #f.
 (define (parameter-index event key)
@@ -167,12 +169,10 @@
                    (if (indexed-hash? v)
                        (string-append "hash " (indexed-hash-topic v))
                        (abi-value->display-string t v))))
-  (write-string (format "#<event-log ~a(~a) ~a~a>"
-                        (abi-event-name event)
-                        (string-join (map argument->string (abi-event-parameters event) arguments) ", ")
-                        (log-place->string el)
-                        (log-removed-suffix el))
-                port))
+  (fprintf port "#<event-log ~a(~a) ~a>"
+           (abi-event-name event)
+           (string-join (map argument->string (abi-event-parameters event) arguments) ", ")
+           (log-tail el)))
 
 (struct event-log log (event arguments)
   #:transparent

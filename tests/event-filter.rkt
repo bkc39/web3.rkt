@@ -9,7 +9,7 @@
            web3
            (only-in (submod web3/event internal) log-limit-error?)
            "abi-gen.rkt"
-           "events.rkt"
+           "helpers/event-fixtures.rkt"
            "util.rkt")
 
   (struct filter-json (filter jsexpr) #:prefab)
@@ -18,9 +18,9 @@
 
   (define token "0x5FbDB2315678afecb367f032d93F642f64180aa3")
   (define bob-mixed "0x70997970c51812dc3A010C7d01b50e0d17dc79C8")
-  (define block-hash (string-append "0x" (make-string 64 #\c)))
-  (define x-topic (string-append "0x" (make-string 64 #\1)))
-  (define y-topic (string-append "0x" (make-string 64 #\2)))
+  (define block-hash (filled-hash #\c))
+  (define x-topic (filled-hash #\1))
+  (define y-topic (filled-hash #\2))
   (define default-range '((fromBlock . "earliest") (toBlock . "latest")))
 
   (define (jsexpr . fields)
@@ -140,6 +140,10 @@
                   #hash((("eth_getBlockByNumber" "safe" #f) . #hasheq((number . "0x3")))
                         (("eth_getBlockByNumber" "finalized" #f) . #hasheq((number . "0x5"))))
                   (("eth_getBlockByNumber" "safe" #f) ("eth_getBlockByNumber" "finalized" #f) ("0x3" "0x5")))
+      #s(chunking ,(log-filter #:to-block "pending") 10
+                  #hash((("eth_blockNumber") . "0x1")
+                        (("eth_getBlockByNumber" "pending" #f) . #hasheq((number . "0x2"))))
+                  (("eth_blockNumber") ("0x0" "0x1")))
       #s(chunking ,(log-filter #:from-block 0 #:to-block 9) #f #hash() (("0x0" "0x9")))
       #s(chunking ,transfers #f #hash() (("earliest" "latest")))
       #s(chunking ,(log-filter #:block-hash block-hash) 2 #hash() ((#hasheq((blockHash . ,block-hash)))))))
@@ -179,16 +183,40 @@
     (check-equal? (length (get-logs transfers #:provider whole)) 3)
     (check-equal? (map call-summary (mock-provider-calls whole))
                   '(("earliest" "latest") ("eth_blockNumber") ("0x0" "0x7c") ("0x7d" "0xf9") ("0xfa" "0xfa")))
-    (define stuck (logs-node #:fail? (lambda (from to) #t)))
-    (check-eq? (raised (lambda () (get-logs (log-filter #:from-block 5 #:to-block 5) #:chunk 1 #:provider stuck)))
-               limit-error)
-    (check-equal? (length (mock-provider-calls stuck)) 1))
+    (define pending
+      (logs-node (hash '("eth_blockNumber") "0x1"
+                       '("eth_getBlockByNumber" "pending" #f) (hasheq 'number "0x2"))
+                 #:fail? (span-over 1)))
+    (check-equal? (length (get-logs (log-filter #:to-block "pending") #:provider pending)) 2)
+    (check-equal? (map call-summary (mock-provider-calls pending))
+                  '(("earliest" "pending") ("eth_blockNumber") ("0x0" "0x0") ("0x1" "0x1"))))
+
+  (struct one-block (from to chunk calls) #:prefab)
+
+  (define one-block-requests
+    '(#s(one-block 5 5 1 (("0x5" "0x5")))
+      #s(one-block 5 5 #f (("0x5" "0x5")))
+      #s(one-block "earliest" "latest" #f (("earliest" "latest") ("eth_blockNumber")))))
+
+  (test-case "a refused single block is raised after one request for it"
+    (for ([row (in-list one-block-requests)])
+      (match-define (struct* one-block ([from from] [to to] [chunk chunk] [calls calls])) row)
+      (define stuck (logs-node (hash '("eth_blockNumber") "0x0") #:fail? (lambda (from to) #t)))
+      (define f (log-filter #:from-block from #:to-block to))
+      (check-eq? (raised (lambda () (get-logs f #:chunk chunk #:provider stuck))) limit-error)
+      (check-equal? (map call-summary (mock-provider-calls stuck)) calls (format "~a ~a" f chunk))))
 
   (define never-retried
     (list (rpc-error "eth_getLogs" -32602 "invalid block range params")
           (rpc-error "eth_getLogs" -32602 "BlockOutOfRangeError: block height is 10 but requested was 16777216")
           (rpc-error "eth_getLogs" -32000 "unknown block")
           (rpc-error "eth_getLogs" -32005 "daily request count exceeded, request rate limited")
+          (rpc-error "eth_getLogs" -32005 "Too many requests")
+          (rpc-error "eth_getLogs" 429 "Too Many Requests")
+          (rpc-error "eth_getLogs" -32000 "too many concurrent requests")
+          (rpc-error "eth_getLogs" -32602 "exceed max topics")
+          (rpc-error "eth_getLogs" -32602 "exceed max addresses or topics per search position")
+          (rpc-error "eth_getLogs" -32000 "block range extends beyond current head block")
           (rpc-error "eth_getLogs" -32601 "Method not found")
           (rpc-error "eth_getLogs" -32603 "internal error")
           (exn:fail:web3 "eth_getLogs: connection refused" (current-continuation-marks))))
