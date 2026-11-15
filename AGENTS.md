@@ -50,3 +50,5 @@ the `racket-deps` hash in `flake.nix` (the build prints the new one).
 - `master` must always build: the package catalog follows it.  Bump
   `version` in `info.rkt` on API changes.
 - Each review finding that is fixed gets a test that fails without the fix.
+- The HTTP provider takes over the connection only from a dead holder; a
+  suspended holder blocks the provider's other callers until it resumes.

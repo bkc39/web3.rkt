@@ -84,7 +84,7 @@
             checkPhase = ''
               runHook preCheck
               export WEB3_ANVIL=${pkgs.foundry}/bin/anvil
-              raco test -x -p web3
+              raco test -x --timeout 120 -p web3
               runHook postCheck
             '';
             installPhase = ''

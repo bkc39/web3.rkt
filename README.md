@@ -25,7 +25,7 @@ support for local [anvil](https://book.getfoundry.sh/anvil/) nodes.
 
 | module | contents |
 |---|---|
-| `web3/rpc` | `url->http-provider`, `current-provider`, `with-provider`, `rpc-call`, `define-jsonrpc-endpoint`, `exn:fail:web3`, `exn:fail:web3:rpc` (with `code`, `rpc-message`, `data`), hex helpers |
+| `web3/rpc` | `gen:provider` (`provider-request`, `provider-close`), `url->http-provider`, `mock-provider` (`mock-provider-calls`) for tests without a node, `current-provider`, `with-provider`, `rpc-call`, `define-jsonrpc-endpoint`, `exn:fail:web3`, `exn:fail:web3:rpc` (with `code`, `rpc-message`, `data`), `raise-rpc-error`, hex helpers |
 | `web3/eth` | `web3_*`, `net_*` and `eth_*` endpoints (`eth-call`, `eth-send-transaction`, `eth-get-transaction-receipt`, `eth-get-logs`, ...), `wait-for-receipt`, `send-transaction/receipt`, `receipt-succeeded?` |
 | `web3/abi` | `function-selector`, `encode-call`, `word->bytes`, `bytes->words`, `decode-revert-reason` (Error(string), Panic(uint256)) |
 | `web3/anvil` | `anvil_*`, `evm_snapshot`/`evm_revert`, `debug_traceCall`/`debug_traceTransaction`; `start-anvil`, `stop-anvil`, `with-anvil` |

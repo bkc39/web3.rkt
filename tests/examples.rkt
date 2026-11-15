@@ -7,8 +7,10 @@
   (require racket/list
            racket/port
            racket/runtime-path
+           racket/string
            rackunit
-           web3)
+           web3
+           "../examples/common.rkt")
 
   (define-runtime-path examples-dir "../examples")
 
@@ -36,6 +38,21 @@
   (test-case "examples are numbered 00, 01, ... without gaps"
     (check-equal? (map example-number example-names)
                   (range (length example-names))))
+
+  (test-case "show indents the continuation lines of an expression"
+    (define lines
+      (string-split (with-output-to-string
+                      (lambda ()
+                        (show (string-length
+                               (string-append "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                                              "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                                              "cccccccccccccccccccccccccccccc")))))
+                    "\n"))
+    (check-regexp-match #rx"^> [(]string-length$" (first lines))
+    (check-true (> (length lines) 2))
+    (for ([line (in-list (drop-right (rest lines) 1))])
+      (check-regexp-match #rx"^   " line))
+    (check-equal? (last lines) "90"))
 
   (cond
     [(not (current-anvil-path))
