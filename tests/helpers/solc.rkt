@@ -9,12 +9,15 @@
          racket/match
          racket/path
          racket/port
-         racket/string)
+         racket/string
+         (only-in "../../examples/common.rkt" contracts-dir))
 
 (provide compile-fixture
+         fixture-sources
          pinned-solc-version
          solc-path
-         solc-version)
+         solc-version
+         source-name)
 
 (define pinned-solc-version "0.8.33")
 
@@ -26,12 +29,20 @@
         env
         (find-executable-path "solc"))))
 
-;; "0.8.33+commit.64118f21", as solc's metadata records it, or #f.
 (define (solc-version)
   (and solc-path
        (match (regexp-match #px"Version: ([0-9.]+\\+commit\\.[0-9a-f]+)" (run-solc #"" "--version"))
          [(list _ version) version]
          [#f #f])))
+
+(define (fixture-sources)
+  (sort (for/list ([p (in-list (directory-list contracts-dir #:build? #t))]
+                   #:when (path-has-extension? p #".sol"))
+          p)
+        path<?))
+
+(define (source-name source)
+  (path->string (path-replace-extension (file-name-from-path source) #"")))
 
 (define (pinned? version)
   (and version (string-prefix? version (string-append pinned-solc-version "+commit."))))
@@ -69,13 +80,12 @@
                                           "evm.methodIdentifiers"
                                           "metadata"))))))
 
-;; The artifact of the contract named like the file, in forge's layout.
 (define (compile-fixture path)
   (define version (solc-version))
   (unless (pinned? version)
     (error 'compile-fixture "solc ~a at ~a is not ~a" version solc-path pinned-solc-version))
   (define file-name (path->string (file-name-from-path path)))
-  (define name (path->string (path-replace-extension (file-name-from-path path) #"")))
+  (define name (source-name path))
   (define output
     (string->jsexpr
      (run-solc (jsexpr->bytes (standard-input file-name (file->string path))) "--standard-json")))

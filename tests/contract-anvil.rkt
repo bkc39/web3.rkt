@@ -16,16 +16,8 @@
   (define errors (list insufficient-balance "Unauthorized(address)"))
   (define transfer "transfer(address,uint256)")
 
-  (define (deployed-code name)
-    (hash-ref (hash-ref (artifact name) 'deployedBytecode) 'object))
-
   (define (nonce account)
     (eth-get-transaction-count account "latest"))
-
-  (define (raised thunk)
-    (with-handlers ([exn:fail? values])
-      (thunk)
-      #f))
 
   (define (balance-of token account)
     (contract-call token "balanceOf(address)(uint256)" account))
@@ -43,7 +35,7 @@
     (define before (nonce anvil-alice))
     (define token (deploy-token))
     (check-equal? token (create-address anvil-alice before))
-    (check-equal? (string-downcase (eth-get-code token "latest")) (deployed-code "Token"))
+    (check-equal? (string-downcase (eth-get-code token "latest")) (artifact-deployed-bytecode "Token"))
     (define-values (again receipt)
       (deploy-contract/receipt token-code "constructor(string,string,uint256)" "Token" "TOK" 1000000))
     (check-equal? (address->checksum-string (hash-ref receipt 'contractAddress)) again)
@@ -138,7 +130,7 @@
            (define e (raised (lambda () (contract-send token transfer anvil-bob 1 #:gas 30000))))
            (check-pred exn:fail:web3:transaction? e)
            (check-false (exn:fail:web3:transaction-revert e))
-           (check-regexp-match #rx"(?i:out ?of ?gas)" (exn-message e)))
+           (check-equal? (hash-ref (exn:fail:web3:transaction-receipt e) 'status) "0x0"))
 
          (test-case "a sender the node does not manage is the node's RPC error"
            (define e (raised (lambda () (contract-send token transfer anvil-bob 0
@@ -150,13 +142,16 @@
 
          (test-case "contracts deploy at their create-address for every nonce width"
            (define accounts (eth-accounts))
-           (define (deploy-at account n)
-             (when n
-               (rpc-call "anvil_setNonce" (list account (number->hex-string n))))
+           (define (check-deploy account name)
              (define expected (create-address account (nonce account)))
-             (check-equal? (deploy-contract counter-code #:from account) expected (format "nonce ~a" n)))
+             (check-equal? (deploy-contract counter-code #:from account) expected name))
            (define fresh (list-ref accounts 5))
-           (for ([n (in-list (list #f #f 127 128 255 256 65535 65536 (expt 2 32)))])
+           (check-deploy fresh "nonce 0")
+           (check-deploy fresh "nonce 1")
+           (define (deploy-at account n)
+             (rpc-call "anvil_setNonce" (list account (number->hex-string n)))
+             (check-deploy account (format "nonce ~a" n)))
+           (for ([n (in-list (list 127 128 255 256 65535 65536 (expt 2 32)))])
              (deploy-at fresh n))
            (deploy-at (list-ref accounts 6) (- (expt 2 64) 2)))
 
@@ -170,7 +165,7 @@
            (check-equal? (address->checksum-string returned) predicted)
            (check-true (receipt-succeeded?
                         (send-transaction/receipt (hasheq 'from anvil-alice 'to create2-deployer 'data data))))
-           (check-equal? (string-downcase (eth-get-code predicted "latest")) (deployed-code "Counter"))
+           (check-equal? (string-downcase (eth-get-code predicted "latest")) (artifact-deployed-bytecode "Counter"))
            (contract-send predicted "increment()")
            (check-equal? (contract-call predicted "count()(uint256)") 1))
 

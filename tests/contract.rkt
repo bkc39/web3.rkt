@@ -8,7 +8,6 @@
            racket/match
            rackunit
            web3
-           (prefix-in rpc: (only-in web3/rpc exn:fail:web3?))
            (submod web3/contract internal)
            "abi-gen.rkt"
            "modules.rkt"
@@ -86,9 +85,7 @@
     (check-equal? none '())
     (define-values (one _one-calls)
       (run-mock (hash "eth_call" (hex-word 5))
-                (lambda ()
-                  (define balance (contract-call token "balanceOf(address)(uint256)" anvil-bob))
-                  balance)))
+                (lambda () (contract-call token "balanceOf(address)(uint256)" anvil-bob))))
     (check-equal? one '(5)))
 
   (test-case "a call returns the decoded outputs and sends encode-call's data"
@@ -229,9 +226,85 @@
     (define-values (passes _passes-calls) (mined-failure "0x"))
     (check-false (exn:fail:web3:transaction-revert passes))
     (check-regexp-match #rx": replaying it did not fail$" (exn-message passes))
-    (define plain (exn:fail:web3 "eth_call: other" (current-continuation-marks)))
-    (define-values (propagated _propagated-calls) (mined-failure (lambda (_) (raise plain))))
-    (check-eq? propagated plain))
+    (for ([row (in-list
+                (list (list (lambda (_) (raise (exn:fail:web3 "eth_call: other" (current-continuation-marks))))
+                            "eth_call: other")
+                      (list (lambda (_) (raise (exn:fail:network "connection reset" (current-continuation-marks))))
+                            "connection reset")
+                      (list 42 "eth_call: unexpected result 42")))])
+      (match-define (list replay message) row)
+      (define-values (e _calls) (mined-failure replay))
+      (check-pred exn:fail:web3:transaction? e message)
+      (check-eq? (exn:fail:web3:transaction-receipt e) failed message)
+      (check-false (exn:fail:web3:transaction-revert e) message)
+      (check-equal? (exn-message e)
+                    (format "contract-send: transaction ~a failed in block 5: replaying it raised: ~a"
+                            tx-hash message))))
+
+  (test-case "a failure after the send names the transaction and keeps the error's kind"
+    (define (unknown-outcome receipt [thunk (lambda ()
+                                              (contract-send token "transfer(address,uint256)" anvil-bob 10
+                                                             #:from anvil-alice))])
+      (define-values (e calls)
+        (parameterize ([receipt-timeout 0.05])
+          (run-mock (sending #:receipt receipt) thunk)))
+      (check-equal? (cadr (assoc "eth_sendTransaction" calls)) (hash-set transfer-tx 'gas "0x5208"))
+      e)
+    (define sent (format "^contract-send: sent transaction ~a, outcome unknown: " tx-hash))
+    (define timed-out (unknown-outcome 'null))
+    (check-pred exn:fail:web3? timed-out)
+    (check-regexp-match (regexp (string-append sent (regexp-quote "wait-for-receipt: no receipt for ")))
+                        (exn-message timed-out))
+    (define rpc-failure
+      (unknown-outcome (lambda (_) (raise-rpc-error "eth_getTransactionReceipt" -32000 "header not found"))))
+    (check-pred exn:fail:web3:rpc? rpc-failure)
+    (check-false (exn:fail:web3:rpc:revert? rpc-failure))
+    (check-equal? (list (exn:fail:web3:rpc-method rpc-failure)
+                        (exn:fail:web3:rpc-code rpc-failure)
+                        (exn:fail:web3:rpc-rpc-message rpc-failure)
+                        (exn:fail:web3:rpc-data rpc-failure))
+                  '("eth_getTransactionReceipt" -32000 "header not found" #f))
+    (check-regexp-match (regexp (string-append sent "eth_getTransactionReceipt: header not found$"))
+                        (exn-message rpc-failure))
+    (define revert-failure
+      (unknown-outcome (lambda (_)
+                         (raise (exn:fail:web3:rpc:revert "eth_getTransactionReceipt: reverted"
+                                                          (current-continuation-marks)
+                                                          "eth_getTransactionReceipt" 3 "reverted"
+                                                          (bytes->hex-string payload)
+                                                          insufficient-revert)))))
+    (check-pred exn:fail:web3:rpc:revert? revert-failure)
+    (check-equal? (exn:fail:web3:rpc:revert-revert revert-failure) insufficient-revert)
+    (check-equal? (exn:fail:web3:rpc-data revert-failure) (bytes->hex-string payload))
+    (define network-failure
+      (unknown-outcome (lambda (_) (raise (exn:fail:network "connection reset" (current-continuation-marks))))))
+    (check-pred exn:fail:web3? network-failure)
+    (check-regexp-match (regexp (string-append sent "connection reset$")) (exn-message network-failure))
+    (define-values (deploy-timeout _deploy-calls)
+      (parameterize ([receipt-timeout 0.05])
+        (run-mock (sending #:receipt 'null) (lambda () (deploy-contract #"\x60\x80" #:from anvil-alice)))))
+    (check-regexp-match (regexp (format "^deploy-contract: sent transaction ~a, outcome unknown: " tx-hash))
+                        (exn-message deploy-timeout))
+    (define-values (bound-timeout _bound-calls)
+      (parameterize ([receipt-timeout 0.05])
+        (run-mock (sending #:receipt 'null)
+                  (lambda () (contract-send/who 'token-transfer token "transfer(address,uint256)" anvil-bob 1
+                                                #:from anvil-alice)))))
+    (check-regexp-match (regexp (format "^token-transfer: sent transaction ~a, outcome unknown: " tx-hash))
+                        (exn-message bound-timeout)))
+
+  (test-case "a malformed gas estimate raises and sends nothing"
+    (for ([estimate (in-list '("0x" "21000" "0x0" "0x00" 21000))])
+      (define-values (e calls)
+        (run-mock (sending #:estimate estimate)
+                  (lambda () (contract-send token "transfer(address,uint256)" anvil-bob 10
+                                            #:from anvil-alice))))
+      (define name (format "~s" estimate))
+      (check-pred exn:fail:web3? e name)
+      (check-false (exn:fail:web3:rpc? e) name)
+      (check-regexp-match #rx"^contract-send: (malformed gas estimate|the node estimated 0 gas)" (exn-message e)
+                          name)
+      (check-equal? calls (list (list "eth_estimateGas" transfer-tx)) name)))
 
   (test-case "a deploy mined with status 0 raises even when the receipt has an address"
     (define receipt
@@ -260,9 +333,26 @@
       (check-malformed (sending #:receipt receipt) send 'contract-send))
     (for ([address (list 'null "0x1234")])
       (check-malformed (sending #:receipt (hasheq 'status "0x1" 'contractAddress address))
-                       deploy 'deploy-contract))
+                       deploy 'deploy-contract
+                       (format "^deploy-contract: malformed contract address of transaction ~a from the node"
+                               tx-hash)))
+    (check-malformed (sending #:receipt (hash-remove mined 'status)) send 'contract-send
+                     (format "^contract-send: malformed receipt status of transaction ~a from the node"
+                             tx-hash))
     (for ([receipt (list (hash-set failed 'blockNumber "zz") (hash-remove failed 'blockNumber))])
-      (check-malformed (sending #:receipt receipt) send 'contract-send)))
+      (check-malformed (sending #:receipt receipt) send 'contract-send
+                       (format "^contract-send: malformed block number of transaction ~a from the node"
+                               tx-hash))))
+
+  (test-case "receipt-succeeded? reads status 0x1 and 0x0 and raises on anything else"
+    (check-true (receipt-succeeded? mined))
+    (check-false (receipt-succeeded? failed))
+    (for ([receipt (list (hash-set mined 'status "0x2") (hash-remove mined 'status) (hash-set mined 'status 1))])
+      (check-exn (lambda (e)
+                   (and (exn:fail:web3? e)
+                        (regexp-match? #rx"^receipt-succeeded[?]: malformed receipt status from the node"
+                                       (exn-message e))))
+                 (lambda () (receipt-succeeded? receipt)))))
 
   (test-case "return data too short for the outputs raises a decode error under contract-call"
     (define-values (e _calls)
@@ -363,7 +453,7 @@
 
   (test-case "exn:fail:web3:transaction is an exn:fail:web3, not an RPC error"
     (define e (exn:fail:web3:transaction "m" (current-continuation-marks) mined #f))
-    (check-true (rpc:exn:fail:web3? e))
+    (check-true (exn:fail:web3? e))
     (check-false (exn:fail:web3:rpc? e)))
 
   (test-case "the internal entry points raise under the caller's name"

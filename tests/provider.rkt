@@ -7,7 +7,8 @@
   (require racket/contract
            racket/generic
            rackunit
-           web3)
+           web3
+           (only-in "util.rkt" raised))
 
   (define (rpc-error thunk)
     (with-handlers ([exn:fail:web3:rpc? (lambda (e)
@@ -111,12 +112,10 @@
      (define (provider-close p) 'closed)])
 
   (test-case "what a provider returns is checked"
-    (define e (with-handlers ([exn:fail? values])
-                (rpc-call "eth_chainId" '() #:provider (sloppy))))
+    (define e (raised (lambda () (rpc-call "eth_chainId" '() #:provider (sloppy)))))
     (check-pred exn:fail:web3? e)
     (check-regexp-match #rx"^eth_chainId: .*#<void>" (exn-message e))
-    (check-pred exn:fail:web3? (with-handlers ([exn:fail? values])
-                                 (provider-request (sloppy) "eth_chainId" '())))
+    (check-pred exn:fail:web3? (raised (lambda () (provider-request (sloppy) "eth_chainId" '()))))
     (check-equal? (provider-close (sloppy)) (void)))
 
   (test-case "endpoints convert parameters and results"

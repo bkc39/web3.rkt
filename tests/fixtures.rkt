@@ -5,7 +5,6 @@
 (module+ test
   (require racket/file
            racket/list
-           racket/path
            racket/string
            rackunit
            (only-in keccak keccak256)
@@ -13,19 +12,11 @@
            "../examples/common.rkt"
            "helpers/solc.rkt")
 
-  (define sources
-    (sort (for/list ([p (in-list (directory-list contracts-dir #:build? #t))]
-                     #:when (path-has-extension? p #".sol"))
-            p)
-          path<?))
-
-  (define (source-name source)
-    (path->string (path-replace-extension (file-name-from-path source) #"")))
+  (define sources (fixture-sources))
 
   (define (metadata name)
     (hash-ref (artifact name) 'metadata))
 
-  ;; A function's canonical input types from its JSON ABI entry.
   (define (json-type parameter)
     (define type (hash-ref parameter 'type))
     (cond
@@ -49,25 +40,26 @@
                     (format "~a.sol changed; run racket tests/generate-contracts.rkt" name))))
 
   (test-case "the artifacts target cancun with one compiler, and their selectors are web3's"
+    (define names (map source-name sources))
+    (for ([name (in-list names)])
+      (define a (artifact name))
+      (check-equal? (hash-ref (hash-ref (metadata name) 'settings) 'evmVersion) "cancun" name)
+      (for ([key (in-list '(bytecode deployedBytecode))])
+        (check-regexp-match #px"^0x(?:[0-9a-f]{2})+$" (hash-ref (hash-ref a key) 'object) name))
+      (define identifiers (hash-ref a 'methodIdentifiers))
+      (define functions
+        (for/list ([item (in-list (hash-ref a 'abi))]
+                   #:when (equal? (hash-ref item 'type) "function"))
+          (format "~a(~a)" (hash-ref item 'name)
+                  (string-join (map json-type (hash-ref item 'inputs)) ","))))
+      (check-equal? (sort functions string<?) (sort (map symbol->string (hash-keys identifiers)) string<?)
+                    name)
+      (for ([f (in-list functions)])
+        (check-equal? (substring (bytes->hex-string (function-selector f)) 2)
+                      (hash-ref identifiers (string->symbol f))
+                      f)))
     (define versions
-      (for/list ([source (in-list sources)])
-        (define name (source-name source))
-        (define a (artifact name))
-        (check-equal? (hash-ref (hash-ref (metadata name) 'settings) 'evmVersion) "cancun" name)
-        (for ([key (in-list '(bytecode deployedBytecode))])
-          (check-regexp-match #px"^0x(?:[0-9a-f]{2})+$" (hash-ref (hash-ref a key) 'object) name))
-        (define identifiers (hash-ref a 'methodIdentifiers))
-        (define functions
-          (for/list ([item (in-list (hash-ref a 'abi))]
-                     #:when (equal? (hash-ref item 'type) "function"))
-            (format "~a(~a)" (hash-ref item 'name)
-                    (string-join (map json-type (hash-ref item 'inputs)) ","))))
-        (check-equal? (sort functions string<?) (sort (map symbol->string (hash-keys identifiers)) string<?)
-                      name)
-        (for ([f (in-list functions)])
-          (check-equal? (substring (bytes->hex-string (function-selector f)) 2)
-                        (hash-ref identifiers (string->symbol f))
-                        f))
+      (for/list ([name (in-list names)])
         (hash-ref (hash-ref (metadata name) 'compiler) 'version)))
     (check-equal? (length (remove-duplicates versions)) 1))
 

@@ -454,7 +454,9 @@ Sends @racket[tx] with @racket[eth-send-transaction] and returns its
 receipt once mined.}
 
 @defproc[(receipt-succeeded? [receipt hash?]) boolean?]{
-Whether the receipt's status is success, @racket["0x1"].}
+Whether the receipt's status is success, @racket["0x1"], rather than
+failure, @racket["0x0"].  Any other status, or none, raises
+@racket[exn:fail:web3].}
 
 @section{Addresses}
 
@@ -899,7 +901,15 @@ account the node manages, and returns its receipt once mined.  Outputs in
 @racket[signature] are ignored.  Without @racket[gas] the gas is estimated
 first, so a transaction that would revert raises
 @racket[exn:fail:web3:rpc:revert] and is not sent.  A transaction mined with
-status 0 raises @racket[exn:fail:web3:transaction].
+status 0 raises @racket[exn:fail:web3:transaction].  A malformed or zero
+estimate raises @racket[exn:fail:web3] and nothing is sent.
+
+Once the transaction is sent, the receipt is awaited for up to 30 seconds.
+When waiting fails, or the receipt cannot be read, the error's message
+names the transaction's hash: the transaction was sent and its outcome is
+unknown, so sending it again may send it twice.  The error keeps its kind,
+an @racket[exn:fail:web3:rpc] for the node's error and
+@racket[exn:fail:web3] otherwise.
 
 @racketblock[
 (define receipt (contract-send token "transfer(address,uint256)" bob 250 #:from alice))
@@ -958,7 +968,10 @@ The address @tt{CREATE2} gives @racket[init-code] deployed by
 @defstruct*[(exn:fail:web3:transaction exn:fail:web3)
             ([receipt (and/c hash? jsexpr?)] [revert (or/c #f abi-revert?)])]{
 A transaction that was mined and failed.  @racket[revert] is what replaying
-it with @racket[eth-call] in its block reverted with, or @racket[#f].}
+it with @racket[eth-call] at its block reverted with, or @racket[#f] when the
+replay did not revert or could not be made.  The replay runs after the whole
+block, so it may not reproduce the failure when other transactions in the
+block changed the state it depends on.}
 
 @section{Local Nodes with anvil}
 

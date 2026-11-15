@@ -12,6 +12,7 @@
 
 (provide artifact
          artifact-bytecode
+         artifact-deployed-bytecode
          artifact-path
          contracts-dir
          show
@@ -30,11 +31,16 @@
 (define (artifact-bytecode name)
   (hash-ref (hash-ref (artifact name) 'bytecode) 'object))
 
+(define (artifact-deployed-bytecode name)
+  (hash-ref (hash-ref (artifact name) 'deployedBytecode) 'object))
+
 (define (section title)
   (printf "\n;;;; ~a\n\n" title))
 
+(define echo-columns 100)
+
 (define (echo datum)
-  (define lines (string-split (pretty-format datum (- (pretty-print-columns) 2) #:mode 'write) "\n"))
+  (define lines (string-split (pretty-format datum (- echo-columns 2) #:mode 'write) "\n"))
   (printf "> ~a\n" (string-join lines "\n  ")))
 
 (define-syntax-parse-rule (show e:expr)

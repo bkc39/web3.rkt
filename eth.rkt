@@ -8,6 +8,7 @@
 
 (require json
          racket/contract
+         (only-in "private/node.rkt" node-status->boolean)
          "rpc.rkt")
 
 (provide block-param/c
@@ -131,4 +132,4 @@
   (wait-for-receipt (eth-send-transaction tx #:provider provider) #:provider provider))
 
 (define (receipt-succeeded? receipt)
-  (equal? (hash-ref receipt 'status #f) "0x1"))
+  (node-status->boolean 'receipt-succeeded? "receipt status" (hash-ref receipt 'status #f)))

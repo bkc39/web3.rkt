@@ -14,9 +14,6 @@
 
   (define max-nonce (- (expt 2 64) 2))
 
-  (define (random-address prng)
-    (address->checksum-string (bytes->hex-string (random-bytes prng 20))))
-
   (cond
     [(not cast-path)
      (displayln "skipping cast differential: cast not found")]

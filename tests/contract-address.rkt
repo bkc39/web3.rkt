@@ -55,14 +55,12 @@
 
   (test-case "addresses do not depend on the case of the inputs or the form of salt and code"
     (define prng (seeded 1 0 1 4 7 2))
-    (define (random-address)
-      (bytes->hex-string (random-bytes prng 20)))
     (define (mixed-case s)
       (string-append "0x"
                      (list->string (for/list ([c (in-string s 2)])
                                      (if (zero? (random 2 prng)) (char-upcase c) c)))))
     (for ([_ (in-range 100)])
-      (define sender (random-address))
+      (define sender (random-address prng))
       (define nonce (min (random-abi-value prng 'uint64) (- (expt 2 64) 2)))
       (define address (create-address sender nonce))
       (check-pred checksum-address? address)
