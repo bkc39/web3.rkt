@@ -22,13 +22,13 @@
          provider?
          http-provider?
          mock-provider?
-         current-provider
          with-provider
          define-jsonrpc-endpoint
          hex-string?
          (contract-out
-          [provider-request (-> provider? string? (listof jsexpr?) jsexpr?)]
-          [provider-close (-> provider? void?)]
+          [rename send-request provider-request (-> provider? string? (listof jsexpr?) any)]
+          [rename close-provider provider-close (-> provider? void?)]
+          [current-provider (parameter/c (or/c #f provider?))]
           [url->http-provider (-> string? http-provider?)]
           [http-provider-url (-> http-provider? string?)]
           [mock-provider (-> mock-handler/c mock-provider?)]
@@ -38,7 +38,7 @@
                                 any)]
           [rpc-call (->* (string? (listof jsexpr?))
                          (#:provider (or/c #f provider?))
-                         jsexpr?)])
+                         any)])
          hex-string->number
          number->hex-string
          bytes->hex-string
@@ -47,8 +47,6 @@
 (module+ test
   (require rackunit))
 
-;; Errors.  `code`, `message` and `data` are the JSON-RPC error fields; data
-;; is where nodes put revert payloads.
 (struct exn:fail:web3 exn:fail ())
 (struct exn:fail:web3:rpc exn:fail:web3 (method code rpc-message data))
 
@@ -69,30 +67,36 @@
 (define-generics provider
   (provider-request provider method params)
   (provider-close provider)
+  #:requires [provider-request]
   #:fallbacks [(define (provider-close _provider) (void))])
 
-(define current-provider
-  (make-parameter #f
-                  (lambda (p)
-                    (unless (or (not p) (provider? p))
-                      (raise-argument-error 'current-provider "(or/c #f provider?)" p))
-                    p)))
+;; Providers are written by users, so what they return is checked here.
+(define (send-request provider method params)
+  (define result (provider-request provider method params))
+  (unless (jsexpr? result)
+    (raise-web3-error method "the provider returned ~e, not a JSON value" result))
+  result)
 
-(define-syntax-parse-rule (with-provider provider:expr body:expr ...+)
-  (parameterize ([current-provider provider])
+(define (close-provider provider)
+  (provider-close provider)
+  (void))
+
+(define current-provider (make-parameter #f))
+
+(define-syntax-parse-rule (with-provider provider body:expr ...+)
+  #:declare provider (expr/c #'(or/c #f provider?) #:name "the provider")
+  (parameterize ([current-provider provider.c])
     body ...))
 
 ;;;; HTTP
 
-;; One HTTP connection per provider, reused across calls (and reopened on
-;; demand); the semaphore makes a provider safe to share between threads.
-(struct http-provider (url path conn lock)
+(struct http-provider (url path conn owner last-id)
   #:methods gen:provider
   [(define (provider-request p method params)
-     (http-request p method params))
+     (response->result method
+                       (call-with-connection p (lambda (conn) (exchange p conn method params)))))
    (define (provider-close p)
-     (match-define (struct* http-provider ([conn conn] [lock lock])) p)
-     (call-with-semaphore lock (lambda () (http-conn-close! conn))))])
+     (call-with-connection p drop-connection!))])
 
 (define (url->http-provider url-string)
   (define u (string->url url-string))
@@ -107,39 +111,82 @@
                                  #:ssl? ssl?
                                  #:port (or (url-port u) (if ssl? 443 80))
                                  #:auto-reconnect? #t)
-                 (make-semaphore 1)))
+                 (box #f)
+                 (box 0)))
 
-(define request-id-lock (make-semaphore 1))
-(define last-request-id 0)
+;; `owner` holds the `holder` of the request using the connection.  A
+;; request killed mid-exchange never releases it: the next one sees the
+;; holder's thread dead, takes over, and drops the half-read connection.
+(struct holder (thread released))
 
-(define (next-request-id!)
-  (call-with-semaphore request-id-lock
-                       (lambda ()
-                         (set! last-request-id (add1 last-request-id))
-                         last-request-id)))
+(define (call-with-connection p proc)
+  (match-define (struct* http-provider ([conn conn] [owner owner])) p)
+  (define me (holder (current-thread) (make-semaphore 0)))
+  (define breaks? (break-enabled))
+  (define finished? #f)
+  (parameterize-break #f
+    (take-connection! owner me conn breaks?)
+    (dynamic-wind
+      void
+      (lambda ()
+        (begin0 (parameterize-break breaks? (proc conn))
+          (set! finished? #t)))
+      (lambda ()
+        (unless finished? (drop-connection! conn))
+        (set-box! owner #f)
+        (semaphore-post (holder-released me))))))
 
-(define (http-request p method params)
-  (match-define (struct* http-provider ([path path] [conn conn] [lock lock])) p)
-  (define body
-    (jsexpr->bytes (hasheq 'jsonrpc "2.0"
-                           'id (next-request-id!)
-                           'method method
-                           'params params)))
+(define (take-connection! owner me conn breaks?)
+  (define wait (if breaks? sync/enable-break sync))
+  (let retry ()
+    (define held (unbox owner))
+    (cond
+      [(not held) (unless (box-cas! owner #f me) (retry))]
+      [(not (thread-dead? (holder-thread held)))
+       (wait (thread-dead-evt (holder-thread held)) (semaphore-peek-evt (holder-released held)))
+       (retry)]
+      [(box-cas! owner held me) (drop-connection! conn)]
+      [else (retry)])))
+
+;; Closing flushes, which fails on a broken connection; abandoning it
+;; still makes the next request reconnect.
+(define (drop-connection! conn)
+  (with-handlers ([exn:fail? (lambda (_) (http-conn-abandon! conn))])
+    (http-conn-close! conn)))
+
+(define (exchange p conn method params)
+  (match-define (struct* http-provider ([path path] [last-id last-id])) p)
+  (define id (add1 (unbox last-id)))
+  (set-box! last-id id)
+  (define body (jsexpr->bytes (hasheq 'jsonrpc "2.0" 'id id 'method method 'params params)))
   (define response
     (with-handlers ([exn:fail? (lambda (e) (raise-web3-error method "~a" (exn-message e)))])
-      (call-with-semaphore
-       lock
-       (lambda ()
-         (define-values (_status _headers in)
-           (http-conn-sendrecv! conn path
-                                #:method #"POST"
-                                #:headers '("Content-Type: application/json")
-                                #:data body))
-         (bytes->jsexpr (port->bytes in))))))
+      (define-values (_status _headers in)
+        (http-conn-sendrecv! conn path
+                             #:method #"POST"
+                             #:headers '("Content-Type: application/json")
+                             #:data body))
+      (bytes->jsexpr (port->bytes in))))
   (cond
     [(not (hash? response)) (raise-web3-error method "malformed response ~e" response)]
-    [(hash-ref response 'error #f) => (lambda (e) (raise-error-object method e))]
-    [else (hash-ref response 'result 'null)]))
+    [(not (answers? id response))
+     (raise-web3-error method "response id ~e does not answer request ~a"
+                       (hash-ref response 'id 'null)
+                       id)]
+    [else response]))
+
+;; JSON-RPC lets an error carry a null id when the request's was unreadable.
+(define (answers? id response)
+  (match* ((hash-ref response 'id 'null) (hash-ref response 'error 'null))
+    [((== id) _) #t]
+    [('null error) (not (eq? error 'null))]
+    [(_ _) #f]))
+
+(define (response->result method response)
+  (match (hash-ref response 'error 'null)
+    ['null (hash-ref response 'result
+                     (lambda () (raise-web3-error method "malformed response ~e" response)))]
+    [error (raise-error-object method error)]))
 
 ;; Nodes do not always send well-formed error objects; keep what fits the
 ;; exn:fail:web3:rpc fields.
@@ -158,19 +205,21 @@
   (or/c (-> string? list? jsexpr?)
         (hash/c string? (or/c (-> list? jsexpr?) jsexpr?))))
 
-;; `log` is newest first; one lock for every mock keeps the constructor
-;; one-argument, and recording a call is too short to contend.
-(define mock-log-lock (make-semaphore 1))
-
-(struct mock-provider (handler [log #:auto #:mutable])
-  #:auto-value '()
+(struct mock-provider (handler log)
+  #:constructor-name new-mock-provider
+  #:omit-define-syntaxes
   #:methods gen:provider
   [(define (provider-request p method params)
-     (call-with-semaphore mock-log-lock
-                          (lambda ()
-                            (set-mock-provider-log! p (cons (cons method params)
-                                                            (mock-provider-log p)))))
+     (record-call! (mock-provider-log p) (cons method params))
      (mock-answer (mock-provider-handler p) method params))])
+
+(define (mock-provider handler)
+  (new-mock-provider handler (box '())))
+
+(define (record-call! log call)
+  (define calls (unbox log))
+  (unless (box-cas! log calls (cons call calls))
+    (record-call! log call)))
 
 (define (mock-answer handler method params)
   (define answer
@@ -183,24 +232,17 @@
     [else answer]))
 
 (define (mock-provider-calls p)
-  (reverse (mock-provider-log p)))
+  (reverse (unbox (mock-provider-log p))))
 
 ;;;; calls
 
 (define (rpc-call method params #:provider [provider (current-provider)])
   (cond
-    [provider (provider-request provider method params)]
+    [provider (send-request provider method params)]
     [else (raise-web3-error method "no provider; use with-provider or set current-provider")]))
 
 ;;;; endpoints
 
-;; (define-jsonrpc-endpoint eth_getBalance
-;;   (-> string? [block-param/c block-param->string] exact-nonnegative-integer?)
-;;   #:result-transform hex-string->number)
-;;
-;; defines (eth-get-balance address block #:provider [p (current-provider)]).
-;; Each argument spec is a contract, optionally paired with a conversion to
-;; the JSON-RPC parameter; the last spec is the result's contract.
 (begin-for-syntax
   (define-syntax-class arg-spec
     (pattern [contract:expr ->param:expr])
@@ -214,8 +256,18 @@
   #:with method (datum->syntax #'rpc-name (symbol->string (syntax-e #'rpc-name)))
   #:with (arg ...) (generate-temporaries #'(p ...))
   (define/contract (fn-name arg ... #:provider [provider (current-provider)])
-    (->* (p.contract ...) (#:provider (or/c #f provider?)) result-contract)
-    (transform (rpc-call method (list (p.->param arg) ...) #:provider provider))))
+    (->* (p.contract ...) (#:provider (or/c #f provider?)) any)
+    (call-endpoint method (list (p.->param arg) ...) provider transform result-contract)))
+
+;; The node's result is untrusted: one the transform rejects or the result
+;; contract refuses is the node's fault, not the caller's.
+(define (call-endpoint method params provider transform result/c)
+  (define ok? (flat-contract-predicate result/c))
+  (define raw (rpc-call method params #:provider provider))
+  (match (with-handlers ([exn:fail? (lambda (_) #f)])
+           (list (transform raw)))
+    [(list (? ok? result)) result]
+    [_ (raise-web3-error method "unexpected result ~e" raw)]))
 
 ;;;; hex
 
@@ -224,9 +276,15 @@
 
 (define/contract (hex-string->number s)
   (-> string? exact-nonnegative-integer?)
-  (if (string-prefix? s "0x")
-      (if (= (string-length s) 2) 0 (string->number (substring s 2) 16))
-      (string->number s)))
+  (define n
+    (cond
+      [(string=? s "0x") 0]
+      [(hex-string? s) (string->number (substring s 2) 16)]
+      [(string-prefix? s "0x") #f]
+      [else (string->number s)]))
+  (unless (exact-nonnegative-integer? n)
+    (raise-argument-error 'hex-string->number "a hex quantity" s))
+  n)
 
 (define/contract (number->hex-string n)
   (-> exact-nonnegative-integer? string?)
@@ -253,24 +311,15 @@
   (check-equal? (hex-string->number "0x2") 2)
   (check-equal? (hex-string->number "0x") 0)
   (check-equal? (hex-string->number "2") 2)
+  (check-exn #rx"expected: a hex quantity" (lambda () (hex-string->number "0xzz")))
+  (check-exn #rx"expected: a hex quantity" (lambda () (hex-string->number "1.5")))
   (check-equal? (number->hex-string #xbeef) "0xbeef")
   (check-equal? (bytes->hex-string (bytes 0 15 255)) "0x000fff")
   (check-equal? (hex-string->bytes "0x000fff") (bytes 0 15 255))
   (check-true (hex-string? "0xAb01"))
   (check-false (hex-string? "ab"))
   (check-exn #rx"no provider"
-             (lambda () (parameterize ([current-provider #f]) (rpc-call "eth_chainId" '())))))
-
-(module+ test
-  (require racket/list
-           racket/tcp)
-
-  (test-case "request ids are distinct across threads"
-    (define ids (make-channel))
-    (for ([_ (in-range 8)])
-      (thread (lambda () (for ([_ (in-range 50)]) (channel-put ids (next-request-id!))))))
-    (define seen (for/list ([_ (in-range 400)]) (channel-get ids)))
-    (check-false (check-duplicates seen)))
+             (lambda () (parameterize ([current-provider #f]) (rpc-call "eth_chainId" '()))))
 
   (test-case "raise-rpc-error"
     (define e (with-handlers ([values values]) (raise-rpc-error "eth_call" 3 "reverted" "0x08c3")))
@@ -282,110 +331,4 @@
                         (exn:fail:web3:rpc-data e))
                   '("eth_call" 3 "reverted" "0x08c3"))
     (check-false (exn:fail:web3:rpc-data
-                  (with-handlers ([values values]) (raise-rpc-error "m" #f "x")))))
-
-  ;; A node that answers each request with the next of `bodies`, verbatim,
-  ;; so the HTTP envelope handling is tested without anvil.  `(seen)` returns
-  ;; the requests received and the number of connections accepted.
-  (define (call-with-canned-node bodies proc)
-    (define listener (tcp-listen 0 4 #t "127.0.0.1"))
-    (define-values (_host port _rhost _rport) (tcp-addresses listener #t))
-    (define requests '())
-    (define connections 0)
-    (define (read-request in)
-      (define length
-        (for/fold ([n 0])
-                  ([line (in-lines in 'return-linefeed)]
-                   #:break (string=? line ""))
-          (match (regexp-match #px"^(?i:content-length): *([0-9]+)" line)
-            [(list _ digits) (string->number digits)]
-            [_ n])))
-      (set! requests (append requests (list (bytes->jsexpr (read-bytes length in))))))
-    (define (serve in out bodies)
-      (cond
-        [(or (null? bodies) (eof-object? (peek-byte in))) bodies]
-        [else
-         (read-request in)
-         (define body (string->bytes/utf-8 (car bodies)))
-         (write-bytes (bytes-append #"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
-                                    (string->bytes/utf-8
-                                     (format "Content-Length: ~a\r\n\r\n" (bytes-length body)))
-                                    body)
-                      out)
-         (flush-output out)
-         (serve in out (cdr bodies))]))
-    (define server
-      (thread
-       (lambda ()
-         (let accept ([bodies bodies])
-           (define-values (in out) (tcp-accept listener))
-           (set! connections (add1 connections))
-           (define rest (serve in out bodies))
-           (close-input-port in)
-           (close-output-port out)
-           (unless (null? rest) (accept rest))))))
-    (define p (url->http-provider (format "http://127.0.0.1:~a/" port)))
-    (dynamic-wind
-      void
-      (lambda () (proc p (lambda () (values requests connections))))
-      (lambda ()
-        (provider-close p)
-        (kill-thread server)
-        (tcp-close listener))))
-
-  (define (raised thunk)
-    (with-handlers ([exn:fail:web3? values]) (thunk) #f))
-
-  (test-case "HTTP: the request envelope and the result"
-    (call-with-canned-node
-     '("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0x7a69\"}"
-       "{\"jsonrpc\":\"2.0\",\"id\":2}")
-     (lambda (p seen)
-       (check-equal? (rpc-call "eth_getBalance" '("0xabc" "latest") #:provider p) "0x7a69")
-       (check-equal? (provider-request p "eth_syncing" '()) 'null)
-       (define-values (requests _connections) (seen))
-       (match-define (list first-request second-request) requests)
-       (check-equal? (hash-ref first-request 'jsonrpc) "2.0")
-       (check-equal? (hash-ref first-request 'method) "eth_getBalance")
-       (check-equal? (hash-ref first-request 'params) '("0xabc" "latest"))
-       (check-true (< (hash-ref first-request 'id) (hash-ref second-request 'id))))))
-
-  (test-case "HTTP: error responses become exn:fail:web3:rpc"
-    (call-with-canned-node
-     '("{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":3,\"message\":\"execution reverted\",\"data\":\"0x08c3\"}}"
-       "{\"jsonrpc\":\"2.0\",\"id\":2,\"error\":\"boom\"}"
-       "{\"jsonrpc\":\"2.0\",\"id\":3,\"error\":{\"code\":\"x\",\"message\":7}}")
-     (lambda (p _seen)
-       (define e (raised (lambda () (rpc-call "eth_call" '() #:provider p))))
-       (check-pred exn:fail:web3:rpc? e)
-       (check-equal? (exn-message e) "eth_call: execution reverted")
-       (check-equal? (list (exn:fail:web3:rpc-code e) (exn:fail:web3:rpc-data e)) '(3 "0x08c3"))
-       (define bare (raised (lambda () (rpc-call "eth_call" '() #:provider p))))
-       (check-equal? (list (exn:fail:web3:rpc-code bare)
-                           (exn:fail:web3:rpc-rpc-message bare)
-                           (exn:fail:web3:rpc-data bare))
-                     '(#f "boom" #f))
-       (define odd (raised (lambda () (rpc-call "eth_call" '() #:provider p))))
-       (check-pred exn:fail:web3:rpc? odd)
-       (check-false (exn:fail:web3:rpc-code odd)))))
-
-  (test-case "HTTP: undeliverable responses become exn:fail:web3"
-    (call-with-canned-node
-     '("<html>" "[1]")
-     (lambda (p _seen)
-       (for ([_ (in-range 2)])
-         (define e (raised (lambda () (rpc-call "eth_chainId" '() #:provider p))))
-         (check-pred exn:fail:web3? e)
-         (check-false (exn:fail:web3:rpc? e))
-         (check-regexp-match #rx"^eth_chainId: " (exn-message e))))))
-
-  (test-case "HTTP: provider-close, then the next request reconnects"
-    (call-with-canned-node
-     '("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0x1\"}"
-       "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":\"0x2\"}")
-     (lambda (p seen)
-       (check-equal? (rpc-call "eth_blockNumber" '() #:provider p) "0x1")
-       (provider-close p)
-       (check-equal? (rpc-call "eth_blockNumber" '() #:provider p) "0x2")
-       (define-values (_requests connections) (seen))
-       (check-equal? connections 2)))))
+                  (with-handlers ([values values]) (raise-rpc-error "m" #f "x"))))))

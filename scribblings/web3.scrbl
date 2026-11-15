@@ -66,7 +66,8 @@ as hash tables such as
 
 A JSON-RPC error response raises @racket[exn:fail:web3:rpc]; contract
 reverts carry their payload in @racket[exn:fail:web3:rpc-data], which
-@racket[decode-revert-reason] can read.
+@racket[decode-revert-reason] can read.  A result that does not decode
+as documented raises @racket[exn:fail:web3].
 
 @section{Providers and Calls}
 
@@ -87,7 +88,8 @@ Recognizes providers: instances of structures implementing
 Sends one request and returns its @tt{result}.  Raises
 @racket[exn:fail:web3:rpc] for an error response and
 @racket[exn:fail:web3] for anything else @racket[provider] cannot
-deliver.  Most code calls @racket[rpc-call] or an endpoint instead.}
+deliver, including a result that is not a @racket[jsexpr?].  Most code
+calls @racket[rpc-call] or an endpoint instead.}
 
 @defproc[(provider-close [provider provider?]) void?]{
 Releases what @racket[provider] holds open.  Providers that hold
@@ -98,7 +100,8 @@ nothing do nothing.}
 The provider used by endpoints and @racket[rpc-call] when no
 @racket[#:provider] argument is given.}
 
-@defform[(with-provider provider-expr body ...+)]{
+@defform[(with-provider provider-expr body ...+)
+         #:contracts ([provider-expr (or/c #f provider?)])]{
 Evaluates the @racket[body]s with @racket[current-provider] set to the
 value of @racket[provider-expr].}
 
@@ -135,7 +138,10 @@ Each argument is checked against its @racket[contract-expr] and, when
 the spec gives a @racket[->param-expr], converted by it into the JSON
 parameter.  The response's @tt{result} goes through
 @racket[transform-expr] (default @racket[values]) and is checked against
-@racket[result-contract-expr].
+@racket[result-contract-expr], a flat contract.  A result that
+@racket[transform-expr] raises on or that fails the contract raises
+@racket[exn:fail:web3] with the message
+@racket["method: unexpected result value"].
 
 @racketblock[
 (define-jsonrpc-endpoint eth_getBalance
@@ -151,9 +157,9 @@ Returns a provider that sends JSON-RPC requests to @racket[url] over
 HTTP or HTTPS.  The path and query of @racket[url] are kept, so URLs
 that carry an API key in their path work as given.
 
-The provider holds one connection and serializes requests on it, so it
-can be shared between threads.  @racket[provider-close] closes the
-connection; the next request opens a new one.}
+The provider can be shared between threads.  An interrupted or failed
+request never leaks its reply into a later one.  A lost connection, or
+one closed by @racket[provider-close], is reopened on the next request.}
 
 @defproc[(http-provider? [v any/c]) boolean?]{
 Recognizes providers made by @racket[url->http-provider].}
@@ -166,8 +172,7 @@ The URL that @racket[provider] was made from.}
 @defthing[gen:provider any/c]{
 A generic interface with the methods @racket[provider-request], which
 every implementation defines, and @racket[provider-close], which
-defaults to doing nothing.  Inside the methods, a wrapped provider's
-methods are reached through @racket[define/generic].
+defaults to doing nothing.
 
 @racketblock[
 (struct logging (inner)
@@ -175,8 +180,12 @@ methods are reached through @racket[define/generic].
   [(define/generic inner-request provider-request)
    (define/generic inner-close provider-close)
    (define (provider-request p method params)
-     (printf "~a ~s\n" method params)
-     (inner-request (logging-inner p) method params))
+     (define start (current-inexact-milliseconds))
+     (begin0 (inner-request (logging-inner p) method params)
+       (printf ";; ~a ~s took ~a ms\n"
+               method
+               params
+               (real->decimal-string (- (current-inexact-milliseconds) start) 1))))
    (define (provider-close p)
      (inner-close (logging-inner p)))])
 
@@ -255,7 +264,8 @@ hexadecimal digits.}
 
 @defproc[(hex-string->number [s string?]) exact-nonnegative-integer?]{
 Reads a JSON-RPC quantity.  @racket["0x"] alone reads as @racket[0].
-A string without the @racket["0x"] prefix is read as decimal.}
+A string without the @racket["0x"] prefix is read as decimal.  Raises
+@racket[exn:fail:contract] for a string that is neither.}
 
 @defproc[(number->hex-string [n exact-nonnegative-integer?]) string?]{
 Writes @racket[n] as a JSON-RPC quantity, such as @racket["0xbeef"].}

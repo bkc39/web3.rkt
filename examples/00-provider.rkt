@@ -37,20 +37,15 @@
 
 (section "errors")
 
-(define (try thunk)
-  (with-handlers ([exn:fail:web3:rpc?
-                   (lambda (e)
-                     (list 'rpc-error
-                           (exn:fail:web3:rpc-method e)
-                           (exn:fail:web3:rpc-code e)
-                           (exn:fail:web3:rpc-rpc-message e)))]
-                  [exn:fail:web3?
-                   (lambda (e) (list 'web3-error (exn-message e)))])
-    (thunk)))
+(define unknown-method
+  (with-handlers ([exn:fail:web3:rpc? values])
+    (rpc-call "eth_noSuchMethod" '())))
 
-(show (try (lambda () (rpc-call "eth_noSuchMethod" '()))))
-(show (try (lambda () (parameterize ([current-provider #f])
-                        (eth-chain-id)))))
+(show (exn:fail:web3:rpc-code unknown-method))
+(show (exn:fail:web3:rpc-rpc-message unknown-method))
+(show (with-handlers ([exn:fail:web3? exn-message])
+        (with-provider #f
+          (eth-chain-id))))
 
 (section "a new endpoint is one form")
 

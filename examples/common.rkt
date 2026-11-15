@@ -4,6 +4,7 @@
 ;; so running an example reads like a REPL transcript.
 
 (require racket/pretty
+         racket/string
          syntax/parse/define)
 
 (provide show
@@ -12,10 +13,13 @@
 (define (section title)
   (printf "\n;;;; ~a\n\n" title))
 
+(define (echo datum)
+  (define lines (string-split (pretty-format datum (- (pretty-print-columns) 2) #:mode 'write) "\n"))
+  (printf "> ~a\n" (string-join lines "\n  ")))
+
 (define-syntax-parse-rule (show e:expr)
   (begin
-    (printf "> ")
-    (pretty-write 'e)
+    (echo 'e)
     (call-with-values
      (lambda () e)
      (lambda vs

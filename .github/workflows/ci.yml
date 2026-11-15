@@ -36,7 +36,7 @@ jobs:
       - name: Check dependencies (with docs)
         run: raco setup --check-pkg-deps --unused-pkg-deps --pkgs web3
       - name: Test (unit and anvil integration)
-        run: raco test -x -p web3
+        run: raco test -x --timeout 120 -p web3
 
   nix:
     name: nix build

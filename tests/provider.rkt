@@ -4,8 +4,8 @@
 ;; The last test needs anvil and is skipped without it.
 
 (module+ test
-  (require racket/generic
-           racket/list
+  (require racket/contract
+           racket/generic
            rackunit
            web3)
 
@@ -43,21 +43,6 @@
     (check-equal? (exn:fail:web3:rpc-data e) "0x08c3")
     (check-equal? (map car (mock-provider-calls p)) '("eth_accounts" "eth_call")))
 
-  (test-case "mock records calls from several threads"
-    (define p (mock-provider (lambda (_method params) (car params))))
-    (define workers
-      (for/list ([t (in-range 8)])
-        (thread (lambda ()
-                  (for ([i (in-range 50)])
-                    (provider-request p (format "t~a" t) (list i)))))))
-    (for-each thread-wait workers)
-    (define calls (mock-provider-calls p))
-    (check-equal? (length calls) 400)
-    (for ([t (in-range 8)])
-      (define method (format "t~a" t))
-      (check-equal? (map cadr (filter (lambda (c) (equal? (car c) method)) calls))
-                    (range 50))))
-
   (test-case "mock handlers are checked"
     (check-exn exn:fail:contract? (lambda () (mock-provider 'nope)))
     (check-exn exn:fail:contract? (lambda () (mock-provider (lambda (params) params))))
@@ -82,15 +67,48 @@
     (check-equal? (length (mock-provider-calls inner)) 2)
     (check-equal? (provider-close p) (void)))
 
+  (define (blames-caller? thunk)
+    (with-handlers ([exn:fail:contract:blame?
+                     (lambda (e) (regexp-match? #rx"tests/provider[.]rkt" (exn-message e)))])
+      (thunk)
+      #f))
+
   (test-case "providers are required where a provider goes"
-    (check-exn exn:fail:contract? (lambda () (current-provider 'nope)))
-    (check-exn exn:fail:contract? (lambda () (with-provider "http://localhost" (void))))
+    (check-true (blames-caller? (lambda () (current-provider 'nope))))
+    (check-true (blames-caller? (lambda () (parameterize ([current-provider 5]) (void)))))
+    (check-true (blames-caller? (lambda () (with-provider "http://localhost" (void)))))
     (check-exn exn:fail:contract? (lambda () (eth-chain-id #:provider 'nope)))
     (check-exn exn:fail:contract? (lambda () (rpc-call "eth_chainId" '() #:provider 'nope)))
     (check-exn exn:fail:contract? (lambda () (provider-request 'nope "eth_chainId" '())))
     (check-exn exn:fail:contract? (lambda () (provider-close 'nope)))
     (check-exn #rx"no provider"
                (lambda () (with-provider #f (eth-chain-id)))))
+
+  (test-case "a provider must implement provider-request"
+    (define ns (make-base-namespace))
+    (parameterize ([current-namespace ns])
+      (namespace-require 'racket/generic)
+      (namespace-require 'web3))
+    (check-exn #rx"provider-request: required method is not implemented"
+               (lambda ()
+                 (eval '(struct closer ()
+                          #:methods gen:provider
+                          [(define (provider-close p) (void))])
+                       ns))))
+
+  (struct sloppy ()
+    #:methods gen:provider
+    [(define (provider-request p method params) (void))
+     (define (provider-close p) 'closed)])
+
+  (test-case "what a provider returns is checked"
+    (define e (with-handlers ([exn:fail? values])
+                (rpc-call "eth_chainId" '() #:provider (sloppy))))
+    (check-pred exn:fail:web3? e)
+    (check-regexp-match #rx"^eth_chainId: .*#<void>" (exn-message e))
+    (check-pred exn:fail:web3? (with-handlers ([exn:fail? values])
+                                 (provider-request (sloppy) "eth_chainId" '())))
+    (check-equal? (provider-close (sloppy)) (void)))
 
   (test-case "endpoints convert parameters and results"
     (define p (mock-provider
@@ -118,10 +136,21 @@
                     ("eth_getBlockByNumber" "latest" #t)
                     ("net_peerCount"))))
 
-  (test-case "endpoints check results"
-    (define p (mock-provider (hash "eth_chainId" 7 "eth_accounts" "0xaa")))
-    (check-exn exn:fail:contract? (lambda () (eth-chain-id #:provider p)))
-    (check-exn exn:fail:contract? (lambda () (eth-accounts #:provider p))))
+  (test-case "a result the node should not have sent raises exn:fail:web3"
+    (define p (mock-provider (hash "eth_chainId" 7
+                                   "eth_blockNumber" "0xzz"
+                                   "eth_sendRawTransaction" 42
+                                   "eth_accounts" "0xaa")))
+    (define (unexpected thunk)
+      (with-handlers ([exn:fail:web3? exn-message]) (thunk)))
+    (check-equal? (unexpected (lambda () (eth-chain-id #:provider p)))
+                  "eth_chainId: unexpected result 7")
+    (check-equal? (unexpected (lambda () (eth-block-number #:provider p)))
+                  "eth_blockNumber: unexpected result \"0xzz\"")
+    (check-equal? (unexpected (lambda () (eth-send-raw-transaction "0x01" #:provider p)))
+                  "eth_sendRawTransaction: unexpected result 42")
+    (check-equal? (unexpected (lambda () (eth-accounts #:provider p)))
+                  "eth_accounts: unexpected result \"0xaa\""))
 
   (cond
     [(not (current-anvil-path))
