@@ -6,11 +6,13 @@
 (require json
          net/http-client
          net/url
+         openssl
          racket/contract
          racket/generic
          racket/match
          racket/port
          racket/string
+         racket/tcp
          syntax/parse/define
          (for-syntax casemate
                      racket/base
@@ -90,13 +92,12 @@
 
 ;;;; HTTP
 
-(struct http-provider (url path conn owner last-id)
+(struct http-provider (url path host port ssl? link owner last-id)
   #:methods gen:provider
   [(define (provider-request p method params)
-     (response->result method
-                       (call-with-connection p (lambda (conn) (exchange p conn method params)))))
+     (response->result method (call-with-connection p (lambda () (exchange p method params)))))
    (define (provider-close p)
-     (call-with-connection p drop-connection!))])
+     (call-with-connection p (lambda () (drop-link! p))))])
 
 (define (url->http-provider url-string)
   (define u (string->url url-string))
@@ -107,12 +108,17 @@
       [else "/"]))
   (http-provider url-string
                  path
-                 (http-conn-open (url-host u)
-                                 #:ssl? ssl?
-                                 #:port (or (url-port u) (if ssl? 443 80))
-                                 #:auto-reconnect? #t)
+                 (url-host u)
+                 (or (url-port u) (if ssl? 443 80))
+                 ssl?
+                 (box #f)
                  (box #f)
                  (box 0)))
+
+;; `link` holds the open connection, or #f.  A connection is never reopened
+;; in place: net/http-client's body readers keep the `http-conn` and close
+;; it when their read fails, so a dropped connection takes its struct along.
+(struct link (conn in))
 
 ;; `owner` holds the `holder` of the request using the connection.  A
 ;; request killed mid-exchange never releases it: the next one sees the
@@ -120,23 +126,24 @@
 (struct holder (thread released))
 
 (define (call-with-connection p proc)
-  (match-define (struct* http-provider ([conn conn] [owner owner])) p)
+  (define owner (http-provider-owner p))
   (define me (holder (current-thread) (make-semaphore 0)))
   (define breaks? (break-enabled))
   (define finished? #f)
   (parameterize-break #f
-    (take-connection! owner me conn breaks?)
+    (take-connection! p me breaks?)
     (dynamic-wind
       void
       (lambda ()
-        (begin0 (parameterize-break breaks? (proc conn))
+        (begin0 (parameterize-break breaks? (proc))
           (set! finished? #t)))
       (lambda ()
-        (unless finished? (drop-connection! conn))
+        (unless finished? (drop-link! p))
         (set-box! owner #f)
         (semaphore-post (holder-released me))))))
 
-(define (take-connection! owner me conn breaks?)
+(define (take-connection! p me breaks?)
+  (define owner (http-provider-owner p))
   (define wait (if breaks? sync/enable-break sync))
   (let retry ()
     (define held (unbox owner))
@@ -145,16 +152,45 @@
       [(not (thread-dead? (holder-thread held)))
        (wait (thread-dead-evt (holder-thread held)) (semaphore-peek-evt (holder-released held)))
        (retry)]
-      [(box-cas! owner held me) (drop-connection! conn)]
+      [(box-cas! owner held me) (drop-link! p)]
       [else (retry)])))
 
-;; Closing flushes, which fails on a broken connection; abandoning it
-;; still makes the next request reconnect.
-(define (drop-connection! conn)
-  (with-handlers ([exn:fail? (lambda (_) (http-conn-abandon! conn))])
-    (http-conn-close! conn)))
+;; An idle connection has nothing to read: a byte or an EOF there means the
+;; node has closed it, or will.
+(define (connection! p)
+  (define current (unbox (http-provider-link p)))
+  (cond
+    [(and current (idle? current)) (link-conn current)]
+    [else
+     (drop-link! p)
+     (open-link! p)]))
 
-(define (exchange p conn method params)
+(define (idle? l)
+  (and (http-conn-live? (link-conn l))
+       (not (with-handlers ([exn:fail? (lambda (_) #t)])
+              (byte-ready? (link-in l))))))
+
+(define (open-link! p)
+  (match-define (struct* http-provider ([host host] [port port] [ssl? ssl?])) p)
+  (define-values (in out) ((if ssl? ssl-connect tcp-connect) host port))
+  (define conn (http-conn))
+  (http-conn-open! conn host
+                   #:port port
+                   #:ssl? (list ssl? in out (if ssl? ssl-abandon-port tcp-abandon-port)))
+  (set-box! (http-provider-link p) (link conn in))
+  conn)
+
+;; Closing flushes, which fails on a broken connection; abandoning it
+;; releases the socket anyway.
+(define (drop-link! p)
+  (define dropped (unbox (http-provider-link p)))
+  (set-box! (http-provider-link p) #f)
+  (when dropped
+    (with-handlers ([exn:fail? (lambda (_) (http-conn-abandon! (link-conn dropped)))])
+      (http-conn-close! (link-conn dropped)))
+    (close-input-port (link-in dropped))))
+
+(define (exchange p method params)
   (match-define (struct* http-provider ([path path] [last-id last-id])) p)
   (define id (add1 (unbox last-id)))
   (set-box! last-id id)
@@ -162,7 +198,7 @@
   (define response
     (with-handlers ([exn:fail? (lambda (e) (raise-web3-error method "~a" (exn-message e)))])
       (define-values (_status _headers in)
-        (http-conn-sendrecv! conn path
+        (http-conn-sendrecv! (connection! p) path
                              #:method #"POST"
                              #:headers '("Content-Type: application/json")
                              #:data body))
@@ -255,14 +291,16 @@
   #:with fn-name (format-id #'rpc-name "~a" (->kebab-case (syntax-e #'rpc-name)))
   #:with method (datum->syntax #'rpc-name (symbol->string (syntax-e #'rpc-name)))
   #:with (arg ...) (generate-temporaries #'(p ...))
-  (define/contract (fn-name arg ... #:provider [provider (current-provider)])
-    (->* (p.contract ...) (#:provider (or/c #f provider?)) any)
-    (call-endpoint method (list (p.->param arg) ...) provider transform result-contract)))
+  #:with result? (generate-temporary #'rpc-name)
+  (begin
+    (define result? (flat-contract-predicate (coerce-flat-contract 'fn-name result-contract)))
+    (define/contract (fn-name arg ... #:provider [provider (current-provider)])
+      (->* (p.contract ...) (#:provider (or/c #f provider?)) any)
+      (call-endpoint method (list (p.->param arg) ...) provider transform result?))))
 
 ;; The node's result is untrusted: one the transform rejects or the result
 ;; contract refuses is the node's fault, not the caller's.
-(define (call-endpoint method params provider transform result/c)
-  (define ok? (flat-contract-predicate result/c))
+(define (call-endpoint method params provider transform ok?)
   (define raw (rpc-call method params #:provider provider))
   (match (with-handlers ([exn:fail? (lambda (_) #f)])
            (list (transform raw)))
@@ -276,15 +314,11 @@
 
 (define/contract (hex-string->number s)
   (-> string? exact-nonnegative-integer?)
-  (define n
-    (cond
-      [(string=? s "0x") 0]
-      [(hex-string? s) (string->number (substring s 2) 16)]
-      [(string-prefix? s "0x") #f]
-      [else (string->number s)]))
-  (unless (exact-nonnegative-integer? n)
-    (raise-argument-error 'hex-string->number "a hex quantity" s))
-  n)
+  (cond
+    [(string=? s "0x") 0]
+    [(hex-string? s) (string->number (substring s 2) 16)]
+    [(regexp-match? #px"^[0-9]+$" s) (string->number s 10)]
+    [else (raise-argument-error 'hex-string->number "a hex quantity" s)]))
 
 (define/contract (number->hex-string n)
   (-> exact-nonnegative-integer? string?)
@@ -313,6 +347,11 @@
   (check-equal? (hex-string->number "2") 2)
   (check-exn #rx"expected: a hex quantity" (lambda () (hex-string->number "0xzz")))
   (check-exn #rx"expected: a hex quantity" (lambda () (hex-string->number "1.5")))
+  (test-case "hex-string->number reads decimal digits only"
+    (for ([s (in-list '("#x10" "+5" "1e3" "#e1e3"))])
+      (check-exn #rx"expected: a hex quantity" (lambda () (hex-string->number s))))
+    (check-equal? (hex-string->number "0x10") 16)
+    (check-equal? (hex-string->number "16") 16))
   (check-equal? (number->hex-string #xbeef) "0xbeef")
   (check-equal? (bytes->hex-string (bytes 0 15 255)) "0x000fff")
   (check-equal? (hex-string->bytes "0x000fff") (bytes 0 15 255))
@@ -332,3 +371,58 @@
                   '("eth_call" 3 "reverted" "0x08c3"))
     (check-false (exn:fail:web3:rpc-data
                   (with-handlers ([values values]) (raise-rpc-error "m" #f "x"))))))
+
+;; White-box: the provider's connection struct is not visible outside.
+(module+ test
+  (define (serve-requests in out arrived)
+    (define length
+      (for/fold ([n 0])
+                ([line (in-lines in 'return-linefeed)]
+                 #:break (string=? line ""))
+        (match (regexp-match #px"^(?i:content-length): *([0-9]+)" line)
+          [(list _ digits) (string->number digits)]
+          [_ n])))
+    (define request (bytes->jsexpr (read-bytes length in)))
+    (define body (jsexpr->bytes (hasheq 'jsonrpc "2.0" 'id (hash-ref request 'id) 'result "0x1")))
+    (fprintf out "HTTP/1.1 200 OK\r\nContent-Length: ~a\r\n\r\n" (bytes-length body))
+    (flush-output out)
+    (when (equal? (hash-ref request 'method) "hold")
+      (semaphore-post arrived)
+      (sync never-evt))
+    (write-bytes body out)
+    (flush-output out)
+    (serve-requests in out arrived))
+
+  (test-case "an interrupted request's connection struct is never reused"
+    (define server (make-custodian))
+    (define arrived (make-semaphore))
+    (define port
+      (parameterize ([current-custodian server])
+        (define listener (tcp-listen 0 4 #t "127.0.0.1"))
+        (thread (lambda ()
+                  (let accept ()
+                    (define-values (in out) (tcp-accept listener))
+                    (thread (lambda () (with-handlers ([exn:fail? void]) (serve-requests in out arrived))))
+                    (accept))))
+        (define-values (_host port _rhost _rport) (tcp-addresses listener #t))
+        port))
+    (define p (url->http-provider (format "http://127.0.0.1:~a/" port)))
+    (define (connection) (link-conn (unbox (http-provider-link p))))
+    (define (run)
+      (rpc-call "ok" '() #:provider p)
+      (define before (connection))
+      (define caller
+        (thread (lambda ()
+                  (with-handlers ([exn:break? void])
+                    (rpc-call "hold" '() #:provider p)))))
+      (sync arrived)
+      (break-thread caller)
+      (thread-wait caller)
+      (list (rpc-call "ok" '() #:provider p) (eq? before (connection))))
+    (define outcome (make-channel))
+    (define runner
+      (thread (lambda () (channel-put outcome (with-handlers ([exn:fail? exn-message]) (run))))))
+    (check-equal? (sync/timeout 20 outcome) '("0x1" #f))
+    (kill-thread runner)
+    (custodian-shutdown-all server)
+    (provider-close p)))

@@ -13,9 +13,11 @@
            web3)
 
   ;; A reply is a body string, a procedure from the request to one, or one
-  ;; of these wrapping a reply.
+  ;; of these wrapping a reply.  A `closing` reply ends its connection and
+  ;; then posts `closed`; a `held-body` reply pauses after half its body.
   (struct held (arrived release reply))
-  (struct closing (reply))
+  (struct held-body (arrived release reply))
+  (struct closing (reply closed))
 
   (define (result-body id result)
     (jsexpr->string (hasheq 'jsonrpc "2.0" 'id id 'result result)))
@@ -51,16 +53,26 @@
        (semaphore-post arrived)
        (sync release)
        (respond! out request reply)]
-      [(closing reply) (respond! out request reply)]
+      [(closing reply _closed) (respond! out request reply)]
       [(? procedure?) (respond! out request (reply request))]
-      [(? string?)
-       (define body (string->bytes/utf-8 reply))
-       (fprintf out "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ~a\r\n\r\n"
-                (bytes-length body))
-       (flush-output out)
-       (sleep 0.001)
-       (write-bytes body out)
-       (flush-output out)]))
+      [(? string?) (write-response! out reply void)]
+      [(held-body arrived release reply)
+       (write-response! out reply (lambda ()
+                                    (semaphore-post arrived)
+                                    (sync release)))]))
+
+  (define (write-response! out reply pause)
+    (define body (string->bytes/utf-8 reply))
+    (define half (quotient (bytes-length body) 2))
+    (fprintf out "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ~a\r\n\r\n"
+             (bytes-length body))
+    (flush-output out)
+    (sleep 0.001)
+    (write-bytes body out 0 half)
+    (flush-output out)
+    (pause)
+    (write-bytes body out half)
+    (flush-output out))
 
   (define (call-with-canned-node replies proc)
     (define server-custodian (make-custodian))
@@ -73,14 +85,14 @@
             (read-request in))))
     (define (serve in out replies)
       (match (next-request in replies)
-        [(? eof-object?) replies]
+        [(? eof-object?) (values replies void)]
         [request
          (set! requests (append requests (list request)))
          (with-handlers ([exn:fail? void])
            (respond! out request (car replies)))
-         (if (closing? (car replies))
-             (cdr replies)
-             (serve in out (cdr replies)))]))
+         (match (car replies)
+           [(closing _reply closed) (values (cdr replies) (lambda () (semaphore-post closed)))]
+           [_ (serve in out (cdr replies))])]))
     (define port
       (parameterize ([current-custodian server-custodian])
         (define listener (tcp-listen 0 4 #t "127.0.0.1"))
@@ -89,9 +101,10 @@
            (let accept ([replies replies])
              (define-values (in out) (tcp-accept listener))
              (set! connections (add1 connections))
-             (define rest (serve in out replies))
+             (define-values (rest closed!) (serve in out replies))
              (close-input-port in)
              (with-handlers ([exn:fail? void]) (close-output-port out))
+             (closed!)
              (unless (null? rest) (accept rest)))))
         (define-values (_host port _rhost _rport) (tcp-addresses listener #t))
         port))
@@ -150,9 +163,12 @@
 
   (test-case "HTTP: undeliverable responses become exn:fail:web3"
     (call-with-canned-node
-     '("<html>" "[1]" "{\"jsonrpc\":\"2.0\",\"id\":3}")
+     '("<html>"
+       "[1]"
+       "{\"jsonrpc\":\"2.0\",\"id\":3}"
+       "{\"jsonrpc\":\"2.0\",\"id\":null,\"result\":\"0x1\"}")
      (lambda (p _seen)
-       (for ([_ (in-range 3)])
+       (for ([_ (in-range 4)])
          (define e (raised (lambda () (rpc-call "eth_chainId" '() #:provider p))))
          (check-pred exn:fail:web3? e)
          (check-false (exn:fail:web3:rpc? e))
@@ -177,27 +193,29 @@
        (define-values (_requests connections) (seen))
        (check-equal? connections 2))))
 
-  (test-case "HTTP: a dropped keep-alive connection is reopened"
+  (test-case "HTTP: a keep-alive connection the node closed is reopened"
+    (define closed (make-semaphore))
     (call-with-canned-node
-     (list (closing (result-body 1 "0x1")) (result-body 3 "0x3"))
+     (list (closing (result-body 1 "0x1") closed) (result-body 2 "0x2"))
      (lambda (p seen)
        (check-equal? (rpc-call "eth_blockNumber" '() #:provider p) "0x1")
-       (check-pred exn:fail:web3? (raised (lambda () (rpc-call "eth_blockNumber" '() #:provider p))))
-       (check-equal? (within 2 (lambda () (rpc-call "eth_blockNumber" '() #:provider p))) "0x3")
-       (define-values (_requests connections) (seen))
-       (check-equal? connections 2))))
+       (sync closed)
+       (check-equal? (rpc-call "eth_blockNumber" '() #:provider p) "0x2")
+       (define-values (requests connections) (seen))
+       (check-equal? (list (length requests) connections) '(2 2)))))
 
-  (define (interrupted-request stop!)
+  (define (interrupted-request stop! [hold held])
     (define arrived (make-semaphore))
     (define release (make-semaphore))
     (call-with-canned-node
-     (list (held arrived release (result-body 1 "0x1")) (result-body 2 "0x2"))
+     (list (hold arrived release (result-body 1 "0x1")) (result-body 2 "0x2"))
      (lambda (p _seen)
        (define caller
          (thread (lambda ()
                    (with-handlers ([exn:break? void])
                      (rpc-call "eth_blockNumber" '() #:provider p)))))
        (sync arrived)
+       (sync (system-idle-evt))
        (stop! caller)
        (semaphore-post release)
        (within 2 (lambda () (rpc-call "eth_blockNumber" '() #:provider p))))))
@@ -208,8 +226,18 @@
                                          (thread-wait caller)))
                   "0x2"))
 
+  (test-case "HTTP: a request broken while reading its body leaves the next one alone"
+    (check-equal? (interrupted-request (lambda (caller)
+                                         (break-thread caller)
+                                         (thread-wait caller))
+                                       held-body)
+                  "0x2"))
+
   (test-case "HTTP: a request killed mid-exchange does not block the next"
     (check-equal? (interrupted-request kill-thread) "0x2"))
+
+  (test-case "HTTP: a request killed while reading its body does not block the next"
+    (check-equal? (interrupted-request kill-thread held-body) "0x2"))
 
   (test-case "HTTP: threads sharing a provider each get their own answer"
     (define (echo request)

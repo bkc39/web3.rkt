@@ -96,6 +96,15 @@
                           [(define (provider-close p) (void))])
                        ns))))
 
+  (test-case "an endpoint's result contract must be flat"
+    (define ns (make-base-namespace))
+    (parameterize ([current-namespace ns])
+      (namespace-require 'racket/contract)
+      (namespace-require 'web3))
+    (check-exn #rx"^eth-loose: contract violation\n  expected: flat-contract\\?"
+               (lambda ()
+                 (eval '(define-jsonrpc-endpoint eth_loose (-> (hash/c symbol? any/c))) ns))))
+
   (struct sloppy ()
     #:methods gen:provider
     [(define (provider-request p method params) (void))
