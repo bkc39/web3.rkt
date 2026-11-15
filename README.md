@@ -49,6 +49,15 @@ Keccak-256 comes from [keccak-rkt](https://github.com/bkc39/keccak-rkt).
 The manual is in `scribblings/web3.scrbl`; `raco setup web3` renders it
 locally, and `raco docs web3` opens it.
 
+## Examples
+
+[`examples/`](examples/) has numbered scripts to read and to try at the
+REPL, each against its own local anvil:
+
+```
+racket -i -e '(enter! "examples/00-provider.rkt")'
+```
+
 ## Development
 
 The flake pins Racket, foundry (anvil) and keccak-rkt; the build runs the

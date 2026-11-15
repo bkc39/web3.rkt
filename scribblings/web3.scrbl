@@ -458,36 +458,36 @@ with @racket[start-anvil].
 @defproc[(anvil-set-code [address string?]
                          [code hex-string?]
                          [#:provider provider (or/c #f http-provider?) (current-provider)])
-         any/c]{
+         void?]{
 Replaces the code at @racket[address].}
 
 @defproc[(anvil-set-balance [address string?]
                             [wei exact-nonnegative-integer?]
                             [#:provider provider (or/c #f http-provider?) (current-provider)])
-         any/c]{
+         void?]{
 Sets the balance of @racket[address].}
 
 @defproc[(anvil-set-storage-at [address string?]
                                [slot exact-nonnegative-integer?]
                                [value hex-string?]
                                [#:provider provider (or/c #f http-provider?) (current-provider)])
-         any/c]{
+         void?]{
 Sets storage @racket[slot] of @racket[address] to the 32-byte
 @racket[value].}
 
 @defproc[(anvil-mine [#:provider provider (or/c #f http-provider?) (current-provider)])
-         any/c]{
+         void?]{
 Mines a block.}
 
 @deftogether[(
 @defproc[(anvil-impersonate-account
           [address string?]
           [#:provider provider (or/c #f http-provider?) (current-provider)])
-         any/c]
+         void?]
 @defproc[(anvil-stop-impersonating-account
           [address string?]
           [#:provider provider (or/c #f http-provider?) (current-provider)])
-         any/c])]{
+         void?])]{
 Lets @racket[eth-send-transaction] send from @racket[address] without
 its key, or stops doing so.}
 
