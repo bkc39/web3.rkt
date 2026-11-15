@@ -2,6 +2,7 @@
 @require[@for-label[json
                     racket/base
                     racket/contract
+                    racket/generic
                     web3
                     web3/abi
                     web3/anvil
@@ -71,22 +72,28 @@ reverts carry their payload in @racket[exn:fail:web3:rpc-data], which
 
 @defmodule[web3/rpc]
 
-@defproc[(url->http-provider [url string?]) http-provider?]{
+A provider delivers JSON-RPC requests to a node: over HTTP
+(@racket[url->http-provider]), from a table (@racket[mock-provider]),
+or any other way a structure implementing @racket[gen:provider] chooses.
 
-Returns a provider that sends JSON-RPC requests to @racket[url] over
-HTTP or HTTPS.  The path and query of @racket[url] are kept, so URLs
-that carry an API key in their path work as given.
+@defproc[(provider? [v any/c]) boolean?]{
+Recognizes providers: instances of structures implementing
+@racket[gen:provider].}
 
-The provider holds one connection, reopened on demand, and serializes
-requests on it, so it can be shared between threads.}
+@defproc[(provider-request [provider provider?]
+                           [method string?]
+                           [params (listof jsexpr?)])
+         jsexpr?]{
+Sends one request and returns its @tt{result}.  Raises
+@racket[exn:fail:web3:rpc] for an error response and
+@racket[exn:fail:web3] for anything else @racket[provider] cannot
+deliver.  Most code calls @racket[rpc-call] or an endpoint instead.}
 
-@defproc[(http-provider? [v any/c]) boolean?]{
-Recognizes providers made by @racket[url->http-provider].}
+@defproc[(provider-close [provider provider?]) void?]{
+Releases what @racket[provider] holds open.  Providers that hold
+nothing do nothing.}
 
-@defproc[(http-provider-url [provider http-provider?]) string?]{
-The URL that @racket[provider] was made from.}
-
-@defparam[current-provider provider (or/c #f http-provider?)
+@defparam[current-provider provider (or/c #f provider?)
           #:value #f]{
 The provider used by endpoints and @racket[rpc-call] when no
 @racket[#:provider] argument is given.}
@@ -97,15 +104,14 @@ value of @racket[provider-expr].}
 
 @defproc[(rpc-call [method string?]
                    [params (listof jsexpr?)]
-                   [#:provider provider (or/c #f http-provider?)
+                   [#:provider provider (or/c #f provider?)
                     (current-provider)])
          jsexpr?]{
 
 Sends a JSON-RPC request for @racket[method] with positional
-@racket[params] and returns the response's @tt{result}.  Raises
-@racket[exn:fail:web3:rpc] when the node returns an error response, and
-@racket[exn:fail:web3] when there is no provider or the response is not
-a JSON object.
+@racket[params] through @racket[provider-request] and returns the
+response's @tt{result}.  Raises @racket[exn:fail:web3] when
+@racket[provider] is @racket[#f].
 
 @racketblock[
 (rpc-call "eth_getBalance" (list address "latest"))
@@ -137,6 +143,78 @@ parameter.  The response's @tt{result} goes through
   #:result-transform hex-string->number)
 ]}
 
+@subsection{HTTP Providers}
+
+@defproc[(url->http-provider [url string?]) http-provider?]{
+
+Returns a provider that sends JSON-RPC requests to @racket[url] over
+HTTP or HTTPS.  The path and query of @racket[url] are kept, so URLs
+that carry an API key in their path work as given.
+
+The provider holds one connection and serializes requests on it, so it
+can be shared between threads.  @racket[provider-close] closes the
+connection; the next request opens a new one.}
+
+@defproc[(http-provider? [v any/c]) boolean?]{
+Recognizes providers made by @racket[url->http-provider].}
+
+@defproc[(http-provider-url [provider http-provider?]) string?]{
+The URL that @racket[provider] was made from.}
+
+@subsection{Writing a Provider}
+
+@defthing[gen:provider any/c]{
+A generic interface with the methods @racket[provider-request], which
+every implementation defines, and @racket[provider-close], which
+defaults to doing nothing.  Inside the methods, a wrapped provider's
+methods are reached through @racket[define/generic].
+
+@racketblock[
+(struct logging (inner)
+  #:methods gen:provider
+  [(define/generic inner-request provider-request)
+   (define/generic inner-close provider-close)
+   (define (provider-request p method params)
+     (printf "~a ~s\n" method params)
+     (inner-request (logging-inner p) method params))
+   (define (provider-close p)
+     (inner-close (logging-inner p)))])
+
+(with-provider (logging (url->http-provider "http://127.0.0.1:8545"))
+  (eth-block-number))
+]}
+
+@subsection{Mock Providers}
+
+@defproc[(mock-provider [handler (or/c (-> string? list? jsexpr?)
+                                       (hash/c string?
+                                               (or/c (-> list? jsexpr?)
+                                                     jsexpr?)))])
+         mock-provider?]{
+A provider that answers from @racket[handler] instead of a node.  A
+procedure is called with each request's method and params.  A hash
+maps method names to a result, or to a procedure of the params; a
+method it lacks raises @racket[exn:fail:web3:rpc] with code
+@racket[-32601].  Handlers answer with an error by calling
+@racket[raise-rpc-error].  A mock can be shared between threads.
+
+@racketblock[
+(define p (mock-provider (hash "eth_chainId" "0x1"
+                               "eth_getBalance" "0xff")))
+(eth-get-balance "0xaa" 5 #:provider p)
+(code:comment "=> 255")
+(mock-provider-calls p)
+(code:comment "=> '((\"eth_getBalance\" \"0xaa\" \"0x5\"))")
+]}
+
+@defproc[(mock-provider? [v any/c]) boolean?]{
+Recognizes providers made by @racket[mock-provider].}
+
+@defproc[(mock-provider-calls [provider mock-provider?])
+         (listof (cons/c string? list?))]{
+The requests @racket[provider] has received, oldest first, each as
+@racket[(cons method params)].}
+
 @subsection{Errors}
 
 @defstruct*[(exn:fail:web3 exn:fail) ()]{
@@ -160,6 +238,14 @@ put a reverting call's return data in @racket[data] as a hex string.
                     (hex-string->bytes (exn:fail:web3:rpc-data e))))])
   (eth-call (hasheq 'to contract 'data "0x") "latest"))
 ]}
+
+@defproc[(raise-rpc-error [method string?]
+                          [code (or/c #f exact-integer?)]
+                          [message string?]
+                          [data (or/c #f jsexpr?) #f])
+         any]{
+Raises @racket[exn:fail:web3:rpc] with the given fields and the message
+@racket["method: message"], as a provider does for an error response.}
 
 @subsection{Hex Strings}
 
@@ -196,23 +282,23 @@ Writes a block number as a hex quantity and passes tags through.}
 @subsection{Node and Chain}
 
 @deftogether[(
-@defproc[(web3-client-version [#:provider provider (or/c #f http-provider?) (current-provider)])
+@defproc[(web3-client-version [#:provider provider (or/c #f provider?) (current-provider)])
          string?]
-@defproc[(net-version [#:provider provider (or/c #f http-provider?) (current-provider)])
+@defproc[(net-version [#:provider provider (or/c #f provider?) (current-provider)])
          string?]
-@defproc[(net-listening [#:provider provider (or/c #f http-provider?) (current-provider)])
+@defproc[(net-listening [#:provider provider (or/c #f provider?) (current-provider)])
          boolean?]
-@defproc[(net-peer-count [#:provider provider (or/c #f http-provider?) (current-provider)])
+@defproc[(net-peer-count [#:provider provider (or/c #f provider?) (current-provider)])
          exact-nonnegative-integer?]
-@defproc[(eth-chain-id [#:provider provider (or/c #f http-provider?) (current-provider)])
+@defproc[(eth-chain-id [#:provider provider (or/c #f provider?) (current-provider)])
          exact-nonnegative-integer?]
-@defproc[(eth-syncing [#:provider provider (or/c #f http-provider?) (current-provider)])
+@defproc[(eth-syncing [#:provider provider (or/c #f provider?) (current-provider)])
          (or/c boolean? hash?)]
-@defproc[(eth-gas-price [#:provider provider (or/c #f http-provider?) (current-provider)])
+@defproc[(eth-gas-price [#:provider provider (or/c #f provider?) (current-provider)])
          exact-nonnegative-integer?]
-@defproc[(eth-accounts [#:provider provider (or/c #f http-provider?) (current-provider)])
+@defproc[(eth-accounts [#:provider provider (or/c #f provider?) (current-provider)])
          (listof string?)]
-@defproc[(eth-block-number [#:provider provider (or/c #f http-provider?) (current-provider)])
+@defproc[(eth-block-number [#:provider provider (or/c #f provider?) (current-provider)])
          exact-nonnegative-integer?])]{
 
 @tt{web3_clientVersion}, @tt{net_version}, @tt{net_listening},
@@ -222,20 +308,20 @@ Writes a block number as a hex quantity and passes tags through.}
 the node reports it, a decimal string.}
 
 @deftogether[(
-@defproc[(eth-protocol-version [#:provider provider (or/c #f http-provider?) (current-provider)])
+@defproc[(eth-protocol-version [#:provider provider (or/c #f provider?) (current-provider)])
          string?]
-@defproc[(eth-coinbase [#:provider provider (or/c #f http-provider?) (current-provider)])
+@defproc[(eth-coinbase [#:provider provider (or/c #f provider?) (current-provider)])
          string?]
-@defproc[(eth-mining [#:provider provider (or/c #f http-provider?) (current-provider)])
+@defproc[(eth-mining [#:provider provider (or/c #f provider?) (current-provider)])
          boolean?]
-@defproc[(eth-hashrate [#:provider provider (or/c #f http-provider?) (current-provider)])
+@defproc[(eth-hashrate [#:provider provider (or/c #f provider?) (current-provider)])
          exact-nonnegative-integer?])]{
 
 Legacy proof-of-work era methods.  Many clients no longer serve them
 since the Merge and answer with an error.}
 
 @defproc[(web3-sha3 [data hex-string?]
-                    [#:provider provider (or/c #f http-provider?) (current-provider)])
+                    [#:provider provider (or/c #f provider?) (current-provider)])
          hex-string?]{
 Keccak-256 of @racket[data], computed by the node.  To hash locally, use
 @racketidfont{keccak256} from the @tt{keccak} package.}
@@ -244,26 +330,26 @@ Keccak-256 of @racket[data], computed by the node.  To hash locally, use
 
 @defproc[(eth-get-balance [address string?]
                           [block block-param/c]
-                          [#:provider provider (or/c #f http-provider?) (current-provider)])
+                          [#:provider provider (or/c #f provider?) (current-provider)])
          exact-nonnegative-integer?]{
 The balance of @racket[address] in wei.}
 
 @defproc[(eth-get-transaction-count [address string?]
                                     [block block-param/c]
-                                    [#:provider provider (or/c #f http-provider?) (current-provider)])
+                                    [#:provider provider (or/c #f provider?) (current-provider)])
          exact-nonnegative-integer?]{
 The number of transactions sent from @racket[address]: its next nonce.}
 
 @defproc[(eth-get-storage-at [address string?]
                              [slot exact-nonnegative-integer?]
                              [block block-param/c]
-                             [#:provider provider (or/c #f http-provider?) (current-provider)])
+                             [#:provider provider (or/c #f provider?) (current-provider)])
          hex-string?]{
 The 32-byte word at storage @racket[slot] of @racket[address].}
 
 @defproc[(eth-get-code [address string?]
                        [block block-param/c]
-                       [#:provider provider (or/c #f http-provider?) (current-provider)])
+                       [#:provider provider (or/c #f provider?) (current-provider)])
          hex-string?]{
 The code deployed at @racket[address], or @racket["0x"] for an account
 without code.}
@@ -272,7 +358,7 @@ without code.}
 
 @defproc[(eth-get-block-by-number [block block-param/c]
                                   [full-transactions? boolean?]
-                                  [#:provider provider (or/c #f http-provider?) (current-provider)])
+                                  [#:provider provider (or/c #f provider?) (current-provider)])
          (or/c 'null hash?)]{
 The block, with full transaction objects when
 @racket[full-transactions?] is true and transaction hashes otherwise.}
@@ -280,11 +366,11 @@ The block, with full transaction objects when
 @deftogether[(
 @defproc[(eth-get-block-transaction-count-by-hash
           [block-hash string?]
-          [#:provider provider (or/c #f http-provider?) (current-provider)])
+          [#:provider provider (or/c #f provider?) (current-provider)])
          exact-nonnegative-integer?]
 @defproc[(eth-get-block-transaction-count-by-number
           [block block-param/c]
-          [#:provider provider (or/c #f http-provider?) (current-provider)])
+          [#:provider provider (or/c #f provider?) (current-provider)])
          exact-nonnegative-integer?])]{
 The number of transactions in a block; @racket[0] for an unknown block.}
 
@@ -292,7 +378,7 @@ The number of transactions in a block; @racket[0] for an unknown block.}
 
 @defproc[(eth-call [tx (and/c hash? jsexpr?)]
                    [block block-param/c]
-                   [#:provider provider (or/c #f http-provider?) (current-provider)])
+                   [#:provider provider (or/c #f provider?) (current-provider)])
          hex-string?]{
 Executes the call @racket[tx] against the state at @racket[block]
 without creating a transaction, and returns its return data.  A revert
@@ -300,35 +386,35 @@ raises @racket[exn:fail:web3:rpc] with the revert payload in its
 @racket[data] field.}
 
 @defproc[(eth-estimate-gas [tx (and/c hash? jsexpr?)]
-                           [#:provider provider (or/c #f http-provider?) (current-provider)])
+                           [#:provider provider (or/c #f provider?) (current-provider)])
          exact-nonnegative-integer?]{
 An estimate of the gas @racket[tx] would use.}
 
 @defproc[(eth-send-transaction [tx (and/c hash? jsexpr?)]
-                               [#:provider provider (or/c #f http-provider?) (current-provider)])
+                               [#:provider provider (or/c #f provider?) (current-provider)])
          hex-string?]{
 Asks the node to sign and send @racket[tx] from an account it manages,
 such as one of anvil's development accounts, and returns the
 transaction hash.}
 
 @defproc[(eth-send-raw-transaction [signed-tx hex-string?]
-                                   [#:provider provider (or/c #f http-provider?) (current-provider)])
+                                   [#:provider provider (or/c #f provider?) (current-provider)])
          hex-string?]{
 Submits an already signed, serialized transaction and returns its hash.}
 
 @deftogether[(
 @defproc[(eth-get-transaction-by-hash
           [tx-hash hex-string?]
-          [#:provider provider (or/c #f http-provider?) (current-provider)])
+          [#:provider provider (or/c #f provider?) (current-provider)])
          (or/c 'null hash?)]
 @defproc[(eth-get-transaction-receipt
           [tx-hash hex-string?]
-          [#:provider provider (or/c #f http-provider?) (current-provider)])
+          [#:provider provider (or/c #f provider?) (current-provider)])
          (or/c 'null hash?)])]{
 A transaction, or its receipt once it has been mined.}
 
 @defproc[(eth-get-logs [filter (and/c hash? jsexpr?)]
-                       [#:provider provider (or/c #f http-provider?) (current-provider)])
+                       [#:provider provider (or/c #f provider?) (current-provider)])
          list?]{
 The logs matching @racket[filter], a hash table with keys such as
 @racket['address], @racket['topics], @racket['fromBlock] and
@@ -337,7 +423,7 @@ The logs matching @racket[filter], a hash table with keys such as
 @defproc[(wait-for-receipt [tx-hash hex-string?]
                            [#:timeout timeout real? 30.0]
                            [#:interval interval real? 0.002]
-                           [#:provider provider (or/c #f http-provider?) (current-provider)])
+                           [#:provider provider (or/c #f provider?) (current-provider)])
          hash?]{
 Polls for the receipt of @racket[tx-hash], starting every
 @racket[interval] seconds and backing off to every quarter second.
@@ -345,7 +431,7 @@ Raises @racket[exn:fail:web3] if no receipt appears within
 @racket[timeout] seconds.}
 
 @defproc[(send-transaction/receipt [tx (and/c hash? jsexpr?)]
-                                   [#:provider provider (or/c #f http-provider?) (current-provider)])
+                                   [#:provider provider (or/c #f provider?) (current-provider)])
          hash?]{
 Sends @racket[tx] with @racket[eth-send-transaction] and returns its
 receipt once mined.}
@@ -457,45 +543,45 @@ with @racket[start-anvil].
 
 @defproc[(anvil-set-code [address string?]
                          [code hex-string?]
-                         [#:provider provider (or/c #f http-provider?) (current-provider)])
+                         [#:provider provider (or/c #f provider?) (current-provider)])
          void?]{
 Replaces the code at @racket[address].}
 
 @defproc[(anvil-set-balance [address string?]
                             [wei exact-nonnegative-integer?]
-                            [#:provider provider (or/c #f http-provider?) (current-provider)])
+                            [#:provider provider (or/c #f provider?) (current-provider)])
          void?]{
 Sets the balance of @racket[address].}
 
 @defproc[(anvil-set-storage-at [address string?]
                                [slot exact-nonnegative-integer?]
                                [value hex-string?]
-                               [#:provider provider (or/c #f http-provider?) (current-provider)])
+                               [#:provider provider (or/c #f provider?) (current-provider)])
          void?]{
 Sets storage @racket[slot] of @racket[address] to the 32-byte
 @racket[value].}
 
-@defproc[(anvil-mine [#:provider provider (or/c #f http-provider?) (current-provider)])
+@defproc[(anvil-mine [#:provider provider (or/c #f provider?) (current-provider)])
          void?]{
 Mines a block.}
 
 @deftogether[(
 @defproc[(anvil-impersonate-account
           [address string?]
-          [#:provider provider (or/c #f http-provider?) (current-provider)])
+          [#:provider provider (or/c #f provider?) (current-provider)])
          void?]
 @defproc[(anvil-stop-impersonating-account
           [address string?]
-          [#:provider provider (or/c #f http-provider?) (current-provider)])
+          [#:provider provider (or/c #f provider?) (current-provider)])
          void?])]{
 Lets @racket[eth-send-transaction] send from @racket[address] without
 its key, or stops doing so.}
 
 @deftogether[(
-@defproc[(evm-snapshot [#:provider provider (or/c #f http-provider?) (current-provider)])
+@defproc[(evm-snapshot [#:provider provider (or/c #f provider?) (current-provider)])
          hex-string?]
 @defproc[(evm-revert [snapshot hex-string?]
-                     [#:provider provider (or/c #f http-provider?) (current-provider)])
+                     [#:provider provider (or/c #f provider?) (current-provider)])
          boolean?])]{
 Saves the chain state and returns its id, or restores the state saved
 as @racket[snapshot].}
@@ -506,11 +592,11 @@ as @racket[snapshot].}
 @defproc[(debug-trace-call [tx (and/c hash? jsexpr?)]
                            [block block-param/c]
                            [options (and/c hash? jsexpr?)]
-                           [#:provider provider (or/c #f http-provider?) (current-provider)])
+                           [#:provider provider (or/c #f provider?) (current-provider)])
          hash?]
 @defproc[(debug-trace-transaction [tx-hash hex-string?]
                                   [options (and/c hash? jsexpr?)]
-                                  [#:provider provider (or/c #f http-provider?) (current-provider)])
+                                  [#:provider provider (or/c #f provider?) (current-provider)])
          hash?])]{
 
 Struct-log traces of a call or a mined transaction, with one entry per
