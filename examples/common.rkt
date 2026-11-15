@@ -1,17 +1,34 @@
 #lang racket/base
 
 (require (for-syntax racket/base)
+         json
          racket/format
          racket/match
          racket/pretty
+         racket/runtime-path
          racket/string
          syntax/parse/define
          (only-in web3/rpc bytes->hex-string))
 
-(provide show
+(provide artifact
+         artifact-bytecode
+         artifact-path
+         contracts-dir
+         show
          show-error
          show-words
          section)
+
+(define-runtime-path contracts-dir "contracts")
+
+(define (artifact-path name)
+  (build-path contracts-dir "out" (format "~a.sol" name) (format "~a.json" name)))
+
+(define (artifact name)
+  (call-with-input-file (artifact-path name) read-json))
+
+(define (artifact-bytecode name)
+  (hash-ref (hash-ref (artifact name) 'bytecode) 'object))
 
 (define (section title)
   (printf "\n;;;; ~a\n\n" title))
@@ -35,8 +52,9 @@
 
 (define (print-error e)
   (printf "; ~a\n" (exn-name e))
-  (for ([line (in-list (string-split (exn-message e) "\n"))])
-    (printf "; ~a\n" (regexp-replace* #px"\\p{Cc}+" line "…"))))
+  (for ([line (in-list (string-split (exn-message e) "\n"))]
+        #:unless (regexp-match? #px"^\\p{Cc}+$" line))
+    (printf "; ~a\n" (regexp-replace #px": …$" (regexp-replace* #px"\\p{Cc}+" line "…") ""))))
 
 (define (call-and-show-error datum thunk)
   (echo datum)

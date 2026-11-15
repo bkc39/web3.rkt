@@ -9,11 +9,13 @@
                     web3/abi/vectors
                     web3/address
                     web3/anvil
+                    web3/contract
                     web3/eth
                     web3/rpc]
           scribble/example]
 
 @(define abi-eval (make-base-eval '(require web3/abi web3/address web3/rpc)))
+@(define contract-eval (make-base-eval '(require web3)))
 
 @title{web3: Ethereum JSON-RPC for Racket}
 @author{bkc}
@@ -27,7 +29,8 @@ support for running local
 
 @racket[(require web3)] provides everything in @racketmodname[web3/rpc],
 @racketmodname[web3/eth], @racketmodname[web3/abi],
-@racketmodname[web3/address] and @racketmodname[web3/anvil].
+@racketmodname[web3/address], @racketmodname[web3/contract] and
+@racketmodname[web3/anvil].
 
 @racketblock[
 (require web3)
@@ -835,6 +838,127 @@ Solidity's decoder accepts them.}
 
 @defthing[abi-reject-vectors (listof abi-reject-vector?)]{
 The rejected inputs.}
+
+@section{Contracts}
+
+@defmodule[web3/contract]
+
+Deploying contracts and calling their functions from accounts the node
+manages.  Signatures are written as for @racket[encode-call]; a call's
+outputs follow its inputs, as in @racket["balanceOf(address)(uint256)"].
+Arguments and results are as in @secref["abi-values"].  A revert raises
+@racket[exn:fail:web3:rpc:revert], decoded against @racket[errors] and the
+built-in @tt{Error} and @tt{Panic}.
+
+@defparam[current-account account (or/c #f (abi-value/c 'address)) #:value #f]{
+The sender when no @racket[#:from] is given.  Sending with no sender raises
+@racket[exn:fail:web3]; a call with none has no @tt{from}.}
+
+@defproc[(contract-call [address (abi-value/c 'address)]
+                        [signature (or/c string? abi-signature?)]
+                        [arg any/c] ...
+                        [#:from from (or/c #f (abi-value/c 'address)) (current-account)]
+                        [#:value value exact-nonnegative-integer? 0]
+                        [#:gas gas (or/c #f exact-positive-integer?) #f]
+                        [#:block block block-param/c "latest"]
+                        [#:errors errors (listof (or/c string? abi-signature?)) '()]
+                        [#:provider provider (or/c #f provider?) (current-provider)])
+         any]{
+Calls @racket[signature] at @racket[address] with @racket[eth-call] and
+returns its outputs as multiple values: one value per output, none for
+@tt{()}.  @racket[signature] must give its outputs.  Nothing is sent.
+
+@examples[#:eval contract-eval
+          (define token "0x5FbDB2315678afecb367f032d93F642f64180aa3")
+          (define node
+            (mock-provider
+             (hash "eth_call" (bytes->hex-string (abi-encode '(string uint8) '("Token" 18))))))
+          (contract-call token "meta()(string,uint8)" #:provider node)
+          (define refusing
+            (mock-provider
+             (lambda (method params)
+               (raise-rpc-error method 3 "execution reverted"
+                                (bytes->hex-string
+                                 (encode-call "InsufficientBalance(uint256,uint256)" 0 5))))))
+          (eval:error
+           (contract-call token "transfer(address,uint256)(bool)" token 5
+                          #:errors '("InsufficientBalance(uint256,uint256)")
+                          #:provider refusing))]}
+
+@defproc[(contract-send [address (abi-value/c 'address)]
+                        [signature (or/c string? abi-signature?)]
+                        [arg any/c] ...
+                        [#:from from (or/c #f (abi-value/c 'address)) (current-account)]
+                        [#:value value exact-nonnegative-integer? 0]
+                        [#:gas gas (or/c #f exact-positive-integer?) #f]
+                        [#:errors errors (listof (or/c string? abi-signature?)) '()]
+                        [#:provider provider (or/c #f provider?) (current-provider)])
+         (and/c hash? jsexpr?)]{
+Sends a transaction calling @racket[signature] from @racket[from], an
+account the node manages, and returns its receipt once mined.  Outputs in
+@racket[signature] are ignored.  Without @racket[gas] the gas is estimated
+first, so a transaction that would revert raises
+@racket[exn:fail:web3:rpc:revert] and is not sent.  A transaction mined with
+status 0 raises @racket[exn:fail:web3:transaction].
+
+@racketblock[
+(define receipt (contract-send token "transfer(address,uint256)" bob 250 #:from alice))
+(receipt-succeeded? receipt)
+]}
+
+@deftogether[(
+@defproc[(deploy-contract [init-code (or/c bytes? (and/c string? #px"^0x(?:[0-9a-fA-F]{2})*$"))]
+                          [constructor (or/c string? abi-signature?) "constructor()"]
+                          [arg any/c] ...
+                          [#:from from (or/c #f (abi-value/c 'address)) (current-account)]
+                          [#:value value exact-nonnegative-integer? 0]
+                          [#:gas gas (or/c #f exact-positive-integer?) #f]
+                          [#:errors errors (listof (or/c string? abi-signature?)) '()]
+                          [#:provider provider (or/c #f provider?) (current-provider)])
+         checksum-address?]
+@defproc[(deploy-contract/receipt
+          [init-code (or/c bytes? (and/c string? #px"^0x(?:[0-9a-fA-F]{2})*$"))]
+          [constructor (or/c string? abi-signature?) "constructor()"]
+          [arg any/c] ...
+          [#:from from (or/c #f (abi-value/c 'address)) (current-account)]
+          [#:value value exact-nonnegative-integer? 0]
+          [#:gas gas (or/c #f exact-positive-integer?) #f]
+          [#:errors errors (listof (or/c string? abi-signature?)) '()]
+          [#:provider provider (or/c #f provider?) (current-provider)])
+         (values checksum-address? (and/c hash? jsexpr?))])]{
+Deploys @racket[init-code] with the @racket[arg]s encoded as the inputs of
+@racket[constructor], a signature named @tt{constructor}, and returns the
+new contract's address, and with @racket[deploy-contract/receipt] its
+receipt.  Gas and failures are as for @racket[contract-send].
+
+@racketblock[
+(define token
+  (deploy-contract token-code "constructor(string,string,uint256)" "Token" "TOK" 1000000))
+]}
+
+@defproc[(create-address [sender (abi-value/c 'address)]
+                         [nonce (integer-in 0 (- (expt 2 64) 2))])
+         checksum-address?]{
+The address of the contract @racket[sender] creates with @racket[nonce].
+
+@examples[#:eval contract-eval
+          (create-address "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266" 0)]}
+
+@defproc[(create2-address [deployer (abi-value/c 'address)]
+                          [salt (or/c (and/c bytes? (property/c bytes-length (=/c 32)))
+                                      (integer-in 0 (sub1 (expt 2 256))))]
+                          [init-code (or/c bytes? (and/c string? #px"^0x(?:[0-9a-fA-F]{2})*$"))])
+         checksum-address?]{
+The address @tt{CREATE2} gives @racket[init-code] deployed by
+@racket[deployer] with @racket[salt], 32 bytes or an integer.
+
+@examples[#:eval contract-eval
+          (create2-address "0x0000000000000000000000000000000000000000" 0 #"\0")]}
+
+@defstruct*[(exn:fail:web3:transaction exn:fail:web3)
+            ([receipt (and/c hash? jsexpr?)] [revert (or/c #f abi-revert?)])]{
+A transaction that was mined and failed.  @racket[revert] is what replaying
+it with @racket[eth-call] in its block reverted with, or @racket[#f].}
 
 @section{Local Nodes with anvil}
 
