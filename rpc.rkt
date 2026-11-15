@@ -15,6 +15,7 @@
          racket/tcp
          syntax/parse/define
          "private/exn.rkt"
+         "private/hex.rkt"
          (for-syntax casemate
                      racket/base
                      racket/syntax))
@@ -324,20 +325,14 @@
 
 (define/contract (bytes->hex-string bs)
   (-> bytes? string?)
-  (string-append
-   "0x"
-   (apply string-append
-          (for/list ([b (in-bytes bs)])
-            (string-append (if (< b 16) "0" "") (number->string b 16))))))
+  (bytes->hex bs))
 
 (define/contract (hex-string->bytes s)
   (-> string? bytes?)
-  (define h (if (string-prefix? s "0x") (substring s 2) s))
+  (define h (if (string-prefix? s "0x") s (string-append "0x" s)))
   (unless (even? (string-length h))
     (raise-argument-error 'hex-string->bytes "hex string of even length" s))
-  (apply bytes
-         (for/list ([i (in-range 0 (string-length h) 2)])
-           (string->number (substring h i (+ i 2)) 16))))
+  (hex->bytes h))
 
 (module+ test
   (check-equal? (hex-string->number "0x2") 2)

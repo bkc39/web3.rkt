@@ -12,10 +12,13 @@ bezzle, which pin it as a flake input.
 |---|---|
 | `rpc.rkt` | providers, `rpc-call`, errors, hex helpers, `define-jsonrpc-endpoint` |
 | `eth.rkt` | `web3_*`, `net_*`, `eth_*` endpoints, receipts |
-| `abi.rkt` | the contract ABI: encoders, selectors, revert reasons |
+| `abi.rkt` | the contract ABI: encoders, decoders, selectors, reverts; an `internal` submodule of entry points that take the caller's `who` |
+| `address.rkt` | EIP-55 checksums; requires only `racket/base` libraries, `keccak` and `abi/type.rkt` |
 | `abi/type.rkt` | ABI types, signatures and value checks; phase-1 safe, so it requires only `racket/base` libraries and `private/exn.rkt` |
-| `abi/vectors.rkt` | conformance vectors, data in `abi/vectors/encode.rktd` (regenerate with `racket tests/generate-abi-vectors.rkt`) |
-| `private/exn.rkt` | the exception structs (`exn:fail:web3`, `…:rpc`, `…:abi`, `…:abi:type`, `…:abi:value`); racket/base only |
+| `abi/vectors.rkt` | conformance vectors, data in `abi/vectors/encode.rktd` (regenerate with `racket tests/generate-abi-vectors.rkt`) and the hand-written `abi/vectors/decode.rktd` |
+| `private/abi-decode.rkt` | the decoder core and its reasons; `abi.rkt` puts contracts on it |
+| `private/hex.rkt` | unchecked hex conversions shared by `rpc.rkt` and `abi.rkt` |
+| `private/exn.rkt` | the exception structs (`exn:fail:web3`, `…:rpc`, `…:rpc:revert`, `…:abi`, `…:abi:type`, `…:abi:value`, `…:abi:decode`); racket/base only |
 | `anvil.rkt` | anvil's methods and process management |
 | `examples/` | numbered scripts (`NN-name.rkt`) for reading and for the REPL |
 

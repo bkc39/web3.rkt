@@ -2,12 +2,15 @@
 
 (require racket/list
          racket/match
+         (only-in web3/abi abi-encode word->bytes)
          web3/abi/type
          "util.rkt")
 
 (provide random-abi-type
          random-abi-types
-         random-abi-value)
+         random-abi-value
+         random-bytes
+         random-decode-inputs)
 
 (define (pick prng xs)
   (list-ref xs (random (length xs) prng)))
@@ -81,11 +84,68 @@
       [(struct* abi-fixed-array ([element e] [length k])) (for/list ([_ (in-range k)]) (loop e))]
       [(struct* abi-tuple ([components cs])) (map loop cs)])))
 
+;; Words a decoder treats specially, for data of length n.
+(define (interesting-words n)
+  (filter (lambda (v) (<= 0 v (sub1 (expt 2 256))))
+          (list 0 1 31 32 33 64 (- n 32) n (+ n 32)
+                (sub1 (expt 2 64)) (expt 2 64) (expt 2 255) (sub1 (expt 2 256)))))
+
+(define (random-word prng n)
+  (if (zero? (random 2 prng))
+      (word->bytes (pick prng (interesting-words n)))
+      (random-bytes prng 32)))
+
+(define (random-data prng)
+  (define n (random 513 prng))
+  (define words (for/list ([_ (in-range (quotient (+ n 31) 32))]) (random-word prng n)))
+  (subbytes (apply bytes-append #"" words) 0 n))
+
+(define (word-count data)
+  (quotient (bytes-length data) 32))
+
+(define (mutate prng kind data)
+  (define n (bytes-length data))
+  (define out (bytes-copy data))
+  (define (word-at i) (subbytes data (* 32 i) (* 32 (add1 i))))
+  (define words (word-count data))
+  (cond
+    [(eq? kind 'append) (bytes-append data (random-bytes prng (add1 (random 64 prng))))]
+    [(zero? n) out]
+    [(eq? kind 'flip)
+     (define i (random n prng))
+     (bytes-set! out i (bitwise-xor (bytes-ref out i) (arithmetic-shift 1 (random 8 prng))))
+     out]
+    [(eq? kind 'truncate) (subbytes data 0 (random n prng))]
+    [(and (eq? kind 'overwrite) (positive? words))
+     (bytes-copy! out (* 32 (random words prng)) (random-word prng n))
+     out]
+    [(and (eq? kind 'swap) (positive? words))
+     (define i (random words prng))
+     (define j (random words prng))
+     (bytes-copy! out (* 32 i) (word-at j))
+     (bytes-copy! out (* 32 j) (word-at i))
+     out]
+    [else out]))
+
+;; (list kind types data original): random data for random types (kind
+;; 'random, original #f), and each mutation of valid encodings (original
+;; is the encoding mutated).
+(define (random-decode-inputs prng #:random [random-count 400] #:encodings [encoding-count 400])
+  (append
+   (for/list ([_ (in-range random-count)])
+     (list 'random (random-abi-types prng) (random-data prng) #f))
+   (for*/list ([_ (in-range encoding-count)]
+               [ts (in-value (random-abi-types prng))]
+               [data (in-value (abi-encode ts (for/list ([t (in-list ts)]) (random-abi-value prng t))))]
+               [kind (in-list '(flip truncate overwrite swap append))])
+     (list kind ts (mutate prng kind data) data))))
+
 (module+ test
-  (require rackunit)
+  (require rackunit
+           "util.rkt")
 
   (test-case "random-abi-types draws between min-count and max-count types"
-    (define prng (vector->pseudo-random-generator (vector 3 1 4 1 5 9)))
+    (define prng (seeded 3 1 4 1 5 9))
     (define counts
       (for/list ([_ (in-range 200)])
         (length (random-abi-types prng #:min-count 1 #:max-count 3))))

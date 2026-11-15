@@ -1,19 +1,23 @@
 #lang racket/base
 
-(require (only-in racket/function curry)
+(require (only-in json string->jsexpr)
+         (only-in racket/function curry)
          racket/list
          racket/match
          racket/port
          racket/string
          web3/abi
+         (only-in (submod web3/abi/type private) map-abi-value)
          (only-in web3/rpc bytes->hex-string)
          "util.rkt")
 
-(provide cast-path
-         cast-version
+(provide cast-decode
          cast-encode
+         cast-path
+         cast-version
          run-cast
-         value->cast-argument)
+         value->cast-argument
+         value->cast-json)
 
 (define cast-path
   (let ([env (getenv "WEB3_CAST")])
@@ -88,3 +92,24 @@
      ['encode (apply run-cast "abi-encode" "--" signature arguments)]
      ['packed (string-append "0x" (apply string-append (map packed-argument-hex inputs vs)))]
      ['call (apply run-cast "calldata" "--" signature arguments)])))
+
+;; cast --json writes integers of up to 64 bits as numbers and wider ones
+;; as decimal strings.
+(define (value->cast-json type v)
+  (map-abi-value (lambda (t x)
+                   (match t
+                     [(or (struct* abi-uint ([bits n])) (struct* abi-int ([bits n])))
+                      (if (<= n 64) x (number->string x))]
+                     [(or (struct* abi-bytes ()) (struct* abi-fixed-bytes ())) (bytes->hex-string x)]
+                     [_ x]))
+                 (abi-type type)
+                 v))
+
+;; The values cast decodes from hex, as JSON: the outputs of "f()(T,...)"
+;; in mode 'result, the inputs of a signature in mode 'call.
+(define (cast-decode mode signature hex)
+  (define out
+    (match mode
+      ['result (run-cast "abi-decode" "--json" "--" signature hex)]
+      ['call (run-cast "calldata-decode" "--json" "--" signature hex)]))
+  (hash-ref (string->jsexpr out) 'data))

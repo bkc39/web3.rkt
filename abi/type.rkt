@@ -10,6 +10,8 @@
  (struct-out exn:fail:web3:abi)
  (struct-out exn:fail:web3:abi:type)
  (struct-out exn:fail:web3:abi:value)
+ (struct-out exn:fail:web3:abi:decode)
+ abi-signature-spec/c
  abi-type-spec/c
  (contract-out
   (struct abi-uint ([bits abi-int-bits/c]))
@@ -43,6 +45,9 @@
 (define abi-type-spec/c
   (flat-named-contract 'abi-type-spec/c
                        (lambda (v) (or (abi-type? v) (string? v) (symbol? v) (pair? v)))))
+
+(define abi-signature-spec/c
+  (flat-named-contract 'abi-signature-spec/c (lambda (v) (or (string? v) (abi-signature? v)))))
 
 (define abi-int-bits/c
   (flat-named-contract 'abi-int-bits/c
@@ -281,19 +286,28 @@
 
 ;;;; layout
 
-(define (dynamic? t)
-  (match t
-    [(or (struct* abi-bytes ()) (struct* abi-string ()) (struct* abi-array ())) #t]
-    [(struct* abi-fixed-array ([element e])) (dynamic? e)]
-    [(struct* abi-tuple ([components cs])) (ormap dynamic? cs)]
-    [_ #f]))
+;; Sizes of composite types are cached per node, so each node is measured
+;; once however deep it is nested.
+(define static-sizes (make-weak-hasheq))
 
 (define (static-size t)
   (match t
-    [(? dynamic?) #f]
-    [(struct* abi-fixed-array ([element e] [length k])) (* k (static-size e))]
-    [(struct* abi-tuple ([components cs])) (apply + (map static-size cs))]
+    [(or (struct* abi-bytes ()) (struct* abi-string ()) (struct* abi-array ())) #f]
+    [(or (struct* abi-fixed-array ()) (struct* abi-tuple ()))
+     (hash-ref! static-sizes t (lambda () (composite-static-size t)))]
     [_ 32]))
+
+(define (composite-static-size t)
+  (match t
+    [(struct* abi-fixed-array ([element e] [length k]))
+     (define size (static-size e))
+     (and size (* k size))]
+    [(struct* abi-tuple ([components cs]))
+     (define sizes (map static-size cs))
+     (and (andmap values sizes) (apply + sizes))]))
+
+(define (dynamic? t)
+  (not (static-size t)))
 
 ;;;; values
 
@@ -343,6 +357,19 @@
     [((struct* abi-tuple ([components cs])) _)
      (fail (format "expected a list of ~a values" (length cs)))]))
 
+;; v, a value of t, folded from its elementary values up: (leaf type v) at
+;; each elementary value, (node type results) at each array and tuple.
+(define (fold-abi-value leaf node t v)
+  (let loop ([t t] [v v])
+    (match t
+      [(or (struct* abi-array ([element e])) (struct* abi-fixed-array ([element e])))
+       (node t (map (lambda (x) (loop e x)) v))]
+      [(struct* abi-tuple ([components cs])) (node t (map loop cs v))]
+      [_ (leaf t v)])))
+
+(define (map-abi-value f t v)
+  (fold-abi-value f (lambda (_ vs) vs) t v))
+
 (define (arguments-failure ts vs)
   (cond
     [(= (length ts) (length vs))
@@ -391,9 +418,12 @@
   (provide abi-type/who
            arguments-failure
            dynamic?
+           fold-abi-value
+           map-abi-value
            raise-abi-type-error
            raise-abi-value-error
            static-size
            string->signature
            type->string
+           type-label
            types/who))

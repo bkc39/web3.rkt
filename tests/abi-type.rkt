@@ -5,11 +5,11 @@
            racket/match
            (only-in racket/contract contract-name)
            rackunit
-           setup/collects
            syntax/parse/define
            web3/abi/type
            (only-in web3/rpc exn:fail:web3?)
            "abi-gen.rkt"
+           "modules.rkt"
            "util.rkt"
            (for-syntax racket/base
                        web3/abi/type))
@@ -24,7 +24,7 @@
         (check-equal? (exn:fail:web3:abi:type-position e) position (format "~s" 'expr)))))
 
   (define (generated-types n)
-    (define prng (vector->pseudo-random-generator (vector 1 2 3 4 5 6)))
+    (define prng (seeded 1 2 3 4 5 6))
     (for/list ([_ (in-range n)]) (random-abi-type prng)))
 
   (define canonical-pairs
@@ -162,43 +162,6 @@
     #:with s (datum->syntax #'t (abi-type->string (syntax->datum #'t)))
     s)
 
-  (define (rebase mpi self)
-    (define-values (name base) (module-path-index-split mpi))
-    (if name
-        (module-path-index-join name (if base (rebase base self) self))
-        self))
-
-  (define (direct-imports self)
-    (for*/list ([phase+mpis (in-list (module->imports self))]
-                #:when (car phase+mpis)
-                [mpi (in-list (cdr phase+mpis))])
-      (module-path-index-resolve (rebase mpi self) #t)))
-
-  (define (import-closure root)
-    (let loop ([todo (list (module-path-index-resolve (module-path-index-join root #f) #t))]
-               [seen '()])
-      (match todo
-        ['() seen]
-        [(cons self rest)
-         #:when (member self seen)
-         (loop rest seen)]
-        [(cons self rest)
-         #:when (symbol? (resolved-module-path-name self))
-         (loop rest (cons self seen))]
-        [(cons self rest) (loop (append (direct-imports self) rest) (cons self seen))])))
-
-  ;; "racket/list" for a collection module, #f for a primitive one.
-  (define (module-name r)
-    (match (resolved-module-path-name r)
-      [(or (? path? p) (cons (? path? p) _))
-       (match (path->module-path p)
-         [(list 'lib s) (regexp-replace #rx"[.]rkt$" s "")]
-         [_ (path->string p)])]
-      [_ #f]))
-
-  (define (collection name)
-    (car (regexp-split #rx"/" name)))
-
   (test-case "web3/abi/type is usable at phase 1 and needs no I/O libraries"
     (check-equal? (canonical (array (tuple address uint))) "(address,uint256)[]")
     (define names (filter values (map module-name (import-closure 'web3/abi/type))))
@@ -271,4 +234,10 @@
     (check-equal? (format "~s" (contract-name (abi-value/c "uint8"))) "(abi-value/c \"uint8\")")
     (check-equal? (format "~v" (abi-value/c 'uint8)) "(abi-value/c \"uint8\")")
     (check-true ((abi-value/c "uint8") 255))
-    (check-false ((abi-value/c "uint8") 256))))
+    (check-false ((abi-value/c "uint8") 256)))
+
+  (test-case "abi-signature-spec/c accepts strings and signature structs"
+    (check-true (abi-signature-spec/c "f(uint256)"))
+    (check-true (abi-signature-spec/c (string->abi-signature "f(uint256)")))
+    (check-false (abi-signature-spec/c 'f))
+    (check-equal? (contract-name abi-signature-spec/c) 'abi-signature-spec/c)))
