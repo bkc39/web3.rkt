@@ -7,10 +7,11 @@
 (provide node-address->string
          node-data->bytes
          node-quantity->number
-         node-status->boolean)
+         node-status->boolean
+         receipt-status->boolean)
 
-(define (raise-malformed who what v)
-  (raise (exn:fail:web3 (format "~a: malformed ~a from the node: ~e" who what v)
+(define (raise-malformed who what v #:origin [origin " from the node"])
+  (raise (exn:fail:web3 (format "~a: malformed ~a~a: ~e" who what origin v)
                         (current-continuation-marks))))
 
 (define (node-string? rx v)
@@ -31,8 +32,14 @@
     [(node-string? #px"^0x[0-9a-fA-F]{40}$" v) (address->checksum-string v)]
     [else (raise-malformed who what v)]))
 
-(define (node-status->boolean who what v)
+(define (status->boolean v malformed)
   (cond
     [(equal? v "0x1") #t]
     [(equal? v "0x0") #f]
-    [else (raise-malformed who what v)]))
+    [else (malformed v)]))
+
+(define (node-status->boolean who what v)
+  (status->boolean v (lambda (v) (raise-malformed who what v))))
+
+(define (receipt-status->boolean who v)
+  (status->boolean v (lambda (v) (raise-malformed who "receipt status" v #:origin ""))))

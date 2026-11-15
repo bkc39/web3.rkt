@@ -280,6 +280,20 @@
       (unknown-outcome (lambda (_) (raise (exn:fail:network "connection reset" (current-continuation-marks))))))
     (check-pred exn:fail:web3? network-failure)
     (check-regexp-match (regexp (string-append sent "connection reset$")) (exn-message network-failure))
+    (struct exn:fail:web3:rpc:custom exn:fail:web3:rpc ())
+    (define custom-failure
+      (unknown-outcome (lambda (_)
+                         (raise (exn:fail:web3:rpc:custom "eth_getTransactionReceipt: busy"
+                                                          (current-continuation-marks)
+                                                          "eth_getTransactionReceipt" -32005 "busy" #f)))))
+    (check-pred exn:fail:web3:rpc? custom-failure)
+    (check-false (exn:fail:web3:rpc:custom? custom-failure))
+    (check-equal? (list (exn:fail:web3:rpc-method custom-failure)
+                        (exn:fail:web3:rpc-code custom-failure)
+                        (exn:fail:web3:rpc-rpc-message custom-failure))
+                  '("eth_getTransactionReceipt" -32005 "busy"))
+    (check-regexp-match (regexp (string-append sent "eth_getTransactionReceipt: busy$"))
+                        (exn-message custom-failure))
     (define-values (deploy-timeout _deploy-calls)
       (parameterize ([receipt-timeout 0.05])
         (run-mock (sending #:receipt 'null) (lambda () (deploy-contract #"\x60\x80" #:from anvil-alice)))))
@@ -350,9 +364,18 @@
     (for ([receipt (list (hash-set mined 'status "0x2") (hash-remove mined 'status) (hash-set mined 'status 1))])
       (check-exn (lambda (e)
                    (and (exn:fail:web3? e)
-                        (regexp-match? #rx"^receipt-succeeded[?]: malformed receipt status from the node"
+                        (regexp-match? #rx"^receipt-succeeded[?]: malformed receipt status: "
                                        (exn-message e))))
                  (lambda () (receipt-succeeded? receipt)))))
+
+  (test-case "receipt-succeeded? and the receipt waits blame a caller passing the wrong shape"
+    (check-blames-here (receipt-succeeded? 5))
+    (check-blames-here (receipt-succeeded? '("0x1")))
+    (check-blames-here (wait-for-receipt 'hash))
+    (check-blames-here (wait-for-receipt tx-hash #:timeout "1"))
+    (check-blames-here (wait-for-receipt tx-hash #:provider 'node))
+    (check-blames-here (send-transaction/receipt "tx"))
+    (check-blames-here (send-transaction/receipt (hasheq 'from (void)))))
 
   (test-case "return data too short for the outputs raises a decode error under contract-call"
     (define-values (e _calls)
@@ -402,6 +425,10 @@
     (check-blames-here (contract-send token "f()" #:gas 0))
     (check-blames-here (deploy-contract "602a"))
     (check-blames-here (deploy-contract "0x6"))
+    (define bad-init-code (raised (lambda () (deploy-contract "0x1"))))
+    (check-regexp-match (regexp-quote "expected: (or/c bytes? (and/c string? #px\"^0x(?:[0-9a-fA-F]{2})*$\"))")
+                        (exn-message bad-init-code))
+    (check-false (regexp-match? #rx"hex-data-string" (exn-message bad-init-code)))
     (check-blames-here (deploy-contract/receipt #"" 'constructor))
     (check-blames-here (create2-address token (make-bytes 31) #""))
     (check-blames-here (create2-address token (expt 2 256) #""))

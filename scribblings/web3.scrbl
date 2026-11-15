@@ -907,9 +907,12 @@ estimate raises @racket[exn:fail:web3] and nothing is sent.
 Once the transaction is sent, the receipt is awaited for up to 30 seconds.
 When waiting fails, or the receipt cannot be read, the error's message
 names the transaction's hash: the transaction was sent and its outcome is
-unknown, so sending it again may send it twice.  The error keeps its kind,
-an @racket[exn:fail:web3:rpc] for the node's error and
-@racket[exn:fail:web3] otherwise.
+unknown, so sending it again may send it twice.  The error is copied as
+the most specific of @racket[exn:fail:web3:rpc:revert],
+@racket[exn:fail:web3:rpc] and @racket[exn:fail:web3] it is an instance
+of, with that type's fields: a further subtype, such as one a provider
+defines, is not kept, and any other error becomes an
+@racket[exn:fail:web3].
 
 @racketblock[
 (define receipt (contract-send token "transfer(address,uint256)" bob 250 #:from alice))

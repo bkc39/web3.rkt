@@ -42,7 +42,8 @@
 
 (define signature/c (or/c string? abi-signature?))
 (define errors/c (listof (or/c string? abi-signature?)))
-(define init-code/c (or/c bytes? hex-data-string?))
+(define init-code/c
+  (or/c bytes? (flat-named-contract '(and/c string? #px"^0x(?:[0-9a-fA-F]{2})*$") hex-data-string?)))
 (define salt/c
   (or/c (and/c bytes? (property/c bytes-length (=/c 32))) (integer-in 0 (sub1 (expt 2 256)))))
 (define nonce/c (integer-in 0 (- (expt 2 64) 2)))
