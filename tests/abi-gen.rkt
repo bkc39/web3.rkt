@@ -219,18 +219,18 @@
     (for/fold ([fs '()] #:result (reverse fs))
               ([_ (in-range (random 9 prng))])
       (define roll (random 100 prng))
+      (define other (and (pair? fs) (pick prng fs)))
+      (define taken
+        (for/list ([g (in-list fs)]
+                   #:when (equal? (abi-signature-name g) (and other (abi-signature-name other))))
+          (length (abi-function-parameters g))))
+      (define free (if other (filter (lambda (n) (not (member n taken))) (range 5)) '()))
       (define f
         (cond
-          [(and (pair? fs) (< roll 20))
-           (define other (pick prng fs))
-           (define taken (map (lambda (g) (length (abi-function-parameters g)))
-                              (filter (lambda (g) (equal? (abi-signature-name g) (abi-signature-name other)))
-                                      fs)))
-           (define free (filter (lambda (n) (not (member n taken))) (range 5)))
+          [(and (pair? free) (< roll 20))
            (random-abi-function prng #:name (abi-signature-name other) #:arity (pick prng free)
                                 #:tuples? tuples?)]
-          [(and same-arity? (pair? fs) (< roll 25))
-           (define other (pick prng fs))
+          [(and same-arity? other (< roll 25))
            (random-abi-function prng #:name (abi-signature-name other)
                                 #:arity (length (abi-function-parameters other))
                                 #:tuples? tuples?)]

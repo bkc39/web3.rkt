@@ -447,6 +447,7 @@
            skip-spaces
            static-size
            string->signature
+           string->type
            type->sexp
            type->string
            type-label

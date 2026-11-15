@@ -194,6 +194,7 @@
 
 (module* private #f
   (provide abi-parameter-name/c
+           parameters-failure
            sexp->abi-event/who
            spec->abi-event/who
            string->abi-event/who))

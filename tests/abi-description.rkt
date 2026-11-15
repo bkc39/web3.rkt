@@ -8,6 +8,7 @@
                        syntax/parse
                        web3/abi/description
                        web3/abi/type)
+           (only-in racket/contract exn:fail:contract:blame?)
            racket/list
            racket/match
            rackunit
@@ -238,7 +239,7 @@
       (check-equal? (jsexpr->abi-item (abi-item->jsexpr i)) i s)
       (check-equal? (abi-item->string s) s s)
       (check-equal? (abi-item->sexp (abi-item->sexp i)) (abi-item->sexp i) s)
-      (check-equal? (abi-item->jsexpr (abi-item->jsexpr i)) (abi-item->jsexpr i) s)))
+      (check-equal? (abi-item->jsexpr (jsexpr->abi-item (abi-item->jsexpr i))) (abi-item->jsexpr i) s)))
 
   (test-case "a description refuses two items with one signature, and two constructors"
     (for ([items (in-list (list '("function f(uint256)" "function f(uint)")
@@ -399,14 +400,14 @@
                           names)
                   '())
     (define web3-modules
-      '("web3/abi/description" "web3/abi/event-type" "web3/abi/type" "web3/private/exn"
-        "web3/private/who"))
+      '("web3/abi/description" "web3/abi/event-type" "web3/abi/type" "web3/private/abi-item"
+        "web3/private/exn" "web3/private/who"))
     (check-equal? (sort (remove-duplicates (filter (lambda (n) (equal? (collection n) "web3")) names))
                         string<?)
                   web3-modules)
     (define allowed
-      (append '("racket/base" "racket/contract/base" "racket/list" "racket/match" "racket/string"
-                "racket/struct")
+      (append '("racket/base" "racket/contract/base" "racket/contract/combinator" "racket/list"
+                "racket/match" "racket/string" "racket/struct")
               web3-modules))
     (for ([name (in-list (filter values (map module-name (direct-imports
                                                           (module-path-index-resolve

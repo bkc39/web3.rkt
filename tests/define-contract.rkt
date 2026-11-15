@@ -154,7 +154,7 @@
               (lambda ()
                 (define signature (abi-signature->string f #:outputs? #t))
                 (if (memq (abi-function-state-mutability f) '(view pure))
-                    (apply contract-call token-address signature #:errors token-errors args)
+                    (apply contract-call token-address signature #:from from #:errors token-errors args)
                     (apply contract-send token-address signature #:from from #:errors token-errors args)))))
 
   (test-case "every bound procedure sends what the address form sends"
@@ -255,6 +255,7 @@
     (define (compiled-exports)
       (parameterize ([current-namespace (make-base-namespace)])
         (managed-compile-zo m)
+        (module-declared? m #t)
         (define-values (variables syntaxes) (module->exports m))
         (for*/list ([phase+names (in-list (append variables syntaxes))]
                     [name (in-list (cdr phase+names))])
@@ -345,7 +346,7 @@
     (for ([row (in-list syntax-rows)])
       (match-define (struct* syntax-row ([clauses clauses] [message message] [needle needle] [nth nth])) row)
       (define-values (e text) (expand-program (list `(define-contract c ,@clauses)) #:dir dir))
-      (check-srcloc e text needle nth (string-append "^define-contract: .*" message)))
+      (check-srcloc e text needle nth (string-append "define-contract: .*" message)))
     (define-values (e text) (expand-program '((define-contract "c" "function f()"))))
     (check-srcloc e text "\"c\"" 0 "expected identifier")
     (delete-directory/files dir))

@@ -28,11 +28,13 @@
     (define structs (regexp-match* #px"struct ([A-Za-z0-9_]+)" text #:match-select cadr))
     (define body (cadr (regexp-match #px"interface Interface \\{(.*)\\}" text)))
     (define lines
-      (for/list ([line (in-list (string-split body "\n"))]
-                 #:unless (string=? (string-trim line) ""))
-        (regexp-replace* #px" (?:external|memory|calldata)\\b"
-                         (regexp-replace #px";$" (string-trim line) "")
-                         "")))
+      (for/list ([declaration (in-list (string-split body ";"))]
+                 #:unless (string=? (string-trim declaration) ""))
+        (for/fold ([line (string-normalize-spaces declaration)])
+                  ([rule (in-list '((#px" (?:external|memory|calldata)\\b" "")
+                                    (#px"\\( " "(")
+                                    (#px" \\)" ")")))])
+          (regexp-replace* (car rule) line (cadr rule)))))
     (partition (lambda (line)
                  (not (for/or ([s (in-list structs)]) (regexp-match? (pregexp (format "\\b~a\\b" s)) line))))
                lines))

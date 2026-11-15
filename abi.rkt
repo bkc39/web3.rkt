@@ -250,7 +250,9 @@
     (define selector (signature-selector sig))
     (match (hash-ref lookup selector #f)
       [#f (hash-set lookup selector sig)]
-      [(== sig) lookup]
+      [other
+       #:when (equal? (abi-signature->string other) (abi-signature->string sig))
+       lookup]
       [other
        (raise-abi-type-error who
                              (format "selector collision: ~a and ~a"
