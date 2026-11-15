@@ -38,8 +38,7 @@
 
 (section "mocks can fail like a node")
 
-(show (with-handlers ([exn:fail:web3:rpc? exn-message])
-        (eth-gas-price #:provider mock)))
+(show-error (eth-gas-price #:provider mock))
 
 (define overflow (bytes->hex-string (encode-call "Panic(uint256)" #x11)))
 
@@ -50,11 +49,8 @@
        ["eth_call" (raise-rpc-error method 3 "execution reverted" overflow)]
        [_ (raise-rpc-error method -32601 "Method not found")]))))
 
-(define revert-exn
-  (with-handlers ([exn:fail:web3:rpc? values])
-    (eth-call (hasheq 'to alice 'data "0x") "latest" #:provider reverting)))
-
-(show (exn-message revert-exn))
+(show-error (eth-call (hasheq 'to alice 'data "0x") "latest" #:provider reverting)
+            #:as revert-exn)
 (show (decode-revert-reason (hex-string->bytes (exn:fail:web3:rpc-data revert-exn))))
 
 (section "a provider that logs every call")

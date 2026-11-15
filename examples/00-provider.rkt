@@ -37,15 +37,12 @@
 
 (section "errors")
 
-(define unknown-method
-  (with-handlers ([exn:fail:web3:rpc? values])
-    (rpc-call "eth_noSuchMethod" '())))
+(show-error (rpc-call "eth_noSuchMethod" '()) #:as unknown-method)
 
 (show (exn:fail:web3:rpc-code unknown-method))
 (show (exn:fail:web3:rpc-rpc-message unknown-method))
-(show (with-handlers ([exn:fail:web3? exn-message])
-        (with-provider #f
-          (eth-chain-id))))
+(show-error (with-provider #f
+              (eth-chain-id)))
 
 (section "a new endpoint is one form")
 

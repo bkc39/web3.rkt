@@ -51,11 +51,7 @@
 
 (anvil-set-code contract revert-oops)
 
-(define revert-exn
-  (with-handlers ([exn:fail:web3:rpc? values])
-    (eth-call (hasheq 'to contract 'data "0x") "latest")))
-
-(show (exn-message revert-exn))
+(show-error (eth-call (hasheq 'to contract 'data "0x") "latest") #:as revert-exn)
 (show (exn:fail:web3:rpc-data revert-exn))
 (show (decode-revert-reason (hex-string->bytes (exn:fail:web3:rpc-data revert-exn))))
 

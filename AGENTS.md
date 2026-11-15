@@ -12,7 +12,10 @@ bezzle, which pin it as a flake input.
 |---|---|
 | `rpc.rkt` | providers, `rpc-call`, errors, hex helpers, `define-jsonrpc-endpoint` |
 | `eth.rkt` | `web3_*`, `net_*`, `eth_*` endpoints, receipts |
-| `abi.rkt` | the contract ABI |
+| `abi.rkt` | the contract ABI: encoders, selectors, revert reasons |
+| `abi/type.rkt` | ABI types, signatures and value checks; phase-1 safe, so it requires only `racket/base` libraries and `private/exn.rkt` |
+| `abi/vectors.rkt` | conformance vectors, data in `abi/vectors/encode.rktd` (regenerate with `racket tests/generate-abi-vectors.rkt`) |
+| `private/exn.rkt` | the exception structs (`exn:fail:web3`, `…:rpc`, `…:abi`, `…:abi:type`, `…:abi:value`); racket/base only |
 | `anvil.rkt` | anvil's methods and process management |
 | `examples/` | numbered scripts (`NN-name.rkt`) for reading and for the REPL |
 

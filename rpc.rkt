@@ -14,6 +14,7 @@
          racket/string
          racket/tcp
          syntax/parse/define
+         "private/exn.rkt"
          (for-syntax casemate
                      racket/base
                      racket/syntax))
@@ -48,9 +49,6 @@
 
 (module+ test
   (require rackunit))
-
-(struct exn:fail:web3 exn:fail ())
-(struct exn:fail:web3:rpc exn:fail:web3 (method code rpc-message data))
 
 (define (raise-rpc-error method code message [data #f])
   (raise (exn:fail:web3:rpc (format "~a: ~a" method message)

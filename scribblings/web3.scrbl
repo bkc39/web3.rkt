@@ -5,9 +5,14 @@
                     racket/generic
                     web3
                     web3/abi
+                    web3/abi/type
+                    web3/abi/vectors
                     web3/anvil
                     web3/eth
-                    web3/rpc]]
+                    web3/rpc]
+          scribble/example]
+
+@(define abi-eval (make-base-eval '(require web3/abi web3/rpc)))
 
 @title{web3: Ethereum JSON-RPC for Racket}
 @author{bkc}
@@ -15,8 +20,8 @@
 @defmodule[web3]
 
 An Ethereum JSON-RPC client: typed wrappers for the standard
-@tt{web3_*}, @tt{net_*} and @tt{eth_*} methods, a first slice of the
-contract ABI, and support for running local
+@tt{web3_*}, @tt{net_*} and @tt{eth_*} methods, the contract ABI, and
+support for running local
 @hyperlink["https://book.getfoundry.sh/anvil/"]{anvil} nodes.
 
 @racket[(require web3)] provides everything in @racketmodname[web3/rpc],
@@ -453,43 +458,227 @@ Whether the receipt's status is success, @racket["0x1"].}
 
 @defmodule[web3/abi]
 
-The parts of the
-@hyperlink["https://docs.soliditylang.org/en/latest/abi-spec.html"]{contract
-ABI} needed to call functions whose parameters are all static 32-byte
-types (@tt{uint256}, @tt{address}, @tt{bool}, ...) and to read revert
-reasons.
+Encodes values for the
+@hyperlink["https://docs.soliditylang.org/en/latest/abi-spec.html"]{contract ABI}
+and reads revert reasons.  Also provides everything in
+@racketmodname[web3/abi/type].
 
-@defproc[(function-selector [signature (or/c string? bytes?)]) bytes?]{
-The first four bytes of the Keccak-256 hash of a canonical signature.
+@subsection{ABI Types}
 
-@racketblock[
-(bytes->hex-string (function-selector "transfer(address,uint256)"))
-(code:comment "=> \"0xa9059cbb\"")
-]}
+@defmodule[web3/abi/type]
 
-@defproc[(word->bytes [n exact-nonnegative-integer?]) bytes?]{
-@racket[n] as a 32-byte big-endian word.  Raises an error if @racket[n]
-does not fit in 256 bits.}
+Types are values of the structs below.  Wherever a type is expected, a
+canonical string such as @racket["(address,uint256)[2]"] or an
+s-expression such as @racket['(array (tuple address uint256) 2)] works
+too.  This module depends on nothing but @racketmodname[racket/base] and
+its contract library, so macros can use it at phase 1.
+
+The reader treats @litchar{[]} as parentheses, so the s-expression form
+cannot spell @tt{T[]} as a symbol: write @racket[(array T)].
+
+@racketgrammar*[#:literals (array tuple uint uint8 uint256 int int8 int256 address bool
+                            bytes bytes1 bytes32 string)
+ [type uint8 ... uint256 uint int8 ... int256 int address bool bytes1 ... bytes32 bytes string
+       (array type) (array type length) (tuple type ...+)]]
+
+@deftogether[(@defstruct*[abi-uint ([bits (integer-in 8 256)]) #:transparent]
+              @defstruct*[abi-int ([bits (integer-in 8 256)]) #:transparent])]{
+@tt{uint}@racket[bits] and @tt{int}@racket[bits]; @racket[bits] is a multiple of 8.}
+
+@deftogether[(@defstruct*[abi-address () #:transparent]
+              @defstruct*[abi-bool () #:transparent]
+              @defstruct*[abi-bytes () #:transparent]
+              @defstruct*[abi-string () #:transparent])]{
+@tt{address}, @tt{bool}, @tt{bytes} and @tt{string}.}
+
+@defstruct*[abi-fixed-bytes ([size (integer-in 1 32)]) #:transparent]{
+@tt{bytes}@racket[size].}
+
+@deftogether[(@defstruct*[abi-array ([element abi-type-spec/c]) #:transparent]
+              @defstruct*[abi-fixed-array ([element abi-type-spec/c]
+                                           [length (integer-in 1 (sub1 (expt 2 64)))])
+                          #:transparent]
+              @defstruct*[abi-tuple ([components (non-empty-listof abi-type-spec/c)])
+                          #:transparent])]{
+@racket[element]@tt{[]}, @racket[element]@tt{[}@racket[length]@tt{]} and
+the tuple of @racket[components].  The constructors accept any type form
+and convert it with @racket[abi-type], so the fields hold type structs.
+
+@examples[#:eval abi-eval
+          (abi-array "uint")
+          (equal? (abi-array 'uint256) (abi-type "uint256[]"))]}
+
+@defproc[(abi-type? [v any/c]) boolean?]{
+Recognizes the type structs.}
+
+@defthing[abi-type-spec/c flat-contract?]{
+A type struct, string or s-expression.  Only the rough shape is checked;
+a string or s-expression that does not parse raises
+@racket[exn:fail:web3:abi:type].}
+
+@defproc[(abi-type [spec abi-type-spec/c]) abi-type?]{
+The type @racket[spec] denotes.
+
+@examples[#:eval abi-eval
+          (abi-type "(address,uint)[2]")
+          (abi-type '(array (tuple address uint) 2))
+          (eval:error (abi-type "uint7"))]}
+
+@deftogether[(@defproc[(string->abi-type [s string?]) abi-type?]
+              @defproc[(sexp->abi-type [v (or/c symbol? pair?)]) abi-type?])]{
+Parse one form.  Spaces are allowed next to parentheses and commas, but
+not before @litchar{[};
+@tt{uint} and @tt{int} mean @tt{uint256} and @tt{int256};
+@tt{tuple(...)} means @tt{(...)}.}
+
+@deftogether[(@defproc[(abi-type->string [t abi-type-spec/c]) string?]
+              @defproc[(abi-type->sexp [t abi-type-spec/c]) (or/c symbol? pair?)])]{
+The canonical forms, as used in selectors.
+
+@examples[#:eval abi-eval
+          (abi-type->string "tuple(uint, int)[]")
+          (abi-type->sexp "uint8[2][]")]}
+
+@defproc[(abi-type-dynamic? [t abi-type-spec/c]) boolean?]{
+Whether @racket[t] is encoded by offset: @tt{bytes}, @tt{string},
+@tt{T[]}, and arrays and tuples containing them.}
+
+@defproc[(abi-type-static-size [t abi-type-spec/c]) (or/c #f exact-positive-integer?)]{
+Bytes in the encoding of a static type, or @racket[#f] for a dynamic one.
+
+@examples[#:eval abi-eval
+          (abi-type-static-size "(uint256,bool)[3]")
+          (abi-type-static-size "string")]}
+
+@defproc[(abi-value? [t abi-type-spec/c] [v any/c]) boolean?]{
+Whether @racket[v] is a value of @racket[t] (see the table in
+@secref["abi-values"]).}
+
+@defproc[(abi-value/c [t abi-type-spec/c]) flat-contract?]{
+@racket[abi-value?] as a contract named after @racket[t].}
+
+@defstruct*[abi-signature ([name (and/c string? #px"^[A-Za-z_$][A-Za-z0-9_$]*$")]
+                           [inputs (listof abi-type-spec/c)]
+                           [outputs (or/c #f (listof abi-type-spec/c))])
+            #:transparent]{
+A function: @racket[name] is a Solidity identifier and @racket[outputs]
+is @racket[#f] when not given.  The constructor converts the types with
+@racket[abi-type].}
+
+@defproc[(string->abi-signature [s string?]) abi-signature?]{
+Reads @racket["name(T,...)"] or, with outputs,
+@racket["name(T,...)(U,...)"].}
+
+@defproc[(abi-signature->string [sig abi-signature?]
+                                [#:outputs? outputs? boolean? #f])
+         string?]{
+The canonical signature; without outputs it is the selector preimage.
+
+@examples[#:eval abi-eval
+          (abi-signature->string (string->abi-signature "balanceOf(address)(uint)"))]}
+
+@subsection[#:tag "abi-values"]{Values}
+
+@tabular[#:style 'boxed
+         #:row-properties '(bottom-border ())
+ (list (list @bold{type} @bold{value})
+       (list @tt{uintN} @elem{an exact integer in [0, 2@superscript{N})})
+       (list @tt{intN} @elem{an exact integer in [-2@superscript{N-1}, 2@superscript{N-1})})
+       (list @tt{address} @elem{a string: @tt{0x} and 40 hex digits in any case; the checksum is not checked})
+       (list @tt{bool} @elem{@racket[#t] or @racket[#f]})
+       (list @tt{bytesN} @elem{a byte string of exactly N bytes})
+       (list @tt{bytes} @elem{a byte string})
+       (list @tt{string} @elem{a string, written as UTF-8})
+       (list @tt{T[]} @elem{a list of @tt{T} values})
+       (list @tt{T[k]} @elem{a list of exactly k @tt{T} values})
+       (list @tt{(T1,...,Tn)} @elem{a list of n values, in order}))]
+
+Integers must be exact, and vectors are not lists.
+
+@subsection{Encoding}
+
+@defproc[(abi-encode [types (listof abi-type-spec/c)] [vs list?]) bytes?]{
+The standard encoding of @racket[vs] as values of @racket[types].  Raises
+@racket[exn:fail:web3:abi:value] when a value does not fit its type or
+the lengths differ.
+
+@examples[#:eval abi-eval
+          (bytes->hex-string (abi-encode '(int8 bytes3) (list -1 #"abc")))
+          (eval:error (abi-encode '(uint8) '(256)))]}
+
+@defproc[(abi-encode-packed [types (listof abi-type-spec/c)] [vs list?]) bytes?]{
+Solidity's @tt{abi.encodePacked}: elementary values in their own width,
+@tt{bytes} and @tt{string} unpadded, array elements padded to 32 bytes.
+Tuples, nested arrays and arrays of dynamic types raise
+@racket[exn:fail:web3:abi:type].
+
+@examples[#:eval abi-eval
+          (bytes->hex-string (abi-encode-packed '(uint16 bytes1 string) (list 1 #"A" "hi")))]}
+
+@defproc[(encode-call [signature (or/c string? abi-signature?)] [v any/c] ...) bytes?]{
+Call data: the selector of @racket[signature] and the encoding of the
+@racket[v]s as its inputs.  Outputs in @racket[signature] are ignored.
+
+@examples[#:eval abi-eval
+          (bytes->hex-string (encode-call "add(uint256,uint256)" 2 40))]}
+
+@defproc[(function-selector [signature (or/c string? bytes? abi-signature?)]) bytes?]{
+The first four bytes of the Keccak-256 hash of the canonical signature.
+A string must parse as a signature, or @racket[exn:fail:web3:abi:type] is
+raised; a byte string is hashed as given.
+
+@examples[#:eval abi-eval
+          (bytes->hex-string (function-selector "transfer(address, uint)"))
+          (eval:error (function-selector "foo"))]}
+
+@defproc[(word->bytes [n (integer-in 0 (sub1 (expt 2 256)))]) bytes?]{
+@racket[n] as a 32-byte big-endian word.}
 
 @defproc[(bytes->words [bs bytes?]) (listof exact-nonnegative-integer?)]{
 Reads @racket[bs] as consecutive 32-byte big-endian words.  A trailing
 chunk shorter than 32 bytes is read as a number on its own.}
 
-@defproc[(encode-call [signature (or/c string? bytes?)]
-                      [word exact-nonnegative-integer?] ...)
-         bytes?]{
-Call data for @racket[signature]: its selector followed by each
-@racket[word] as a 32-byte word.  Addresses are passed as their numeric
-value.
+@subsection[#:tag "abi-errors"]{Errors}
 
-@racketblock[
-(bytes->hex-string (encode-call "balanceOf(address)" #xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045))
-]}
+@declare-exporting[web3/abi/type web3/abi]
+
+@defstruct*[(exn:fail:web3:abi exn:fail:web3) ()]{
+Raised for ABI failures.}
+
+@defstruct*[(exn:fail:web3:abi:type exn:fail:web3:abi)
+            ([input any/c] [position (or/c #f exact-nonnegative-integer?)])]{
+A type that does not parse or cannot be used here.  @racket[position]
+indexes a string @racket[input].}
+
+@defstruct*[(exn:fail:web3:abi:value exn:fail:web3:abi)
+            ([type (or/c abi-type? (listof abi-type?))]
+             [value any/c]
+             [path (listof exact-nonnegative-integer?)])]{
+A value that does not fit @racket[type]; @racket[path] is the argument
+index followed by element and component indices.}
+
+@subsection{Revert Reasons}
 
 @defproc[(decode-revert-reason [data bytes?]) (or/c string? #f)]{
 A readable form of a revert payload encoded as @tt{Error(string)} or
 @tt{Panic(uint256)}, such as @racket["Error(\"oops!\")"] or
 @racket["Panic(0x11)"], or @racket[#f] for any other payload.}
+
+@subsection{Conformance Vectors}
+
+@defmodule[web3/abi/vectors]
+
+@defstruct*[abi-vector ([mode (or/c 'encode 'packed 'call)]
+                        [name string?]
+                        [signature string?]
+                        [values list?]
+                        [hex string?])]{
+One case: @racket[hex] is what @racket[abi-encode],
+@racket[abi-encode-packed] or @racket[encode-call] produces for
+@racket[values] and the inputs of @racket[signature].}
+
+@defthing[abi-encode-vectors (listof abi-vector?)]{
+The cases, checked against Foundry's @tt{cast}.}
 
 @section{Local Nodes with anvil}
 

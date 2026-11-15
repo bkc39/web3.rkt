@@ -19,6 +19,7 @@ node.  `(show expr)` prints an expression and its value.
 | `01-chain-state.rkt` | accounts, balances, blocks, sending ether, receipts, code and storage |
 | `02-anvil.rkt` | installing code and storage, reverts, snapshots, impersonation, mining, tracing |
 | `03-custom-providers.rkt` | `mock-provider` from a table and from a procedure, `raise-rpc-error`, a `gen:provider` struct that logs a real node's calls, `provider-close` |
+| `04-abi-encode.rkt` | types in three forms, canonical strings, selectors, standard and packed encoding, typed call data, ABI errors |
 
 anvil must be on `PATH` or named by `WEB3_ANVIL`; `nix develop` provides it.
 `tests/examples.rkt` runs every script.

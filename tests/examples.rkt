@@ -54,6 +54,25 @@
       (check-regexp-match #rx"^   " line))
     (check-equal? (last lines) "90"))
 
+  (test-case "show-error prints the exception's name and message as comment lines"
+    (define out
+      (with-output-to-string
+        (lambda ()
+          (show-error (raise-user-error 'f "first\n  second")))))
+    (check-equal? out "> (raise-user-error 'f \"first\\n  second\")\n; exn:fail:user\n; f: first\n;   second\n"))
+
+  (test-case "show-error #:as binds the exception"
+    (define out
+      (with-output-to-string
+        (lambda ()
+          (show-error (error 'g "boom") #:as e)
+          (check-equal? (exn-message e) "g: boom"))))
+    (check-equal? out "> (error 'g \"boom\")\n; exn:fail\n; g: boom\n"))
+
+  (test-case "show-error fails when nothing is raised"
+    (check-exn #rx"^show-error: 1 raised no exception$"
+               (lambda () (with-output-to-string (lambda () (show-error 1))))))
+
   (cond
     [(not (current-anvil-path))
      (displayln "skipping examples: anvil not found (set WEB3_ANVIL or use `nix develop`)")]
