@@ -1,27 +1,27 @@
 #lang racket/base
 
-;; A first slice of the contract ABI: function selectors, 32-byte words,
-;; call data with static word arguments, and the conventional revert
-;; payloads (Error(string), Panic(uint256)).
+;; The contract ABI: selectors, the standard and packed encodings, call
+;; data, and the conventional revert payloads (Error(string), Panic(uint256)).
 
-(require racket/contract
+(require racket/contract/base
          (only-in keccak keccak256)
-         "rpc.rkt")
+         "abi/type.rkt")
 
-(provide (contract-out
-          [function-selector (-> (or/c string? bytes?) bytes?)]
+(provide (all-from-out "abi/type.rkt")
+         (contract-out
+          [function-selector (-> (or/c string? bytes? abi-signature?) bytes?)]
           [word->bytes (-> exact-nonnegative-integer? bytes?)]
           [bytes->words (-> bytes? (listof exact-nonnegative-integer?))]
-          [encode-call (->* ((or/c string? bytes?)) #:rest (listof exact-nonnegative-integer?) bytes?)]
+          [abi-encode (-> (listof abi-type-spec/c) list? bytes?)]
+          [abi-encode-packed (-> (listof abi-type-spec/c) list? bytes?)]
+          [encode-call (->* ((or/c string? abi-signature?)) #:rest list? bytes?)]
           [decode-revert-reason (-> bytes? (or/c string? #f))]))
 
 (module+ test
-  (require rackunit))
+  (require rackunit
+           (only-in "rpc.rkt" bytes->hex-string)))
 
-;; The first four bytes of keccak256 of a canonical signature such as
-;; "transfer(address,uint256)".
-(define (function-selector signature)
-  (subbytes (keccak256 signature) 0 4))
+(define (function-selector signature) (error 'unimplemented))
 
 (define (word->bytes n)
   (unless (< n (expt 2 256))
@@ -35,10 +35,9 @@
     (for/fold ([n 0]) ([b (in-bytes bs i (min (bytes-length bs) (+ i 32)))])
       (+ (* n 256) b))))
 
-;; Selector followed by each argument as a word: enough for functions whose
-;; parameters are all static 32-byte types (uint256, address, bool, ...).
-(define (encode-call signature . words)
-  (apply bytes-append (function-selector signature) (map word->bytes words)))
+(define (abi-encode types vs) (error 'unimplemented))
+(define (abi-encode-packed types vs) (error 'unimplemented))
+(define (encode-call signature . vs) (error 'unimplemented))
 
 (define error-selector (bytes #x08 #xc3 #x79 #xa0)) ; Error(string)
 (define panic-selector (bytes #x4e #x48 #x7b #x71)) ; Panic(uint256)
