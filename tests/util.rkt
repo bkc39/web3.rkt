@@ -25,14 +25,17 @@
          decode-error
          decoded-size
          encode-hex
+         filled-hash
          insufficient-balance
          max-word
          raised
+         raised-type-error
          seeded
          signature-inputs
          signature-string
          widths
-         word)
+         word
+         zero-address)
 
 (define widths (range 8 257 8))
 
@@ -47,8 +50,13 @@
 
 (define insufficient-balance "InsufficientBalance(uint256,uint256)")
 
+(define zero-address "0x0000000000000000000000000000000000000000")
+
 (define (word n)
   (word->bytes n))
+
+(define (filled-hash c)
+  (string-append "0x" (make-string 64 c)))
 
 (define (seeded . seed)
   (vector->pseudo-random-generator (list->vector seed)))
@@ -116,6 +124,11 @@
 
 (define (raised thunk)
   (with-handlers ([exn:fail? values])
+    (thunk)
+    #f))
+
+(define (raised-type-error thunk)
+  (with-handlers ([exn:fail:web3:abi:type? values])
     (thunk)
     #f))
 

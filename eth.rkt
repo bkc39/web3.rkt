@@ -8,10 +8,12 @@
 
 (require json
          racket/contract
+         "eth/log.rkt"
          (only-in "private/node.rkt" receipt-status->boolean)
          "rpc.rkt")
 
-(provide block-param/c
+(provide (all-from-out "eth/log.rkt")
+         block-param/c
          block-param->string
          web3-client-version
          web3-sha3

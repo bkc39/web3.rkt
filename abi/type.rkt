@@ -3,7 +3,7 @@
 (require racket/contract/base
          (only-in racket/list make-list)
          (only-in racket/match match match* match-define struct*)
-         (only-in racket/string string-join string-prefix?)
+         (only-in racket/string string-join)
          "../private/exn.rkt")
 
 (provide
@@ -119,7 +119,7 @@
 
 (define (type-label t)
   (if (list? t)
-      (format "(~a)" (string-join (map type->string t) ","))
+      (written (lambda (out) (write-types t out)))
       (type->string t)))
 
 (define (path-label path)
@@ -154,16 +154,23 @@
     [(regexp-match? #px"^(?:function|u?fixed(?:[0-9]+x[0-9]+)?)$" token) "not supported"]
     [else "not an ABI type"]))
 
+(define (skip-spaces s i)
+  (if (and (< i (string-length s)) (char=? (string-ref s i) #\space))
+      (skip-spaces s (add1 i))
+      i))
+
+;; Reads goal from start and returns it with the index just after it.
 ;; Positions are string indices; the string's length means the input
-;; ended early.
-(define (read-abi-string who s goal)
+;; ended early.  With names?, each tuple component may be followed by
+;; spaces and an identifier, which is dropped.
+(define (read-abi-text who s goal start names?)
   (define n (string-length s))
   (define (fail reason position)
     (raise-abi-type-error who reason s position))
   (define (char-at i)
     (and (< i n) (string-ref s i)))
   (define (skip i)
-    (if (eqv? (char-at i) #\space) (skip (add1 i)) i))
+    (skip-spaces s i))
   (define (read-type i)
     (define-values (base j) (read-base i))
     (read-suffixes base j))
@@ -175,7 +182,7 @@
       [(eqv? (char-at i) #\() (read-tuple i)]
       [(and (string=? token "tuple") (eqv? (char-at k) #\()) (read-tuple k)]
       [(string=? token "tuple") (fail "expected (" k)]
-      [(and (string=? token "address") (> k j) (string-prefix? (substring s k) "payable"))
+      [(and (string=? token "address") (> k j) (regexp-match? #px"^payable(?![A-Za-z0-9_$])" s k))
        (fail "not an ABI type; write address" k)]
       [(elementary token) => (lambda (t) (values t j))]
       [else (fail (elementary-failure token) i)]))
@@ -193,6 +200,11 @@
   (define (read-tuple i)
     (define-values (ts j) (read-list i #f))
     (values (abi-tuple ts) j))
+  (define (read-component i)
+    (define-values (t j) (read-type i))
+    (define k (skip j))
+    (define name-end (and names? (> k j) (identifier-end s k)))
+    (values t (if name-end (skip name-end) j)))
   ;; "(" T ("," T)* ")" from the "(" at i; "()" only when empty-ok?.
   (define (read-list i empty-ok?)
     (define start (skip (add1 i)))
@@ -200,7 +212,7 @@
       [(and empty-ok? (eqv? (char-at start) #\))) (values '() (add1 start))]
       [else
        (let loop ([at start] [ts '()])
-         (define-values (t j) (read-type at))
+         (define-values (t j) (read-component at))
          (define k (skip j))
          (match (char-at k)
            [#\, (loop (skip (add1 k)) (cons t ts))]
@@ -221,22 +233,27 @@
              (read-list outputs-start #t)
              (values #f inputs-end)))
        (values (abi-signature (substring s i name-end) inputs outputs) end)]))
-  (define-values (result end)
-    (match goal
-      ['type (read-type (skip 0))]
-      ['signature (read-signature (skip 0))]))
+  (match goal
+    ['type (read-type start)]
+    ['signature (read-signature start)]))
+
+(define (read-whole who s goal)
+  (define-values (result end) (read-abi-text who s goal (skip-spaces s 0) #f))
   (cond
-    [(= (skip end) n) result]
-    [else (fail "unexpected text" end)]))
+    [(= (skip-spaces s end) (string-length s)) result]
+    [else (raise-abi-type-error who "unexpected text" s end)]))
+
+(define (read-abi-type s start #:component-names? [names? #f] #:who [who 'read-abi-type])
+  (read-abi-text who s 'type start names?))
 
 (define (string->type who s)
-  (read-abi-string who s 'type))
+  (read-whole who s 'type))
 
 (define (string->signature who s)
-  (read-abi-string who s 'signature))
+  (read-whole who s 'signature))
 
-(define (sexp->type who input)
-  (let loop ([v input])
+(define (sexp->type who v [input v])
+  (let loop ([v v])
     (match v
       [(? symbol? (app symbol->string (app elementary (? abi-type? t)))) t]
       [(? symbol?) (raise-abi-type-error who (elementary-failure (symbol->string v)) input #f v)]
@@ -256,18 +273,33 @@
 
 ;;;; writing types
 
-(define (type->string t)
+(define (write-type t out)
   (match t
-    [(struct* abi-uint ([bits n])) (format "uint~a" n)]
-    [(struct* abi-int ([bits n])) (format "int~a" n)]
-    [(struct* abi-address ()) "address"]
-    [(struct* abi-bool ()) "bool"]
-    [(struct* abi-fixed-bytes ([size n])) (format "bytes~a" n)]
-    [(struct* abi-bytes ()) "bytes"]
-    [(struct* abi-string ()) "string"]
-    [(struct* abi-array ([element e])) (format "~a[]" (type->string e))]
-    [(struct* abi-fixed-array ([element e] [length k])) (format "~a[~a]" (type->string e) k)]
-    [(struct* abi-tuple ([components cs])) (format "(~a)" (string-join (map type->string cs) ","))]))
+    [(struct* abi-uint ([bits n])) (fprintf out "uint~a" n)]
+    [(struct* abi-int ([bits n])) (fprintf out "int~a" n)]
+    [(struct* abi-address ()) (write-string "address" out)]
+    [(struct* abi-bool ()) (write-string "bool" out)]
+    [(struct* abi-fixed-bytes ([size n])) (fprintf out "bytes~a" n)]
+    [(struct* abi-bytes ()) (write-string "bytes" out)]
+    [(struct* abi-string ()) (write-string "string" out)]
+    [(struct* abi-array ([element e])) (write-type e out) (write-string "[]" out)]
+    [(struct* abi-fixed-array ([element e] [length k])) (write-type e out) (fprintf out "[~a]" k)]
+    [(struct* abi-tuple ([components cs])) (write-types cs out)]))
+
+(define (write-types ts out)
+  (write-string "(" out)
+  (for ([t (in-list ts)] [i (in-naturals)])
+    (unless (zero? i) (write-string "," out))
+    (write-type t out))
+  (write-string ")" out))
+
+(define (written write)
+  (define out (open-output-string))
+  (write out)
+  (get-output-string out))
+
+(define (type->string t)
+  (written (lambda (out) (write-type t out))))
 
 (define (type->sexp t)
   (match t
@@ -278,11 +310,11 @@
 
 (define (abi-signature->string sig #:outputs? [outputs? #f])
   (match-define (struct* abi-signature ([name name] [inputs inputs] [outputs outputs])) sig)
-  (define (types->string ts)
-    (format "(~a)" (string-join (map type->string ts) ",")))
-  (if (and outputs? outputs)
-      (format "~a~a~a" name (types->string inputs) (types->string outputs))
-      (format "~a~a" name (types->string inputs))))
+  (written (lambda (out)
+             (write-string name out)
+             (write-types inputs out)
+             (when (and outputs? outputs)
+               (write-types outputs out)))))
 
 ;;;; layout
 
@@ -415,15 +447,25 @@
 
 ;; The readers and checks under their caller's name, for web3/abi.
 (module* private #f
-  (provide abi-type/who
+  (provide abi-identifier/c
+           abi-type/who
            arguments-failure
+           array-length?
            dynamic?
+           elementary
+           elementary-failure
            fold-abi-value
+           identifier-end
            map-abi-value
            raise-abi-type-error
            raise-abi-value-error
+           read-abi-type
+           sexp->type
+           skip-spaces
            static-size
            string->signature
+           string->type
+           type->sexp
            type->string
            type-label
            types/who))

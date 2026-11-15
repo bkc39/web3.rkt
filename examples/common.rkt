@@ -7,6 +7,7 @@
          racket/pretty
          racket/runtime-path
          racket/string
+         syntax/macro-testing
          syntax/parse/define
          (only-in web3/rpc bytes->hex-string))
 
@@ -72,8 +73,8 @@
 
 (define-syntax-parse-rule (show-error e:expr (~optional (~seq #:as id:id)))
   (begin
-    (~? (define id (call-and-show-error 'e (lambda () e)))
-        (void (call-and-show-error 'e (lambda () e))))))
+    (~? (define id (call-and-show-error 'e (lambda () (convert-syntax-error e))))
+        (void (call-and-show-error 'e (lambda () (convert-syntax-error e)))))))
 
 (define (print-words bs)
   (define-values (selector body)

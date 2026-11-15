@@ -4,15 +4,27 @@
          racket/match
          (only-in web3/abi abi-encode word->bytes)
          (only-in web3/rpc bytes->hex-string)
+         web3/abi/description
+         web3/abi/event-type
          web3/abi/type
          "util.rkt")
 
-(provide random-abi-type
+(provide noisy-jsexpr
+         random-abi-constructor
+         random-abi-error
+         random-abi-event
+         random-abi-function
+         random-abi-item
+         random-abi-parameter
+         random-contract-abi
+         random-abi-type
          random-abi-types
          random-abi-value
          random-address
          random-bytes
-         random-decode-inputs)
+         random-data
+         random-decode-inputs
+         random-word)
 
 (define (pick prng xs)
   (list-ref xs (random (length xs) prng)))
@@ -88,6 +100,188 @@
        (for/list ([_ (in-range (random (add1 max-length) prng))]) (loop e))]
       [(struct* abi-fixed-array ([element e] [length k])) (for/list ([_ (in-range k)]) (loop e))]
       [(struct* abi-tuple ([components cs])) (map loop cs)])))
+
+(define identifier-start (string->list "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"))
+(define identifier-rest (append identifier-start (string->list "0123456789_")))
+
+(define (random-identifier prng)
+  (list->string (cons (pick prng identifier-start)
+                      (for/list ([_ (in-range (random 9 prng))]) (pick prng identifier-rest)))))
+
+(define parameter-names
+  '("a" "b" "c" "d" "e" "from" "to" "value" "owner" "spender" "id" "memo" "amount" "x_1" "Y"
+    "payableTo" "indexedBy" "anonymousId" "eventId"))
+
+;; k distinct elements of xs, in their order in xs.
+(define (random-subset prng xs k)
+  (let loop ([xs xs] [k k] [n (length xs)])
+    (cond
+      [(zero? k) (map (lambda (_) #f) xs)]
+      [(< (random n prng) k) (cons #t (loop (cdr xs) (sub1 k) (sub1 n)))]
+      [else (cons #f (loop (cdr xs) k (sub1 n)))])))
+
+(define (random-abi-event prng)
+  (define n (random 6 prng))
+  (define anonymous? (zero? (random 5 prng)))
+  (define types (for/list ([_ (in-range n)]) (random-abi-type prng #:max-depth 2)))
+  (define names
+    (for/fold ([names '()] #:result (reverse names))
+              ([_ (in-range n)])
+      (define free (filter (lambda (s) (not (member s names))) parameter-names))
+      (cons (and (positive? (random 4 prng)) (pick prng free)) names)))
+  (define indexed (random-subset prng types (random (add1 (min n (if anonymous? 4 3))) prng)))
+  (abi-event (random-identifier prng)
+             (map abi-event-parameter names types indexed)
+             anonymous?))
+
+(define name-starts '("get" "set" "balance" "safe" "transfer" "mint" "x" "on" "v2" "a" "uint256"))
+(define name-pieces '("Of" "URI" "For" "Token" "ERC20" "_init" "X" "2" "Max" "_" "Received" "b2"))
+
+(define (random-function-name prng)
+  (define pieces
+    (cons (pick prng name-starts)
+          (for/list ([_ (in-range (random 3 prng))]) (pick prng name-pieces))))
+  (define s (apply string-append pieces))
+  (substring s 0 (min 11 (string-length s))))
+
+(define (random-error-name prng)
+  (string-append (pick prng '("Insufficient" "Not" "Bad" "Unauthorized" "E")) (random-identifier prng)))
+
+(define (random-type prng tuples?)
+  (define t (random-abi-type prng #:max-depth 2))
+  (if (or tuples? (not (regexp-match? #rx"[(]" (abi-type->string t))))
+      t
+      (random-type prng tuples?)))
+
+(define (random-abi-parameter prng #:named? [named? #t] #:taken [taken '()] #:tuples? [tuples? #t])
+  (define free (filter (lambda (s) (not (member s taken))) parameter-names))
+  (abi-parameter (and named? (pair? free) (positive? (random 4 prng)) (pick prng free))
+                 (random-type prng tuples?)))
+
+(define (random-parameters prng n taken tuples?)
+  (for/fold ([ps '()] [taken taken] #:result (reverse ps))
+            ([_ (in-range n)])
+    (define p (random-abi-parameter prng #:taken taken #:tuples? tuples?))
+    (values (cons p ps) (if (abi-parameter-name p) (cons (abi-parameter-name p) taken) taken))))
+
+(define (parameter-names-of ps)
+  (filter values (map abi-parameter-name ps)))
+
+(define (random-abi-function prng
+                             #:name [name (random-function-name prng)]
+                             #:arity [arity (random 4 prng)]
+                             #:tuples? [tuples? #t])
+  (define inputs (random-parameters prng arity '() tuples?))
+  (define outputs (random-parameters prng (random 4 prng) (parameter-names-of inputs) tuples?))
+  (abi-function name inputs outputs (pick prng '(pure view nonpayable payable))))
+
+(define (random-abi-error prng #:tuples? [tuples? #t])
+  (abi-error (random-error-name prng) (random-parameters prng (random 4 prng) '() tuples?)))
+
+(define (random-abi-constructor prng #:tuples? [tuples? #t])
+  (abi-constructor (random-parameters prng (random 4 prng) '() tuples?)
+                   (pick prng '(nonpayable payable))))
+
+(define (random-abi-item prng)
+  (match (random 6 prng)
+    [0 (random-abi-function prng)]
+    [1 (random-abi-event prng)]
+    [2 (random-abi-error prng)]
+    [3 (random-abi-constructor prng)]
+    [4 (abi-fallback (pick prng '(nonpayable payable)))]
+    [5 (abi-receive)]))
+
+(define (random-shuffle prng xs)
+  (map cdr (sort (map (lambda (x) (cons (random prng) x)) xs) < #:key car)))
+
+(define (distinct key items)
+  (for/fold ([seen '()] [kept '()] #:result (reverse kept))
+            ([item (in-list items)])
+    (define k (key item))
+    (if (member k seen)
+        (values seen kept)
+        (values (cons k seen) (cons item kept)))))
+
+(define (signature-key item)
+  (abi-signature->string (if (abi-event? item) (abi-event->signature item) item)))
+
+(define (random-contract-abi prng #:cast-safe? [cast-safe? #f] #:same-arity? [same-arity? #f])
+  (define tuples? (not cast-safe?))
+  (define functions
+    (for/fold ([fs '()] #:result (reverse fs))
+              ([_ (in-range (random 9 prng))])
+      (define roll (random 100 prng))
+      (define other (and (pair? fs) (pick prng fs)))
+      (define taken
+        (for/list ([g (in-list fs)]
+                   #:when (equal? (abi-signature-name g) (and other (abi-signature-name other))))
+          (length (abi-function-parameters g))))
+      (define free (if other (filter (lambda (n) (not (member n taken))) (range 5)) '()))
+      (define f
+        (cond
+          [(and (pair? free) (< roll 20))
+           (random-abi-function prng #:name (abi-signature-name other) #:arity (pick prng free)
+                                #:tuples? tuples?)]
+          [(and same-arity? other (< roll 25))
+           (random-abi-function prng #:name (abi-signature-name other)
+                                #:arity (length (abi-function-parameters other))
+                                #:tuples? tuples?)]
+          [else (random-abi-function prng #:tuples? tuples?)]))
+      (cons f fs)))
+  (define events
+    (for/list ([_ (in-range (random 4 prng))]
+               #:when #t
+               [e (in-value (random-abi-event prng))]
+               #:unless (and cast-safe? (regexp-match? #rx"[(]" (abi-event->string e) 7)))
+      e))
+  (define errors (for/list ([_ (in-range (random 4 prng))]) (random-abi-error prng #:tuples? tuples?)))
+  (define (maybe make)
+    (if (zero? (random 2 prng)) '() (list (make))))
+  (define singles
+    (append (maybe (lambda () (random-abi-constructor prng #:tuples? tuples?)))
+            (maybe (lambda () (abi-fallback (pick prng '(nonpayable payable)))))
+            (maybe abi-receive)))
+  (contract-abi (random-shuffle prng (append (distinct signature-key functions)
+                                             (distinct signature-key events)
+                                             (distinct signature-key errors)
+                                             singles))))
+
+(define (legacy-mutability prng item)
+  (define mutability (hash-ref item 'stateMutability #f))
+  (define bare (hash-remove item 'stateMutability))
+  (match mutability
+    ["view" (hash-set bare 'constant #t)]
+    ["payable" (hash-set bare 'payable #t)]
+    ["nonpayable" (if (zero? (random 2 prng)) bare (hash-set* bare 'payable #f 'constant #f))]
+    [_ item]))
+
+(define (noisy-parameter prng p event?)
+  (define base (hash-set* p 'internalType (hash-ref p 'type) 'x-unknown 1))
+  (define components (hash-ref p 'components #f))
+  (define with-components
+    (if components
+        (hash-set base 'components (map (lambda (c) (noisy-parameter prng c #f)) components))
+        base))
+  (if (and event? (not (hash-ref p 'indexed)) (zero? (random 2 prng)))
+      (hash-remove with-components 'indexed)
+      with-components))
+
+(define (noisy-jsexpr prng j)
+  (for/list ([item (in-list j)])
+    (define type (hash-ref item 'type))
+    (define event? (equal? type "event"))
+    (define params
+      (for/fold ([item item]) ([key (in-list '(inputs outputs))]
+                               #:when (hash-has-key? item key))
+        (hash-set item key (map (lambda (p) (noisy-parameter prng p event?)) (hash-ref item key)))))
+    (define legacy (if (zero? (random 2 prng)) (legacy-mutability prng params) params))
+    (define untyped (if (and (equal? type "function") (zero? (random 2 prng))) (hash-remove legacy 'type) legacy))
+    (define trimmed
+      (cond
+        [(and (equal? (hash-ref untyped 'outputs #f) '()) (zero? (random 2 prng))) (hash-remove untyped 'outputs)]
+        [(and event? (not (hash-ref untyped 'anonymous))) (hash-remove untyped 'anonymous)]
+        [else untyped]))
+    (hash-set* trimmed 'gas 30000 'x-note "ignored")))
 
 ;; Words a decoder treats specially, for data of length n.
 (define (interesting-words n)

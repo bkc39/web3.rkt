@@ -64,8 +64,8 @@
 
 (show-error (contract-call token "transfer(address,uint256)(bool)" alice 1 #:from carol #:errors errors)
             #:as refused)
-(show (abi-revert-name (exn:fail:web3:rpc:revert-revert refused)))
-(show (abi-revert-arguments (exn:fail:web3:rpc:revert-revert refused)))
+(show (abi-revert-name (exn->abi-revert refused)))
+(show (abi-revert-arguments (exn->abi-revert refused)))
 
 (show-error (contract-call token "transfer(address,uint256)(bool)" alice 1 #:from carol))
 (show-error (contract-send token "deposit(string)" "hi"))
@@ -84,10 +84,10 @@
             #:as failed)
 (show (list carol-before-failure (eth-get-transaction-count carol "latest")))
 (show (receipt-succeeded? (exn:fail:web3:transaction-receipt failed)))
-(show (abi-revert->string (exn:fail:web3:transaction-revert failed)))
+(show (abi-revert->string (exn->abi-revert failed)))
 
 (show-error (contract-send token "transfer(address,uint256)" bob 1 #:gas 30000) #:as out-of-gas)
-(show (exn:fail:web3:transaction-revert out-of-gas))
+(show (exn->abi-revert out-of-gas))
 
 (section "paying")
 
