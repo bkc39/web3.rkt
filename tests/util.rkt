@@ -20,9 +20,13 @@
          decoded-size
          encode-hex
          signature-inputs
+         signature-string
          widths)
 
 (define widths (range 8 257 8))
+
+(define (signature-string name inputs [outputs #f])
+  (abi-signature->string (abi-signature name inputs outputs) #:outputs? #t))
 
 (define (signature-inputs signature)
   (abi-signature-inputs (string->abi-signature signature)))

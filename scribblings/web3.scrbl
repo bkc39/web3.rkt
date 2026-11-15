@@ -761,6 +761,9 @@ not decode is returned unrecognised.
 @racket[e] as an @racket[exn:fail:web3:rpc:revert], for re-raising, or
 @racket[#f].}
 
+@defstruct*[(exn:fail:web3:rpc:revert exn:fail:web3:rpc) ([revert abi-revert?])]{
+A call that reverted, with its decoded @racket[revert].}
+
 @defproc[(decode-revert-reason [data bytes?]) (or/c string? #f)]{
 @racket[(abi-revert->string (decode-revert data))] for @tt{Error}
 payloads and @racket["Panic(0x11)"] for @tt{Panic} payloads; @racket[#f]
@@ -791,9 +794,6 @@ index followed by element and component indices.}
              [reason (or/c 'short 'offset 'overlap 'length 'non-canonical 'utf-8 'selector)])]{
 Bytes that do not decode.  @racket[offset] indexes the data passed in;
 @racket[type] is the type being read there.}
-
-@defstruct*[(exn:fail:web3:rpc:revert exn:fail:web3:rpc) ([revert abi-revert?])]{
-A call that reverted, with its decoded @racket[revert].}
 
 @subsection{Conformance Vectors}
 

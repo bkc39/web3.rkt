@@ -4,15 +4,20 @@
          (only-in keccak keccak256)
          (only-in racket/function negate)
          (only-in racket/list make-list)
-         (only-in racket/match match struct*)
+         (only-in racket/match == match match* match-define struct*)
+         (only-in racket/string string-join string-prefix?)
          "abi/type.rkt"
          (submod "abi/type.rkt" private)
+         "address.rkt"
+         "private/abi-decode.rkt"
          (only-in "private/exn.rkt"
+                  exn:fail:web3:rpc
                   exn:fail:web3:rpc?
                   exn:fail:web3:rpc:revert
                   exn:fail:web3:rpc:revert?
-                  struct:exn:fail:web3:rpc:revert
-                  exn:fail:web3:rpc:revert-revert))
+                  exn:fail:web3:rpc:revert-revert
+                  struct:exn:fail:web3:rpc:revert)
+         (only-in "private/hex.rkt" bytes->hex hex-digits->bytes))
 
 (provide (all-from-out "abi/type.rkt")
          (struct-out exn:fail:web3:rpc:revert)
@@ -51,12 +56,12 @@
            (only-in "rpc.rkt" bytes->hex-string)))
 
 (define (function-selector signature)
-  (define preimage
-    (match signature
-      [(? bytes?) signature]
-      [(? string?) (abi-signature->string (string->signature 'function-selector signature))]
-      [_ (abi-signature->string signature)]))
-  (subbytes (keccak256 preimage) 0 4))
+  (match signature
+    [(? bytes?) (subbytes (keccak256 signature) 0 4)]
+    [_ (signature-selector (string->abi-signature/who 'function-selector signature))]))
+
+(define (signature-selector sig)
+  (subbytes (keccak256 (abi-signature->string sig)) 0 4))
 
 (define (word->bytes n)
   (natural->bytes n 32))
@@ -114,7 +119,10 @@
     [else (encode-sequence ts vs)]))
 
 (define (abi-encode types vs)
-  (encode-arguments 'abi-encode (types/who 'abi-encode types) vs))
+  (abi-encode/who 'abi-encode types vs))
+
+(define (abi-encode/who who types vs)
+  (encode-arguments who (types/who who types) vs))
 
 (define (packable? t)
   (match t
@@ -147,48 +155,190 @@
     [else (apply bytes-append (map encode-packed ts vs))]))
 
 (define (encode-call signature . vs)
-  (define sig
-    (if (string? signature) (string->signature 'encode-call signature) signature))
-  (bytes-append (function-selector sig)
-                (encode-arguments 'encode-call (abi-signature-inputs sig) vs)))
+  (encode-call/who 'encode-call signature vs))
+
+(define (encode-call/who who signature vs)
+  (define sig (string->abi-signature/who who signature))
+  (bytes-append (signature-selector sig) (encode-arguments who (abi-signature-inputs sig) vs)))
+
+;;;; decoding
+
+(define (string->abi-signature/who who signature)
+  (if (string? signature) (string->signature who signature) signature))
 
 (define (abi-decode types data)
-  (error 'unimplemented))
+  (abi-decode/who 'abi-decode types data 0))
+
+(define (abi-decode/who who types data base)
+  (decode-arguments who (types/who who types) data base))
 
 (define (decode-result signature data)
-  (error 'unimplemented))
+  (decode-result/who 'decode-result signature data))
+
+(define (decode-result/who who signature data)
+  (define sig (string->abi-signature/who who signature))
+  (match (abi-signature-outputs sig)
+    [#f (raise-abi-type-error who "signature has no outputs; write name(...)(...)"
+                              (abi-signature->string sig) #f)]
+    [outputs (decode-arguments who outputs data 0)]))
 
 (define (decode-call signature data)
-  (error 'unimplemented))
+  (define sig (string->abi-signature/who 'decode-call signature))
+  (define selector (signature-selector sig))
+  (define given (subbytes data 0 (min 4 (bytes-length data))))
+  (cond
+    [(bytes=? given selector) (decode-arguments 'decode-call (abi-signature-inputs sig) data 4)]
+    [else
+     (raise-abi-decode-error 'decode-call 'selector (abi-signature-inputs sig) 0
+                             (format "expected ~a, given ~a" (bytes->hex selector) (bytes->hex given)))]))
+
+;;;; reverts
 
 (struct abi-revert (signature arguments data) #:transparent)
 
 (define (abi-revert-name r)
-  (error 'unimplemented))
+  (define sig (abi-revert-signature r))
+  (and sig (abi-signature-name sig)))
 
 (define (abi-revert-selector r)
-  (error 'unimplemented))
+  (define data (abi-revert-data r))
+  (and (>= (bytes-length data) 4) (subbytes data 0 4)))
 
-(define (abi-revert->string r)
-  (error 'unimplemented))
+(define builtin-errors
+  (map (lambda (s) (string->signature 'decode-revert s)) '("Error(string)" "Panic(uint256)")))
+
+(define (error-signature/who who signature)
+  (define sig (string->abi-signature/who who signature))
+  (cond
+    [(abi-signature-outputs sig)
+     (raise-abi-type-error who "an error signature has no outputs"
+                           (abi-signature->string sig #:outputs? #t) #f)]
+    [else sig]))
 
 (define (error-selector signature)
-  (error 'unimplemented))
+  (signature-selector (error-signature/who 'error-selector signature)))
+
+;; The built-in errors and errors by selector.
+(define (check-error-signatures/who who errors)
+  (for/fold ([lookup (hash)])
+            ([sig (in-list (append builtin-errors
+                                   (map (lambda (s) (error-signature/who who s)) errors)))])
+    (define selector (signature-selector sig))
+    (match (hash-ref lookup selector #f)
+      [#f (hash-set lookup selector sig)]
+      [(== sig) lookup]
+      [other
+       (raise-abi-type-error who
+                             (format "selector collision: ~a and ~a"
+                                     (abi-signature->string other) (abi-signature->string sig))
+                             errors
+                             #f)])))
+
+(define (lookup-revert who lookup data)
+  (cond
+    [(and (>= (bytes-length data) 4) (hash-ref lookup (subbytes data 0 4) #f))
+     => (lambda (sig) (abi-revert sig (decode-arguments who (abi-signature-inputs sig) data 4) data))]
+    [else (abi-revert #f '() data)]))
 
 (define (decode-revert data #:errors [errors '()])
-  (error 'unimplemented))
+  (lookup-revert 'decode-revert (check-error-signatures/who 'decode-revert errors) data))
+
+(define panic-descriptions
+  (hash #x00 "generic/unspecified error"
+        #x01 "assertion failed"
+        #x11 "arithmetic underflow or overflow"
+        #x12 "division or modulo by zero"
+        #x21 "failed to convert value into enum type"
+        #x22 "storage byte array incorrectly encoded"
+        #x31 "called `.pop()` on an empty array"
+        #x32 "array out-of-bounds access"
+        #x41 "memory allocation error"
+        #x51 "called an invalid internal function"))
 
 (define (panic-description code)
-  (error 'unimplemented))
+  (hash-ref panic-descriptions code #f))
+
+(define (abi-value->display-string type v)
+  (let loop ([t (abi-type/who 'abi-value->display-string type)] [v v])
+    (match t
+      [(or (struct* abi-uint ()) (struct* abi-int ())) (number->string v)]
+      [(struct* abi-bool ()) (if v "true" "false")]
+      [(struct* abi-address ()) (address->checksum-string v)]
+      [(or (struct* abi-bytes ()) (struct* abi-fixed-bytes ())) (bytes->hex v)]
+      [(struct* abi-string ()) (format "~s" v)]
+      [(or (struct* abi-array ([element e])) (struct* abi-fixed-array ([element e])))
+       (format "[~a]" (string-join (map (lambda (x) (loop e x)) v) ", "))]
+      [(struct* abi-tuple ([components cs])) (format "(~a)" (string-join (map loop cs v) ", "))])))
+
+(define (abi-revert->string r)
+  (match r
+    [(struct* abi-revert ([signature (? abi-signature? sig)] [arguments args]))
+     (match* ((abi-signature->string sig) args)
+       [("Panic(uint256)" (list code))
+        (define description (panic-description code))
+        (format "Panic(0x~a)~a"
+                (number->string code 16)
+                (if description (string-append ": " description) ""))]
+       [(_ _)
+        (format "~a(~a)"
+                (abi-signature-name sig)
+                (string-join (map abi-value->display-string (abi-signature-inputs sig) args) ", "))])]
+    [(struct* abi-revert ([data data]))
+     (define n (bytes-length data))
+     (cond
+       [(zero? n) "no revert data"]
+       [(< n 4) (format "revert data ~a" (bytes->hex data))]
+       [else
+        (format "unknown error ~a with ~a bytes of data" (bytes->hex (subbytes data 0 4)) (- n 4))])]))
+
+(define (hex-payload v)
+  (match v
+    [(? string? (pregexp #px"^(?:Reverted )?0x((?:[0-9a-fA-F]{2})*)$" (list _ digits)))
+     (hex-digits->bytes digits)]
+    [_ #f]))
+
+;; The revert data a node put in an error response, or #f.
+(define (revert-payload e)
+  (match-define (struct* exn:fail:web3:rpc ([rpc-message message] [data data])) e)
+  (match data
+    [(or #f 'null) (and (string-prefix? message "execution reverted") #"")]
+    [(? hash?) (hex-payload (hash-ref data 'data #f))]
+    [_ (hex-payload data)]))
+
+(define (rpc-exn->revert/who who e errors)
+  (define lookup (check-error-signatures/who who errors))
+  (define payload (revert-payload e))
+  (and payload
+       (with-handlers ([exn:fail:web3:abi:decode? (lambda (_) (abi-revert #f '() payload))])
+         (lookup-revert who lookup payload))))
 
 (define (rpc-exn->revert e #:errors [errors '()])
-  (error 'unimplemented))
+  (rpc-exn->revert/who 'rpc-exn->revert e errors))
 
 (define (rpc-exn->revert-exn e #:errors [errors '()])
-  (error 'unimplemented))
+  (match-define
+    (struct* exn:fail:web3:rpc ([method method] [code code] [rpc-message message] [data data]))
+    e)
+  (define r (rpc-exn->revert/who 'rpc-exn->revert-exn e errors))
+  (and r
+       (exn:fail:web3:rpc:revert (format "~a: reverted with ~a" method (abi-revert->string r))
+                                 (exn-continuation-marks e)
+                                 method
+                                 code
+                                 message
+                                 data
+                                 r)))
 
 (define (decode-revert-reason data)
-  (error 'unimplemented))
+  (with-handlers ([exn:fail:web3:abi:decode? (lambda (_) #f)])
+    (define r (decode-revert data))
+    (match r
+      [(struct* abi-revert ([signature (struct* abi-signature ([name "Error"]))]))
+       (abi-revert->string r)]
+      [(struct* abi-revert ([signature (struct* abi-signature ([name "Panic"]))]
+                            [arguments (list code)]))
+       (format "Panic(0x~a)" (number->string code 16))]
+      [_ #f])))
 
 ;; Uncontracted entry points for web3's own modules, which raise under
 ;; the name of the function their caller called.
@@ -200,27 +350,6 @@
            decode-result/who
            encode-call/who
            string->abi-signature/who))
-
-(define (string->abi-signature/who who signature)
-  (error 'unimplemented))
-
-(define (abi-encode/who who types vs)
-  (error 'unimplemented))
-
-(define (encode-call/who who signature vs)
-  (error 'unimplemented))
-
-(define (abi-decode/who who types data base)
-  (error 'unimplemented))
-
-(define (decode-result/who who signature data)
-  (error 'unimplemented))
-
-(define (check-error-signatures/who who errors)
-  (error 'unimplemented))
-
-(define (abi-value->display-string type v)
-  (error 'unimplemented))
 
 (module+ test
   (check-equal? (bytes->hex-string (function-selector "transfer(address,uint256)")) "0xa9059cbb")

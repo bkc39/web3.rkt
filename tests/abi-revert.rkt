@@ -1,9 +1,7 @@
 #lang racket/base
 
 (module+ test
-  (require racket/list
-           racket/match
-           racket/string
+  (require racket/match
            rackunit
            web3/abi
            (submod web3/abi internal)
@@ -35,7 +33,7 @@
     (check-decode-error (decode-revert (bytes-append (bytes #x08 #xc3 #x79 #xa0) (w (expt 2 64))))
                         'decode-revert 'offset 4 #:type "string")
     (check-decode-error (decode-revert (bytes-append (bytes #x08 #xc3 #x79 #xa0) (w 32) (w 1) #"\377"))
-                        'decode-revert 'utf-8 72 #:type "string")
+                        'decode-revert 'utf-8 68 #:type "string")
     (check-decode-error (decode-revert (bytes-append (bytes #x4e #x48 #x7b #x71) (make-bytes 31)))
                         'decode-revert 'short 4 #:type '("uint256")))
 
@@ -56,7 +54,7 @@
     (for ([i (in-range 100)])
       (define ts (random-abi-types prng))
       (define vs (for/list ([t (in-list ts)]) (random-abi-value prng t)))
-      (define sig (format "E~a(~a)" i (string-join (map abi-type->string ts) ",")))
+      (define sig (signature-string (format "E~a" i) ts))
       (define payload (apply encode-call sig vs))
       (define r (decode-revert payload #:errors (list sig)))
       (check-equal? (abi-revert-signature r) (string->abi-signature sig) sig)
@@ -102,7 +100,8 @@
 
   (test-case "panic descriptions"
     (for ([row (in-list panics)])
-      (check-equal? (panic-description (first row)) (second row)))
+      (match-define (list code description) row)
+      (check-equal? (panic-description code) description))
     (for ([code (in-list (list 2 #x99 max-word))])
       (check-false (panic-description code))))
 
@@ -155,9 +154,10 @@
     (check-equal? (exn:fail:web3:rpc-data r) data)
     (check-eq? (exn-continuation-marks r) (exn-continuation-marks e))
     (check-equal? (exn:fail:web3:rpc:revert-revert r) (rpc-exn->revert e #:errors (list balance)))
-    (for ([row (in-list shapes)]
-          #:unless (third row))
-      (check-false (rpc-exn->revert-exn (rpc-exn (second row) (first row))) (format "~s" row))))
+    (for ([row (in-list shapes)])
+      (match-define (list data message expected) row)
+      (unless expected
+        (check-false (rpc-exn->revert-exn (rpc-exn message data)) (format "~s" row)))))
 
   (test-case "the internal entry points raise under their caller's name"
     (check-equal? (string->abi-signature/who 'contract-call "f(uint)") (string->abi-signature "f(uint256)"))

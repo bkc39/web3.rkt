@@ -2,7 +2,6 @@
 
 (module+ test
   (require racket/match
-           racket/string
            rackunit
            web3/abi
            web3/abi/vectors
@@ -14,7 +13,7 @@
            "util.rkt")
 
   (define (signature-of ts)
-    (format "f(~a)" (string-join (map abi-type->string ts) ",")))
+    (signature-string "f" ts))
 
   ;; The types solc's abi.encodePacked accepts.
   (define (random-packed-type prng)
@@ -24,7 +23,7 @@
       [2 (abi-fixed-array (random-abi-type prng #:max-depth 0 #:static? #t) (add1 (random 3 prng)))]))
 
   (define (result-signature ts)
-    (format "f()(~a)" (string-join (map abi-type->string ts) ",")))
+    (signature-string "f" '() ts))
 
   (define (check-decodes-as-cast ts data [name ""])
     (check-equal? (cast-decode 'result (result-signature ts) (bytes->hex-string data))

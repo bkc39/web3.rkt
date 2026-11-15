@@ -3,12 +3,11 @@
 (module+ test
   (require racket/list
            racket/match
-           racket/string
+           (only-in racket/string string-contains?)
            rackunit
            web3/abi
            (submod web3/abi internal)
            web3/abi/vectors
-           web3/address
            (only-in web3/rpc exn:fail:web3? hex-string->bytes)
            "abi-gen.rkt"
            "bounded.rkt"
@@ -158,19 +157,15 @@
     (check-equal? (call-bounded (lambda () (abi-decode deep (abi-encode deep deep-value))))
                   (list 'ok deep-value)))
 
-  (define (signature-of name ts [outputs #f])
-    (define (tuple ts) (format "(~a)" (string-join (map abi-type->string ts) ",")))
-    (string-append name (tuple ts) (if outputs (tuple outputs) "")))
-
   (test-case "decode-call and decode-result invert encode-call and abi-encode"
     (define prng (seeded 4 4 4 4 4 4))
     (for ([_ (in-range 100)])
       (define-values (ts vs) (random-case prng))
       (define-values (outs out-vs) (random-case prng))
-      (define with-outputs (signature-of "g" ts outs))
-      (define data (apply encode-call (signature-of "g" ts) vs))
+      (define with-outputs (signature-string "g" ts outs))
+      (define data (apply encode-call (signature-string "g" ts) vs))
       (define name (format "~a ~s" with-outputs vs))
-      (for ([sig (in-list (list (signature-of "g" ts) with-outputs (string->abi-signature with-outputs)))])
+      (for ([sig (in-list (list (signature-string "g" ts) with-outputs (string->abi-signature with-outputs)))])
         (check-equal? (decode-call sig data) (checksummed ts vs) name))
       (check-decoded ts (subbytes data 4) (decode-call with-outputs data) name)
       (define result (abi-encode outs out-vs))
@@ -209,7 +204,7 @@
         (decode-error (lambda ()
                         (match who
                           ['abi-decode (abi-decode types data)]
-                          ['decode-call (decode-call (signature-of "f" types) data)]))))
+                          ['decode-call (decode-call (signature-string "f" types) data)]))))
       (check-pred exn:fail:web3:abi:decode? e phrase)
       (define message (exn-message e))
       (check-regexp-match (regexp (format "^~a: ~a" who (regexp-quote phrase))) message)
