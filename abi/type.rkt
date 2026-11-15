@@ -435,8 +435,10 @@
   (provide abi-identifier/c
            abi-type/who
            arguments-failure
+           array-length?
            dynamic?
            elementary
+           elementary-failure
            fold-abi-value
            identifier-end
            map-abi-value

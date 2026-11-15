@@ -134,12 +134,9 @@
              (map abi-event-parameter names types indexed)
              anonymous?))
 
-;;;; descriptions
-
 (define name-starts '("get" "set" "balance" "safe" "transfer" "mint" "x" "on" "v2" "a" "uint256"))
 (define name-pieces '("Of" "URI" "For" "Token" "ERC20" "_init" "X" "2" "Max" "_" "Received" "b2"))
 
-;; [a-z][A-Za-z0-9_]{0,10}, camelCase with acronyms: getURIFor, v2Swap.
 (define (random-function-name prng)
   (define pieces
     (cons (pick prng name-starts)
@@ -161,7 +158,6 @@
   (abi-parameter (and named? (pair? free) (positive? (random 4 prng)) (pick prng free))
                  (random-type prng tuples?)))
 
-;; n parameters whose names differ from each other and from taken's.
 (define (random-parameters prng n taken tuples?)
   (for/fold ([ps '()] [taken taken] #:result (reverse ps))
             ([_ (in-range n)])
@@ -198,7 +194,6 @@
 (define (random-shuffle prng xs)
   (map cdr (sort (map (lambda (x) (cons (random prng) x)) xs) < #:key car)))
 
-;; Items whose key differs from every earlier one's.
 (define (distinct key items)
   (for/fold ([seen '()] [kept '()] #:result (reverse kept))
             ([item (in-list items)])
@@ -210,9 +205,6 @@
 (define (signature-key item)
   (abi-signature->string (if (abi-event? item) (abi-event->signature item) item)))
 
-;; Functions reuse a name with another arity 20% of the time, and with
-;; the same arity 5% of the time when same-arity? is set.  cast-safe?
-;; leaves out tuples.
 (define (random-contract-abi prng #:cast-safe? [cast-safe? #f] #:same-arity? [same-arity? #f])
   (define tuples? (not cast-safe?))
   (define functions
@@ -274,8 +266,6 @@
       (hash-remove with-components 'indexed)
       with-components))
 
-;; j as other writers give it: internalType everywhere, legacy constant
-;; and payable keys, defaulted keys dropped, and unknown keys.
 (define (noisy-jsexpr prng j)
   (for/list ([item (in-list j)])
     (define type (hash-ref item 'type))

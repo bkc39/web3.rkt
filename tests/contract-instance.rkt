@@ -136,11 +136,6 @@
                                                       #:from (current-account) #:value 0 #:gas #f
                                                       #:errors '() #:provider (current-provider)))))))
 
-  (define (revert-of e)
-    (match e
-      [(? exn:fail:web3:rpc:revert?) (exn:fail:web3:rpc:revert-revert e)]
-      [(? exn:fail:web3:transaction?) (exn:fail:web3:transaction-revert e)]))
-
   (test-case "an instance decodes reverts with its ABI's errors"
     (define (raised-by handler thunk)
       (define-values (result _calls) (run-mock handler thunk))
@@ -153,15 +148,19 @@
                               (lambda () (contract-send instance 'transfer anvil-bob 1 #:from anvil-alice
                                                         #:errors '("Foo(uint256)")))))])
       (check-pred exn:fail:web3:rpc:revert? e)
-      (check-equal? (abi-revert-name (revert-of e)) "InsufficientBalance")
-      (check-equal? (abi-revert-arguments (revert-of e)) '(0 5000)))
+      (check-equal? (abi-revert-name (exn->abi-revert e)) "InsufficientBalance")
+      (check-equal? (abi-revert-arguments (exn->abi-revert e)) '(0 5000)))
     (define mined-failure
       (raised-by (sending #:receipt failed #:replay (reverting "eth_call"))
                  (lambda () (contract-send instance 'transfer anvil-bob 1 #:from anvil-alice #:gas 100000))))
     (check-pred exn:fail:web3:transaction? mined-failure)
-    (check-equal? (abi-revert-name (revert-of mined-failure)) "InsufficientBalance")
+    (check-equal? (exn->abi-revert mined-failure) (exn:fail:web3:transaction-revert mined-failure))
+    (check-false (exn->abi-revert (raised-by (sending) (lambda () (contract-send instance 'transfer
+                                                                                 anvil-bob 1)))))
+    (check-false (exn->abi-revert (exn:fail "f: no" (current-continuation-marks))))
+    (check-equal? (abi-revert-name (exn->abi-revert mined-failure)) "InsufficientBalance")
     (check-false (abi-revert-name
-                  (revert-of (raised-by (hash "eth_call" (reverting "eth_call"))
+                  (exn->abi-revert (raised-by (hash "eth_call" (reverting "eth_call"))
                                         (lambda () (contract-call token "transfer(address,uint256)(bool)"
                                                                   anvil-bob 1)))))))
 
@@ -205,17 +204,45 @@
     (check-equal? (format "~v" (contract-instance (contract-abi '()) token))
                   "#<contract-instance 0x5FbDB2315678afecb367f032d93F642f64180aa3>"))
 
-  (test-case "names an instance cannot resolve, and values its functions refuse, blame the caller"
+  (struct refusal-row (thunk message) #:prefab)
+
+  (test-case "names an instance cannot resolve, and values they refuse, raise under the operation"
+    (define node (mock-provider (sending)))
+    (parameterize ([current-provider node])
+      (for ([row (in-list
+                  (list (refusal-row (lambda () (contract-call instance 'nope))
+                                     "contract-call: no function nope in this ABI")
+                        (refusal-row (lambda () (contract-estimate-gas instance 'nope))
+                                     "contract-estimate-gas: no function nope in this ABI")
+                        (refusal-row (lambda () (contract-send instance "transfer(uint8)" 1))
+                                     "contract-send: no function transfer(uint8) in this ABI")
+                        (refusal-row (lambda () (contract-send instance "transfer(" anvil-bob 1))
+                                     "contract-send: expected a type: \"transfer(\"\n  at: position 9")
+                        (refusal-row (lambda () (contract-estimate-gas instance "transfer(" anvil-bob 1))
+                                     (string-append "contract-estimate-gas: expected a type: \"transfer(\""
+                                                    "\n  at: position 9"))
+                        (refusal-row (lambda () (contract-send instance 'transfer anvil-bob 1 #:value 5))
+                                     "contract-send: transfer is nonpayable; #:value must be 0")
+                        (refusal-row (lambda () (contract-estimate-gas instance 'transfer anvil-bob 1
+                                                                       #:value 5))
+                                     "contract-estimate-gas: transfer is nonpayable; #:value must be 0")
+                        (refusal-row (lambda () (contract-logs instance 'Transfer
+                                                               #:where (hasheq 'value 1)))
+                                     (string-append "contract-logs: #:where names no indexed parameter"
+                                                    " of Transfer, or one twice: '#hasheq((value . 1))"))
+                        (refusal-row (lambda () (contract-logs instance 'Nope))
+                                     "contract-logs: no event Nope in this ABI")))])
+        (match-define (struct* refusal-row ([thunk thunk] [message message])) row)
+        (define e (with-handlers ([exn:fail:web3:abi? values]) (thunk) #f))
+        (check-equal? (and e (exn-message e)) message)))
+    (check-equal? (mock-provider-calls node) '()))
+
+  (test-case "values the operations' contracts refuse blame the caller"
     (define node (mock-provider (sending)))
     (parameterize ([current-provider node])
       (check-blames-here (contract-call token 'balanceOf anvil-alice))
       (check-blames-here (contract-call token "balanceOf" anvil-alice))
-      (check-blames-here (contract-call instance 'nope))
       (check-blames-here (contract-call instance 'deposit "x" #:value -1))
-      (check-blames-here (contract-send instance 'transfer anvil-bob 1 #:value 5))
-      (check-blames-here (contract-estimate-gas instance 'transfer anvil-bob 1 #:value 5))
-      (check-blames-here (contract-logs instance 'Transfer #:where (hasheq 'value 1)))
-      (check-blames-here (contract-logs instance 'Nope))
       (check-blames-here (contract-logs token #:where (hasheq 'to anvil-bob)))
       (check-blames-here (deploy-contract-instance (contract-abi '())))
       (check-blames-here (deploy-contract-instance token-abi "a" "b" 1 #:value 1))

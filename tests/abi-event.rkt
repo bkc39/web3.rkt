@@ -120,15 +120,11 @@
       #s(rejection "E(uint256\ta)" 9)
       #s(rejection "E((uint256 a b) x)" 13)))
 
-  (define (type-error thunk)
-    (with-handlers ([exn:fail:web3:abi:type? values])
-      (thunk)
-      #f))
 
   (test-case "malformed event strings raise at the first character of the offending token"
     (for ([row (in-list string-rejections)])
       (match-define (struct* rejection ([input s] [position position])) row)
-      (define e (type-error (lambda () (string->abi-event s))))
+      (define e (raised-type-error (lambda () (string->abi-event s))))
       (check-pred exn:fail:web3:abi:type? e s)
       (when e
         (check-equal? (exn:fail:web3:abi:type-input e) s s)
@@ -150,7 +146,7 @@
 
   (test-case "malformed event s-expressions raise without a position"
     (for ([x (in-list sexp-rejections)])
-      (define e (type-error (lambda () (sexp->abi-event x))))
+      (define e (raised-type-error (lambda () (sexp->abi-event x))))
       (check-pred exn:fail:web3:abi:type? e (format "~s" x))
       (when e
         (check-false (exn:fail:web3:abi:type-position e) (format "~s" x))
@@ -161,7 +157,7 @@
     (for ([args (in-list (list (list (map indexed '("a" "b" "c" "d")) #f)
                                (list (map indexed '("a" "b" "c" "d" "e")) #t)
                                (list (list (indexed "a") (abi-event-parameter "a" 'bool #f)) #f)))])
-      (define e (type-error (lambda () (apply abi-event "E" args))))
+      (define e (raised-type-error (lambda () (apply abi-event "E" args))))
       (check-pred exn:fail:web3:abi:type? e)
       (when e
         (check-equal? (exn:fail:web3:abi:type-input e) "E")
@@ -223,4 +219,4 @@
     (check-blames-here (abi-event-parameter "" 'uint256 #f))
     (check-blames-here (abi-event-parameter "a" 'uint256 'yes))
     (check-blames-here (abi-event-parameter 'a 'uint256 #f))
-    (check-pred exn:fail:web3:abi:type? (type-error (lambda () (abi-event-parameter "a" "uint7" #f))))))
+    (check-pred exn:fail:web3:abi:type? (raised-type-error (lambda () (abi-event-parameter "a" "uint7" #f))))))

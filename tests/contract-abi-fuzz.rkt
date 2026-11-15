@@ -24,9 +24,12 @@
   (define (check-total name input thunk ok?)
     (define label (format "seed ~s: ~a ~s" seed name input))
     (match (call-bounded thunk)
-      [(list 'ok v) (check-true (ok? v) label)]
-      [(list 'raised (? exn:fail:web3:abi:type?)) (void)]
-      [outcome (fail (format "~a: ~s" label outcome))]))
+      [(list 'ok v) (check-true (ok? v) label) #t]
+      [(list 'raised (? exn:fail:web3:abi:type?)) #f]
+      [outcome (fail (format "~a: ~s" label outcome)) #f]))
+
+  (define (accepted-share results)
+    (/ (count values results) (length results)))
 
   (define canonical-strings
     (for/list ([_ (in-range 60)]) (abi-item->string (random-abi-item prng))))
@@ -70,15 +73,22 @@
            (values (pick '(type name inputs outputs components abi bytecode stateMutability indexed))
                    (random-jsexpr (sub1 depth))))]))
 
+  (define (nodes j)
+    (match j
+      [(? list?) (add1 (apply + (map nodes j)))]
+      [(? hash?) (add1 (for/sum ([v (in-hash-values j)]) (nodes v)))]
+      [_ 0]))
+
   (define (mutate-jsexpr j)
     (define replacement (pick (list 42 'null "" '() (hasheq))))
+    (define n (nodes j))
     (let loop ([j j])
       (match j
-        [(? list?) #:when (and (pair? j) (zero? (random 3 prng)))
+        [(? list?) #:when (and (pair? j) (zero? (random n prng)))
          (define i (random (length j) prng))
          (append (take j i) (list (list-ref j i)) (drop j i))]
         [(? list?) (map loop j)]
-        [(? hash?) #:when (and (positive? (hash-count j)) (zero? (random 3 prng)))
+        [(? hash?) #:when (and (positive? (hash-count j)) (zero? (random n prng)))
          (define k (pick (hash-keys j)))
          (match (random 3 prng)
            [0 (hash-remove j k)]
@@ -87,26 +97,33 @@
         [(? hash?) (for/hasheq ([(k v) (in-hash j)]) (values k (loop v)))]
         [_ j])))
 
-  (test-case "jsexpr->contract-abi gives a description or raises a type error"
+  (test-case "jsexpr->contract-abi gives a description or raises a type error, and both happen"
     (define inputs
       (append (for/list ([_ (in-range 500)])
                 (mutate-jsexpr (contract-abi->jsexpr (random-contract-abi prng))))
               (for/list ([_ (in-range 200)]) (random-jsexpr 4))))
-    (for ([j (in-list inputs)])
-      (check-total "jsexpr" j (lambda () (jsexpr->contract-abi j)) contract-abi?)))
+    (define results
+      (for/list ([j (in-list inputs)])
+        (check-total "jsexpr" j (lambda () (jsexpr->contract-abi j)) contract-abi?)))
+    (check-true (< 1/4 (accepted-share results) 3/4) (format "seed ~s" seed)))
 
-  (test-case "read-contract-abi gives a description or raises a type error"
+  (test-case "read-contract-abi gives a description or raises a type error, and reads whole artifacts"
     (define fixture-bytes
-      (for/list ([name (in-list '("Token" "Counter" "Events"))]) (file->bytes (artifact-path name))))
+      (for/list ([name (in-list '("Token" "Counter" "Events" "Mover"))])
+        (file->bytes (artifact-path name))))
     (define inputs
       (append (for/list ([_ (in-range 300)]) (random-bytes prng (random 2001 prng)))
               (for/list ([_ (in-range 100)])
                 (define bs (pick fixture-bytes))
                 (subbytes bs 0 (random (bytes-length bs) prng)))
-              (list (make-bytes 100000 (char->integer #\[)))))
-    (for ([bs (in-list inputs)])
-      (check-total "bytes" (bytes-length bs) (lambda () (read-contract-abi (open-input-bytes bs)))
-                   contract-abi?)))
+              fixture-bytes
+              (list (bytes-append #" \n\t" (first fixture-bytes) #"\r\n ")
+                    (make-bytes 100000 (char->integer #\[)))))
+    (define results
+      (for/list ([bs (in-list inputs)])
+        (check-total "bytes" (bytes-length bs) (lambda () (read-contract-abi (open-input-bytes bs)))
+                     contract-abi?)))
+    (check-equal? (take-right results 6) '(#t #t #t #t #t #f)))
 
   (define atoms '(function event error constructor uint256 address a #:view #:returns #f))
 

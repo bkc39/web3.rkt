@@ -42,8 +42,8 @@
                #:when (equal? (hash-ref item 'type) "event"))
       (json-event item)))
 
-  (test-case "the fixtures are Token, Counter and Events"
-    (check-equal? (map source-name sources) '("Counter" "Events" "Token")))
+  (test-case "the fixtures are Counter, Events, Mover and Token"
+    (check-equal? (map source-name sources) '("Counter" "Events" "Mover" "Token")))
 
   (test-case "each artifact was compiled from the committed source"
     (for ([source (in-list sources)])
@@ -83,7 +83,7 @@
       (for/list ([row (in-list known-topics)])
         (cons (string->abi-event (known-topic-event row)) (known-topic-topic row))))
     (define events (append-map artifact-events (map source-name sources)))
-    (check-equal? (length events) 12)
+    (check-equal? (length events) 14)
     (for ([e (in-list events)])
       (define name (abi-event->string e))
       (match (assoc e known)
@@ -109,9 +109,10 @@
        (for ([source (in-list sources)])
          (define name (source-name source))
          (define expected
-           (for/list ([e (in-list (artifact-events name))]
-                      #:unless (abi-event-anonymous? e))
-             (event-hash (event-topic e) (abi-signature->string (abi-event->signature e)))))
+           (remove-duplicates
+            (for/list ([e (in-list (artifact-events name))]
+                       #:unless (abi-event-anonymous? e))
+              (event-hash (event-topic e) (abi-signature->string (abi-event->signature e))))))
          (check-equal? (sort (fixture-event-hashes source) string<? #:key event-hash-signature)
                        (sort expected string<? #:key event-hash-signature)
                        name)))]))

@@ -167,15 +167,13 @@
       (check-eq? result l)))
 
   (test-case "events that cannot be told apart raise, even with no logs"
-    (define (type-error events)
-      (with-handlers ([exn:fail:web3:abi:type? values])
-        (decode-logs events '())
-        #f))
-    (check-pred exn:fail:web3:abi:type? (type-error '("E(uint256 indexed a, uint256 b)" "E(uint256 indexed b, uint256 a)")))
-    (check-regexp-match #rx"^decode-logs: ambiguous events: "
-                        (exn-message (type-error '("E(uint256 indexed a, uint256 b)" "E(uint256 indexed b, uint256 a)"))))
+    (define same-topics '("E(uint256 indexed a, uint256 b)" "E(uint256 indexed b, uint256 a)"))
+    (define (refused events)
+      (raised-type-error (lambda () (decode-logs events '()))))
+    (check-pred exn:fail:web3:abi:type? (refused same-topics))
+    (check-regexp-match #rx"^decode-logs: ambiguous events: " (exn-message (refused same-topics)))
     (check-pred exn:fail:web3:abi:type?
-                (type-error '("A(uint256 indexed a) anonymous" "B(address indexed b, string c) anonymous")))
+                (refused '("A(uint256 indexed a) anonymous" "B(address indexed b, string c) anonymous")))
     (check-equal? (decode-logs (list transfer (string->abi-event transfer)) (list transfer-log))
                   (list (decode-log transfer transfer-log))))
 

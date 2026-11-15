@@ -5,14 +5,15 @@
 
 (module+ test
   (require json
-           racket/file
            racket/list
+           racket/match
            racket/string
            rackunit
            web3
            "../examples/common.rkt"
            "abi-gen.rkt"
            "cast.rkt"
+           "helpers/temporary.rkt"
            "util.rkt")
 
   (define (has-interface?)
@@ -21,12 +22,10 @@
            (run-cast "interface" "--help")
            #t)))
 
-  ;; The items cast declares in the interface, as strings web3 reads, and
-  ;; the number of lines naming a struct of cast's library block.
   (define (interface-lines path)
     (define text (run-cast "interface" "--" (path->string path)))
     (define structs (regexp-match* #px"struct ([A-Za-z0-9_]+)" text #:match-select cadr))
-    (define body (cadr (regexp-match #px"interface Interface \\{(.*)\\}" text)))
+    (match-define (list _ body) (regexp-match #px"interface Interface \\{(.*)\\}" text))
     (define lines
       (for/list ([declaration (in-list (string-split body ";"))]
                  #:unless (string=? (string-trim declaration) ""))
@@ -34,7 +33,8 @@
                   ([rule (in-list '((#px" (?:external|memory|calldata)\\b" "")
                                     (#px"\\( " "(")
                                     (#px" \\)" ")")))])
-          (regexp-replace* (car rule) line (cadr rule)))))
+          (match-define (list pattern replacement) rule)
+          (regexp-replace* pattern line replacement))))
     (partition (lambda (line)
                  (not (for/or ([s (in-list structs)]) (regexp-match? (pregexp (format "\\b~a\\b" s)) line))))
                lines))
@@ -76,10 +76,9 @@
 
      (test-case "generated ABIs are the declarations cast writes"
        (define prng (seeded 6 4 2 8 8 2))
-       (define dir (make-temporary-directory))
-       (for ([i (in-range 50)])
-         (define d (random-contract-abi prng #:cast-safe? #t))
-         (define path (build-path dir (format "abi-~a.json" i)))
-         (call-with-output-file path (lambda (out) (write-json (contract-abi->jsexpr d) out)))
-         (check-interface d path))
-       (delete-directory/files dir))]))
+       (with-temporary-directory (dir)
+         (for ([i (in-range 50)])
+           (define d (random-contract-abi prng #:cast-safe? #t))
+           (define path (build-path dir (format "abi-~a.json" i)))
+           (call-with-output-file path (lambda (out) (write-json (contract-abi->jsexpr d) out)))
+           (check-interface d path))))]))

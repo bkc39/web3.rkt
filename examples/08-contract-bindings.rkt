@@ -9,8 +9,7 @@
 ;;   racket examples/08-contract-bindings.rkt
 ;;   racket -i -e '(enter! "examples/08-contract-bindings.rkt")'
 
-(require racket/list
-         syntax/macro-testing
+(require racket/match
          web3
          "common.rkt")
 
@@ -20,16 +19,16 @@
 
 (define node (start-anvil))
 (current-provider (anvil-provider node))
-(define-values (alice bob carol)
-  (apply values (map address->checksum-string (take (eth-accounts) 3))))
+(match-define (list alice bob carol _ ...) (map address->checksum-string (eth-accounts)))
 (current-account alice)
 (show (list alice bob carol))
 
 (section "a binding from a compiled artifact")
 
 (define-contract token #:file "contracts/out/Token.sol/Token.json")
+(define transfer-function (contract-abi-function token 'transfer))
 (show token)
-(show (abi-item->string (contract-abi-function token 'transfer)))
+(show (abi-item->string transfer-function))
 (show token-transfer)
 (show token-transfer-event)
 
@@ -57,16 +56,17 @@
 (section "custom errors, decoded by name; a refused estimate sends nothing")
 
 (show-error (token-transfer gold alice 1 #:from carol) #:as refused)
-(show (abi-revert-name (exn:fail:web3:rpc:revert-revert refused)))
-(show (abi-revert-arguments (exn:fail:web3:rpc:revert-revert refused)))
+(show (abi-revert-name (exn->abi-revert refused)))
+(show (abi-revert-arguments (exn->abi-revert refused)))
 (show-error (token-mint gold carol 5 #:from bob))
 (show-error (token-burn gold 1 #:from carol))
 
 (section "events by name")
 
+(define from-alice-or-bob (hasheq 'from (any-of alice bob)))
 (show (contract-logs gold token-transfer-event #:where (hasheq 'to bob)))
-(show (get-logs (log-filter #:address gold #:event token-transfer-event
-                            #:where (hasheq 'from (any-of alice bob)))))
+(show (contract-logs gold token-transfer-event #:where from-alice-or-bob))
+(show (get-logs (log-filter #:address gold #:event token-transfer-event #:where from-alice-or-bob)))
 
 (section "three functions and no artifact")
 
@@ -91,6 +91,11 @@
 (show (receipt-succeeded? (counter-increment tally)))
 (show (counter-count tally))
 
+(section "call data without sending")
+
+(show-words (encode-call transfer-function bob 250))
+(show (decode-call transfer-function (encode-call transfer-function bob 250)))
+
 (section "a contract instance from JSON at run time")
 
 (define token-abi (file->contract-abi (artifact-path "Token")))
@@ -101,7 +106,11 @@
 (show (receipt-succeeded? (contract-send silver 'transfer bob 5)))
 (show (contract-estimate-gas silver 'transfer bob 5))
 (show (contract-logs silver))
-(show (contract-call (contract-instance token gold) 'transfer bob 1))
+
+(section "a state-changing function called, not sent")
+
+(define gold-token (contract-instance token gold))
+(show (contract-call gold-token 'transfer bob 1))
 (show (token-balance-of gold bob))
 
 (section "plain data, as a compiler would emit it")
@@ -112,14 +121,7 @@
 (define tiny (contract-instance (contract-abi items) gold))
 (show tiny)
 (show (contract-call tiny 'balanceOf bob))
-(show (contract-abi->jsexpr (contract-abi items)))
 (show (map abi-item->string (contract-abi-items (contract-abi items))))
-
-(section "call data without sending")
-
-(show-words (encode-call (contract-abi-function token 'transfer) bob 250))
-(show (decode-call (contract-abi-function token 'transfer)
-                   (encode-call (contract-abi-function token 'transfer) bob 250)))
 
 (section "overloads: one procedure, picked by the number of arguments")
 
@@ -130,11 +132,12 @@
 (show (abi-item->string (contract-abi-function nft 'safeTransferFrom #:arity 4)))
 (show (bytes->hex-string
        (function-selector (contract-abi-function nft 'safeTransferFrom #:arity 3))))
-(show-error (contract-abi-function nft 'safeTransferFrom))
 
 (section "mistakes, caught before anything is sent")
 
-(show-error (convert-syntax-error (token-balance-of gold)))
-(show-error (convert-syntax-error (token-transfer gold bob 1 #:value 5)))
+(show-error (contract-abi-function nft 'safeTransferFrom))
+(show-error (contract-call gold-token 'transfr bob 1))
+(show-error (token-balance-of gold))
+(show-error (token-transfer gold bob 1 #:value 5))
 (show-error (token-transfer gold bob -1))
-(show-error (convert-syntax-error (define-contract broken "function f() veiw")))
+(show-error (define-contract broken "function f() veiw"))

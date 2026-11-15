@@ -1,16 +1,13 @@
 #lang racket/base
 
-;; ABI items: the structs and their string and s-expression forms, under
-;; the caller's who.  web3/abi/description puts contracts on them.
-
 (require racket/contract/base
-         (only-in racket/list check-duplicates)
-         (only-in racket/match match match* struct*)
+         (only-in racket/match match struct*)
          (only-in racket/string string-join)
          "../abi/event-type.rkt"
          (submod "../abi/event-type.rkt" private)
          "../abi/type.rkt"
          (submod "../abi/type.rkt" private)
+         (only-in "binding-rules.rkt" or-list)
          "exn.rkt")
 
 (provide (struct-out abi-parameter-struct)
@@ -24,6 +21,10 @@
          abi-function/who
          abi-item?
          abi-parameter/who
+         constructor-item
+         duplicate-index
+         error-item
+         function-item
          identifier?
          item->sexp
          item->string
@@ -35,22 +36,19 @@
 (define identifier? (flat-contract-predicate abi-identifier/c))
 (define parameter-name? (flat-contract-predicate abi-parameter-name/c))
 
-;;;; printing
-
 (define ((constructor-writer name fields) v port _mode)
   (fprintf port "(~a" name)
   (for ([field (in-list (fields v))])
     (fprintf port " ~v" field))
   (fprintf port ")"))
 
-;;;; structs
-
 (struct abi-parameter (name type) #:transparent
   #:name abi-parameter-struct
   #:constructor-name raw-abi-parameter
   #:property prop:custom-print-quotable 'never
   #:property prop:custom-write
-  (constructor-writer 'abi-parameter (lambda (p) (list (abi-parameter-name p) (abi-parameter-type p)))))
+  (constructor-writer 'abi-parameter
+                      (lambda (p) (list (abi-parameter-name p) (abi-parameter-type p)))))
 
 (struct abi-function abi-signature (parameters returns state-mutability) #:transparent
   #:name abi-function-struct
@@ -58,15 +56,18 @@
   #:property prop:custom-print-quotable 'never
   #:property prop:custom-write
   (constructor-writer 'abi-function
-                      (lambda (f) (list (abi-signature-name f) (abi-function-parameters f)
-                                        (abi-function-returns f) (abi-function-state-mutability f)))))
+                      (lambda (f) (list (abi-signature-name f)
+                                        (abi-function-parameters f)
+                                        (abi-function-returns f)
+                                        (abi-function-state-mutability f)))))
 
 (struct abi-error abi-signature (parameters) #:transparent
   #:name abi-error-struct
   #:constructor-name raw-abi-error
   #:property prop:custom-print-quotable 'never
   #:property prop:custom-write
-  (constructor-writer 'abi-error (lambda (e) (list (abi-signature-name e) (abi-error-parameters e)))))
+  (constructor-writer 'abi-error
+                      (lambda (e) (list (abi-signature-name e) (abi-error-parameters e)))))
 
 (struct abi-constructor abi-signature (parameters state-mutability) #:transparent
   #:name abi-constructor-struct
@@ -94,36 +95,52 @@
   (or (abi-function? v) (abi-error? v) (abi-constructor? v) (abi-fallback? v) (abi-receive? v)
       (abi-event? v)))
 
-;;;; smart constructors
-
 (define (abi-parameter/who who name type)
   (raw-abi-parameter name (abi-type/who who type)))
 
 (define (parameter/who who spec)
   (if (abi-parameter? spec) spec (raw-abi-parameter #f (abi-type/who who spec))))
 
+(define (function-item name inputs outputs mutability)
+  (raw-abi-function name (map abi-parameter-type inputs) (map abi-parameter-type outputs)
+                    inputs outputs mutability))
+
+(define (error-item name inputs)
+  (raw-abi-error name (map abi-parameter-type inputs) #f inputs))
+
+(define (constructor-item inputs mutability)
+  (raw-abi-constructor "constructor" (map abi-parameter-type inputs) #f inputs mutability))
+
+(define (duplicate-index names)
+  (let loop ([names names] [i 0] [seen '()])
+    (match names
+      ['() #f]
+      [(cons #f rest) (loop rest (add1 i) seen)]
+      [(cons name _) #:when (member name seen) i]
+      [(cons name rest) (loop rest (add1 i) (cons name seen))])))
+
 (define (check-parameter-names who input ps)
-  (match (check-duplicates (filter values (map abi-parameter-name ps)))
+  (define names (map abi-parameter-name ps))
+  (match (duplicate-index names)
     [#f (void)]
-    [name (raise-abi-type-error who (format "duplicate parameter name: ~a" name) input #f)]))
+    [i (raise-abi-type-error who (format "duplicate parameter name: ~a" (list-ref names i))
+                             input #f)]))
 
 (define (abi-function/who who name inputs outputs [mutability 'nonpayable])
   (define ps (map (lambda (spec) (parameter/who who spec)) inputs))
   (define rs (map (lambda (spec) (parameter/who who spec)) outputs))
   (check-parameter-names who name (append ps rs))
-  (raw-abi-function name (map abi-parameter-type ps) (map abi-parameter-type rs) ps rs mutability))
+  (function-item name ps rs mutability))
 
 (define (abi-error/who who name inputs)
   (define ps (map (lambda (spec) (parameter/who who spec)) inputs))
   (check-parameter-names who name ps)
-  (raw-abi-error name (map abi-parameter-type ps) #f ps))
+  (error-item name ps))
 
 (define (abi-constructor/who who inputs [mutability 'nonpayable])
   (define ps (map (lambda (spec) (parameter/who who spec)) inputs))
   (check-parameter-names who "constructor" ps)
-  (raw-abi-constructor "constructor" (map abi-parameter-type ps) #f ps mutability))
-
-;;;; strings
+  (constructor-item ps mutability))
 
 (define (string->abi-item/who who s)
   (define n (string-length s))
@@ -131,6 +148,12 @@
     (raise-abi-type-error who reason s position))
   (define (char-at i)
     (and (< i n) (string-ref s i)))
+  (define (found i)
+    (match (char-at i)
+      [#f "end of input"]
+      [c (format "~a" c)]))
+  (define (expected what i)
+    (fail (format "expected ~a, found ~a" what (found i)) i))
   (define (skip i)
     (skip-spaces s i))
   (define (word-at i)
@@ -149,8 +172,6 @@
       [(not name) (values (raw-abi-parameter #f type) after-location)]
       [(parameter-name? name) (values (raw-abi-parameter name type) (word-end k))]
       [else (fail "expected a parameter name" k)]))
-  ;; The parameters from the "(" at open, their positions, and the index
-  ;; after the ")".
   (define (read-parameters open)
     (define start (skip (add1 open)))
     (cond
@@ -162,24 +183,18 @@
          (match (char-at k)
            [#\, (loop (skip (add1 k)) (cons p ps) (cons at positions))]
            [#\) (values (reverse (cons p ps)) (reverse (cons at positions)) (add1 k))]
-           [#f (fail "expected , or )" n)]
-           [_ (fail "expected , or )" k)]))]))
+           [_ (expected ", or )" k)]))]))
   (define (check-names ps positions)
-    (let loop ([ps ps] [positions positions] [seen '()])
-      (match* (ps positions)
-        [('() '()) (void)]
-        [((cons (struct* abi-parameter-struct ([name name])) ps) (cons at positions))
-         (cond
-           [(and name (member name seen)) (fail (format "duplicate parameter name: ~a" name) at)]
-           [else (loop ps positions (if name (cons name seen) seen))])])))
+    (define names (map abi-parameter-name ps))
+    (match (duplicate-index names)
+      [#f (void)]
+      [i (fail (format "duplicate parameter name: ~a" (list-ref names i)) (list-ref positions i))]))
   (define (open-at i)
     (define open (skip i))
-    (if (eqv? (char-at open) #\() open (fail "expected (" open)))
+    (if (eqv? (char-at open) #\() open (expected "(" open)))
   (define (empty-parameters i)
     (define close (skip (add1 (open-at i))))
-    (if (eqv? (char-at close) #\)) (add1 close) (fail "expected )" close)))
-  ;; The modifiers from i to the end or to the word stop, at most one of
-  ;; each group, and the index where they end.
+    (if (eqv? (char-at close) #\)) (add1 close) (expected ")" close)))
   (define (read-modifiers i groups #:stop [stop #f])
     (define allowed (apply append groups))
     (let loop ([i i] [words '()])
@@ -194,7 +209,11 @@
          (if (for/or ([w (in-list words)]) (member w group))
              (fail (format "at most one of ~a" (string-join group ", ")) j)
              (loop (word-end j) (cons word words)))]
-        [word (fail (format "expected ~a" (string-join (if stop (append allowed (list stop)) allowed) ", ")) j)]
+        [word
+         (fail (format "unknown modifier ~a; expected ~a"
+                       word
+                       (or-list (if stop (append allowed (list stop)) allowed)))
+               j)]
         [else (fail "unexpected text" j)])))
   (define (end-at i)
     (define j (skip i))
@@ -203,7 +222,7 @@
   (define (name-at i what)
     (define start (skip i))
     (define name (and (> start i) (word-at start)))
-    (if (and name (identifier? name)) (values name (word-end start)) (fail (format "expected ~a" what) start)))
+    (if (and name (identifier? name)) (values name (word-end start)) (expected what start)))
   (define (read-function i)
     (define-values (name name-end) (name-at i "a function name"))
     (define-values (inputs input-positions close) (read-parameters (open-at name-end)))
@@ -226,25 +245,25 @@
          (end-at end)
          (values ps positions)]))
     (check-names (append inputs outputs) (append input-positions output-positions))
-    (raw-abi-function name (map abi-parameter-type inputs) (map abi-parameter-type outputs)
-                      inputs outputs mutability))
+    (function-item name inputs outputs mutability))
   (define (read-error i)
     (define-values (name name-end) (name-at i "an error name"))
     (define-values (inputs positions close) (read-parameters (open-at name-end)))
     (end-at close)
     (check-names inputs positions)
-    (raw-abi-error name (map abi-parameter-type inputs) #f inputs))
+    (error-item name inputs))
   (define (read-constructor i)
     (define-values (inputs positions close) (read-parameters (open-at i)))
     (define-values (modifiers _end) (read-modifiers close '(("public") ("payable"))))
     (check-names inputs positions)
-    (raw-abi-constructor "constructor" (map abi-parameter-type inputs) #f inputs
-                         (if (member "payable" modifiers) 'payable 'nonpayable)))
+    (constructor-item inputs (if (member "payable" modifiers) 'payable 'nonpayable)))
   (define (read-fallback i)
-    (define-values (modifiers _end) (read-modifiers (empty-parameters i) '(("external") ("payable"))))
+    (define-values (modifiers _end)
+      (read-modifiers (empty-parameters i) '(("external") ("payable"))))
     (raw-abi-fallback (if (member "payable" modifiers) 'payable 'nonpayable)))
   (define (read-receive i)
-    (define-values (modifiers end) (read-modifiers (empty-parameters i) '(("external") ("payable"))))
+    (define-values (modifiers end)
+      (read-modifiers (empty-parameters i) '(("external") ("payable"))))
     (if (member "payable" modifiers) (raw-abi-receive) (fail "receive is payable" end)))
   (define start (skip 0))
   (define keyword (word-at start))
@@ -256,7 +275,8 @@
     ["constructor" (read-constructor after)]
     ["fallback" (read-fallback after)]
     ["receive" (read-receive after)]
-    [_ (fail "an item starts with function, event, error, constructor, fallback or receive" start)]))
+    [_ (fail "an item starts with function, event, error, constructor, fallback or receive"
+             start)]))
 
 (define (parameter->string p)
   (match p
@@ -278,15 +298,15 @@
              (match (abi-function-returns i)
                ['() ""]
                [rs (format " returns ~a" (parameters->string rs))]))]
-    [(? abi-error?) (format "error ~a~a" (abi-signature-name i) (parameters->string (abi-error-parameters i)))]
+    [(? abi-error?)
+     (format "error ~a~a" (abi-signature-name i) (parameters->string (abi-error-parameters i)))]
     [(? abi-constructor?)
      (format "constructor~a~a" (parameters->string (abi-constructor-parameters i))
              (if (eq? (abi-constructor-state-mutability i) 'payable) " payable" ""))]
-    [(? abi-fallback?) (if (eq? (abi-fallback-state-mutability i) 'payable) "fallback() payable" "fallback()")]
+    [(? abi-fallback?)
+     (if (eq? (abi-fallback-state-mutability i) 'payable) "fallback() payable" "fallback()")]
     [(? abi-receive?) "receive() payable"]
     [(? abi-event?) (abi-event->string i)]))
-
-;;;; s-expressions
 
 (define (identifier-symbol? v)
   (and (symbol? v) (identifier? (symbol->string v))))
@@ -310,14 +330,10 @@
           (fail "expected a list of parameters" ps)))
     (values parameters ps))
   (define (check-names parameters forms)
-    (for/fold ([seen '()] #:result (void))
-              ([p (in-list parameters)]
-               [form (in-list forms)])
-      (define name (abi-parameter-name p))
-      (cond
-        [(and name (member name seen)) (fail (format "duplicate parameter name: ~a" name) form)]
-        [name (cons name seen)]
-        [else seen])))
+    (define names (map abi-parameter-name parameters))
+    (match (duplicate-index names)
+      [#f (void)]
+      [i (fail (format "duplicate parameter name: ~a" (list-ref names i)) (list-ref forms i))]))
   (define (read-function name ps clauses)
     (define-values (inputs input-forms) (read-parameters ps))
     (define-values (outputs output-forms mutability)
@@ -335,16 +351,15 @@
            (fail "at most one #:returns and one of #:view, #:pure and #:payable" c)]
           [(cons c _) (fail "expected #:returns (parameter ...), #:view, #:pure or #:payable" c)])))
     (check-names (append inputs outputs) (append input-forms output-forms))
-    (raw-abi-function (name-of name) (map abi-parameter-type inputs) (map abi-parameter-type outputs)
-                      inputs outputs mutability))
+    (function-item (name-of name) inputs outputs mutability))
   (define (read-error name ps)
     (define-values (inputs forms) (read-parameters ps))
     (check-names inputs forms)
-    (raw-abi-error (name-of name) (map abi-parameter-type inputs) #f inputs))
+    (error-item (name-of name) inputs))
   (define (read-constructor ps mutability)
     (define-values (inputs forms) (read-parameters ps))
     (check-names inputs forms)
-    (raw-abi-constructor "constructor" (map abi-parameter-type inputs) #f inputs mutability))
+    (constructor-item inputs mutability))
   (match input
     [(list 'function name ps clauses ...) (read-function name ps clauses)]
     [(list 'error name ps) (read-error name ps)]
@@ -356,7 +371,8 @@
     [(cons 'event _) (sexp->abi-event/who who input)]
     [(cons (and head (or 'function 'error 'constructor 'fallback 'receive)) _)
      (fail (format "malformed ~a item" head) input)]
-    [_ (fail "expected (function ...), (event ...), (error ...), (constructor ...), (fallback ...) or (receive)"
+    [_ (fail (string-append "expected (function ...), (event ...), (error ...), (constructor ...),"
+                            " (fallback ...) or (receive)")
              input)]))
 
 (define (parameters->sexp ps)
@@ -375,11 +391,13 @@
                 ,@(match (abi-function-returns i)
                     ['() '()]
                     [rs (list '#:returns (parameters->sexp rs))]))]
-    [(? abi-error?) `(error ,(string->symbol (abi-signature-name i)) ,(parameters->sexp (abi-error-parameters i)))]
+    [(? abi-error?)
+     `(error ,(string->symbol (abi-signature-name i)) ,(parameters->sexp (abi-error-parameters i)))]
     [(? abi-constructor?)
      `(constructor ,(parameters->sexp (abi-constructor-parameters i))
                    ,@(if (eq? (abi-constructor-state-mutability i) 'payable) '(#:payable) '()))]
-    [(? abi-fallback?) (if (eq? (abi-fallback-state-mutability i) 'payable) '(fallback #:payable) '(fallback))]
+    [(? abi-fallback?)
+     (if (eq? (abi-fallback-state-mutability i) 'payable) '(fallback #:payable) '(fallback))]
     [(? abi-receive?) '(receive)]
     [(? abi-event?) (abi-event->sexp i)]))
 

@@ -15,6 +15,7 @@
            syntax/parse/define
            web3
            "abi-gen.rkt"
+           "bounded.rkt"
            "modules.rkt"
            "util.rkt")
 
@@ -22,13 +23,9 @@
   (struct canonical-row (input canonical) #:prefab)
   (struct position-row (input position) #:prefab)
 
-  (define (type-error thunk)
-    (with-handlers ([exn:fail:web3:abi:type? values])
-      (thunk)
-      #f))
 
   (define-syntax-parse-rule (check-type-error expr)
-    (check-pred exn:fail:web3:abi:type? (type-error (lambda () expr)) (format "~s" 'expr)))
+    (check-pred exn:fail:web3:abi:type? (raised-type-error (lambda () expr)) (format "~s" 'expr)))
 
   (define form-rows
     '(#s(form-row "function balanceOf(address owner) view returns (uint256)"
@@ -156,12 +153,48 @@
                           #s(position-row "fallback() view" 11)
                           #s(position-row "event Transfer" 14)))])
       (match-define (struct* position-row ([input input] [position position])) row)
-      (define e (type-error (lambda () (string->abi-item input))))
+      (define e (raised-type-error (lambda () (string->abi-item input))))
       (check-pred exn:fail:web3:abi:type? e input)
       (when e
         (check-equal? (exn:fail:web3:abi:type-input e) input input)
         (check-equal? (exn:fail:web3:abi:type-position e) position input)
         (check-regexp-match #rx"^string->abi-item: " (exn-message e)))))
+
+  (test-case "a string's errors say what was found where something else was expected"
+    (for ([row (in-list '(#s(canonical-row "function f(uint256" "expected , or \\), found end of input")
+                          #s(canonical-row "function f(uint256 a;" "expected , or \\), found ;")
+                          #s(canonical-row "function f uint256)" "expected [(], found u")
+                          #s(canonical-row "fallback(]" "expected [)], found ]")
+                          #s(canonical-row "function 1f()" "expected a function name, found 1")
+                          #s(canonical-row "constructor() view"
+                                           "unknown modifier view; expected public or payable")))])
+      (match-define (struct* canonical-row ([input input] [canonical message])) row)
+      (check-regexp-match (string-append "^string->abi-item: " message)
+                          (exn-message (raised-type-error (lambda () (string->abi-item input))))
+                          input)))
+
+  (define (nested-tuple depth)
+    (for/fold ([p (hasheq 'name "x" 'type "uint256")])
+              ([_ (in-range depth)])
+      (hasheq 'name "" 'type "tuple[2][]" 'components (list p))))
+
+  (test-case "deeply nested JSON tuples are read, printed and written in linear time"
+    (define j (list (hasheq 'type "function" 'name "f" 'inputs (list (nested-tuple 2000)) 'outputs '())))
+    (match (call-bounded (lambda ()
+                           (define d (jsexpr->contract-abi j))
+                           (define f (contract-abi-function d 'f))
+                           (list (string-length (abi-item->string f))
+                                 (equal? (jsexpr->contract-abi (contract-abi->jsexpr d)) d)
+                                 (equal? (sexp->abi-item (abi-item->sexp f)) f)
+                                 (string-length (format "~v" f))))
+                         #:seconds 2
+                         #:megabytes 256)
+      [(list 'ok (list length round-trip? sexp-round-trip? printed))
+       (check-equal? length (+ (string-length "function f(uint256)") (* 2000 (string-length "()[2][]"))))
+       (check-true round-trip?)
+       (check-true sexp-round-trip?)
+       (check-true (> printed 2000))]
+      [other (fail (format "~s" other))]))
 
   (test-case "an s-expression that is not an item raises, naming the subform"
     (for ([x (in-list '((function) (function 1f ()) (function f) (function "f" ()) (function f (uint256))
@@ -170,13 +203,13 @@
                         (function f ([a uint256] [a bool])) (error E () #:view)
                         (constructor ([a uint256]) #:view) (fallback #:view) (receive #:payable)
                         (funktion f ())))])
-      (define e (type-error (lambda () (sexp->abi-item x))))
+      (define e (raised-type-error (lambda () (sexp->abi-item x))))
       (check-pred exn:fail:web3:abi:type? e (format "~s" x))
       (when e
         (check-false (exn:fail:web3:abi:type-position e) (format "~s" x))
         (check-regexp-match #rx"^sexp->abi-item: " (exn-message e))))
     (check-equal? (sexp->abi-item '(function f () #:returns ())) (sexp->abi-item '(function f ())))
-    (check-regexp-match #rx"form: uint7" (exn-message (type-error (lambda () (sexp->abi-item
+    (check-regexp-match #rx"form: uint7" (exn-message (raised-type-error (lambda () (sexp->abi-item
                                                                                '(function f ([a uint7]))))))))
 
   (test-case "JSON items: legacy mutability, defaults, tuples, and ignored keys"
@@ -213,6 +246,10 @@
             (hasheq 'name "f" 'inputs (list (hasheq 'name "a" 'type "uint256"
                                                     'components (list (hasheq 'type "bool")))))
             (hasheq 'name "f" 'inputs (list (hasheq 'name "a" 'type "tuple" 'components '())))
+            (hasheq 'name "f" 'inputs (list (hasheq 'name "a" 'type "tuple[0]"
+                                                    'components (list (hasheq 'type "bool")))))
+            (hasheq 'name "f" 'inputs (list (hasheq 'name "a" 'type "tuple[01]"
+                                                    'components (list (hasheq 'type "bool")))))
             (hasheq 'name "f" 'inputs '() 'stateMutability "constant")
             (hasheq 'type "receive" 'stateMutability "nonpayable")
             (hasheq 'type "constructor" 'inputs '() 'stateMutability "view")
@@ -221,7 +258,7 @@
             'null
             (hasheq 'name 5 'inputs '())))
     (for ([j (in-list rejected)])
-      (define e (type-error (lambda () (jsexpr->abi-item j))))
+      (define e (raised-type-error (lambda () (jsexpr->abi-item j))))
       (check-pred exn:fail:web3:abi:type? e (format "~s" j))
       (when e
         (check-equal? (exn:fail:web3:abi:type-input e) j (format "~s" j))
@@ -243,24 +280,29 @@
 
   (test-case "a description refuses two items with one signature, and two constructors"
     (for ([items (in-list (list '("function f(uint256)" "function f(uint)")
+                                '("function f()" "function f()")
                                 '("function f(uint256)" (function f ([#f uint256]) #:view))
                                 '("error E(uint256 a)" "error E(uint256 b)")
-                                '("event E(uint256 indexed a)" "event E(uint256 b)")
+                                '("event E(uint256 indexed a)" "event E(uint256 indexed b)")
+                                '("event E(uint256 a)" "event E(uint256 a) anonymous"
+                                  "event E(uint256 b) anonymous")
                                 '("constructor()" "constructor(uint256)")
                                 '("fallback()" "fallback() payable")
                                 '("receive() payable" "receive() external payable")))])
-      (define e (type-error (lambda () (contract-abi items))))
+      (define e (raised-type-error (lambda () (contract-abi items))))
       (check-pred exn:fail:web3:abi:type? e (format "~s" items))
       (when e
-        (check-equal? (exn:fail:web3:abi:type-input e) (second items))
+        (check-equal? (exn:fail:web3:abi:type-input e) (last items))
         (check-false (exn:fail:web3:abi:type-position e))))
     (check-regexp-match #rx"duplicate function f[(]uint256[)]"
-                        (exn-message (type-error (lambda () (contract-abi '("function f(uint256)"
+                        (exn-message (raised-type-error (lambda () (contract-abi '("function f(uint256)"
                                                                             "function f(uint)"))))))
     (check-pred contract-abi? (contract-abi '("function f(uint256)" "function f(address)")))
     (check-pred contract-abi?
                 (contract-abi '("event Transfer(address indexed from, address indexed to, uint256 value)"
                                 "event Transfer(address indexed from, address indexed to, uint256 indexed id, bytes data)")))
+    (check-equal? (contract-abi-items (contract-abi '("event E(uint256 indexed a)" "event E(uint256 b)")))
+                  (list (string->abi-event "E(uint256 indexed a)") (string->abi-event "E(uint256 b)")))
     (check-false (contract-abi-bytecode (contract-abi '() #:bytecode #"")))
     (check-false (contract-abi-bytecode (contract-abi '() #:bytecode "0x")))
     (check-equal? (contract-abi-bytecode (contract-abi '() #:bytecode "0x60aB")) #"\x60\xab"))
@@ -274,44 +316,48 @@
                     "event Transfer(address indexed from, address indexed to, uint256 value)"
                     "event Transfer(address indexed from, address indexed to, uint256 value, bytes data)")))
 
-  (define (blame-message thunk)
-    (with-handlers ([exn:fail:contract:blame? exn-message])
+  (define (lookup-message thunk)
+    (with-handlers ([exn:fail:web3:abi? (lambda (e) (and (not (exn:fail:web3:abi:type? e))
+                                                         (exn-message e)))])
       (thunk)
       #f))
 
-  (test-case "names resolve by arity, signatures by their inputs, and ambiguity is a contract violation"
+  (test-case "names resolve by arity, signatures by their inputs, and failed lookups raise"
     (define (signature f)
       (abi-signature->string f))
     (check-equal? (signature (contract-abi-function overloaded 'safeTransferFrom #:arity 3))
                   "safeTransferFrom(address,address,uint256)")
     (check-equal? (signature (contract-abi-function overloaded 'safeTransferFrom #:arity 4))
                   "safeTransferFrom(address,address,uint256,bytes)")
-    (check-regexp-match
-     (regexp-quote (string-append "ambiguous: safeTransferFrom has 2 overloads; pass #:arity or a signature: "
-                                  "safeTransferFrom(address,address,uint256), "
-                                  "safeTransferFrom(address,address,uint256,bytes)"))
-     (blame-message (lambda () (contract-abi-function overloaded 'safeTransferFrom))))
-    (check-regexp-match #rx"no overload of safeTransferFrom takes 2 arguments; it takes 3 or 4"
-                        (blame-message (lambda () (contract-abi-function overloaded 'safeTransferFrom
-                                                                         #:arity 2))))
+    (check-equal? (lookup-message (lambda () (contract-abi-function overloaded 'safeTransferFrom)))
+                  (string-append "contract-abi-function: ambiguous: safeTransferFrom has 2 overloads;"
+                                 " pass #:arity or a signature: "
+                                 "safeTransferFrom(address,address,uint256), "
+                                 "safeTransferFrom(address,address,uint256,bytes)"))
+    (check-equal? (lookup-message (lambda () (contract-abi-function overloaded 'safeTransferFrom
+                                                                    #:arity 2)))
+                  (string-append "contract-abi-function: no overload of safeTransferFrom takes"
+                                 " 2 arguments; it takes 3 or 4"))
     (for ([key (list "safeTransferFrom(address,address,uint256)"
                      "safeTransferFrom(address, address, uint)"
                      "safeTransferFrom(address,address,uint256)(bool)")])
       (check-equal? (signature (contract-abi-function overloaded key))
                     "safeTransferFrom(address,address,uint256)" key))
-    (check-regexp-match #rx"ambiguous: f has 2 overloads taking 1 argument: f[(]uint256[)], f[(]address[)]; pass a signature"
-                        (blame-message (lambda () (contract-abi-function overloaded 'f #:arity 1))))
+    (check-equal? (lookup-message (lambda () (contract-abi-function overloaded 'f #:arity 1)))
+                  (string-append "contract-abi-function: ambiguous: f has 2 overloads taking 1 argument:"
+                                 " f(uint256), f(address); pass a signature"))
     (check-equal? (signature (contract-abi-function overloaded "f(address)")) "f(address)")
     (for ([thunk (list (lambda () (contract-abi-function overloaded 'g))
                        (lambda () (contract-abi-function overloaded "g"))
                        (lambda () (contract-abi-function overloaded 'g #:arity 5)))])
       (check-equal? (signature (thunk)) "g()"))
-    (check-regexp-match #rx"no function nope in this ABI"
-                        (blame-message (lambda () (contract-abi-function overloaded 'nope))))
-    (check-regexp-match #rx"no function nope"
-                        (blame-message (lambda () (contract-abi-function overloaded "nope(uint256)"))))
+    (check-equal? (lookup-message (lambda () (contract-abi-function overloaded 'nope)))
+                  "contract-abi-function: no function nope in this ABI")
+    (check-equal? (lookup-message (lambda () (contract-abi-function overloaded "nope(uint256)")))
+                  "contract-abi-function: no function nope(uint256) in this ABI")
     (check-type-error (contract-abi-function overloaded "f("))
-    (check-blames-here (contract-abi-event overloaded 'Transfer))
+    (check-regexp-match #rx"^contract-abi-event: ambiguous: Transfer has 2 overloads; pass a signature"
+                        (lookup-message (lambda () (contract-abi-event overloaded 'Transfer))))
     (check-equal? (contract-abi-event overloaded
                                       "Transfer(address indexed from, address indexed to, uint256 value)")
                   (string->abi-event "Transfer(address indexed from, address indexed to, uint256 value)"))
@@ -321,7 +367,32 @@
                                                          (abi-parameter "want" 'uint256))))
     (check-equal? (contract-abi-error token-errors "InsufficientBalance(uint256,uint256)")
                   (contract-abi-error token-errors "InsufficientBalance"))
-    (check-blames-here (contract-abi-error token-errors 'Nope)))
+    (check-equal? (lookup-message (lambda () (contract-abi-error token-errors 'Nope)))
+                  "contract-abi-error: no error Nope in this ABI")
+    (check-blames-here (contract-abi-event overloaded 5))
+    (check-blames-here (contract-abi-function overloaded (string->abi-event "E()"))))
+
+  (define erc20+721
+    (contract-abi
+     '("event Transfer(address indexed from, address indexed to, uint256 value)"
+       "event Transfer(address indexed from, address indexed to, uint256 indexed id)")))
+
+  (test-case "events with one signature and different indexed parameters are both kept"
+    (define-values (erc20 erc721) (apply values (contract-abi-events erc20+721)))
+    (check-equal? (abi-event->string erc721)
+                  "event Transfer(address indexed from, address indexed to, uint256 indexed id)")
+    (define both
+      (string-append "event Transfer(address indexed from, address indexed to, uint256 value), "
+                     "event Transfer(address indexed from, address indexed to, uint256 indexed id)"))
+    (check-equal? (lookup-message (lambda () (contract-abi-event erc20+721 'Transfer)))
+                  (string-append "contract-abi-event: ambiguous: Transfer has 2 overloads;"
+                                 " pass a signature: " both))
+    (check-equal? (lookup-message (lambda () (contract-abi-event erc20+721
+                                                                 "Transfer(address,address,uint256)")))
+                  (string-append "contract-abi-event: ambiguous: 2 events share the signature"
+                                 " Transfer(address,address,uint256): " both))
+    (check-equal? (contract-abi-event erc20+721 (abi-event->string erc721)) erc721)
+    (check-equal? (contract-abi-event erc20+721 erc20) erc20))
 
   (test-case "functions, errors and constructors are signatures"
     (define prng (seeded 6 6 1 2 9 9))
@@ -359,7 +430,8 @@
                                                "fallback()")))
                   "#<contract-abi functions: f; fallback; receive>")
     (check-equal? (format "~a" (contract-abi '("function f()") #:bytecode #"\x60\x80"))
-                  "#<contract-abi functions: f; bytecode: 2 bytes>"))
+                  "#<contract-abi functions: f; bytecode: 2 bytes>")
+    (check-equal? (format "~a" (contract-abi '() #:bytecode #"\x60")) "#<contract-abi bytecode: 1 byte>"))
 
   (test-case "malformed arguments are contract violations blaming the caller"
     (check-blames-here (abi-parameter "indexed" 'uint256))
@@ -401,7 +473,7 @@
                   '())
     (define web3-modules
       '("web3/abi/description" "web3/abi/event-type" "web3/abi/type" "web3/private/abi-item"
-        "web3/private/exn" "web3/private/who"))
+        "web3/private/binding-rules" "web3/private/exn" "web3/private/who"))
     (check-equal? (sort (remove-duplicates (filter (lambda (n) (equal? (collection n) "web3")) names))
                         string<?)
                   web3-modules)
@@ -419,8 +491,10 @@
     (define balance-of (abi-function "balanceOf" (list (abi-parameter "owner" 'address)) '(uint256) 'view))
     (check-equal? (abi-signature->string balance-of #:outputs? #t) "balanceOf(address)(uint256)")
     (check-equal? (bytes->hex-string (function-selector balance-of)) "0x70a08231")
-    (define veiw (type-error (lambda () (string->abi-item "function balanceOf(address owner) veiw returns (uint256)"))))
-    (check-regexp-match #rx"^string->abi-item: " (exn-message veiw))
+    (define veiw (raised-type-error (lambda () (string->abi-item "function balanceOf(address owner) veiw returns (uint256)"))))
+    (check-regexp-match (string-append "^string->abi-item: unknown modifier veiw; expected external,"
+                                       " public, view, pure, payable or returns")
+                        (exn-message veiw))
     (check-regexp-match #rx"at: position 34" (exn-message veiw))
     (check-equal? (abi-item->string '(function transfer ([to address] [amount uint256]) #:returns ([#f bool])))
                   "function transfer(address to, uint256 amount) returns (bool)")

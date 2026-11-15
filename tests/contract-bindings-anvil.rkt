@@ -5,10 +5,13 @@
 ;; when anvil is not available.
 
 (module+ test
-  (require rackunit
+  (require json
+           racket/runtime-path
+           rackunit
            web3
-           "../examples/common.rkt"
            "util.rkt")
+
+  (define-runtime-path token-file "../examples/contracts/out/Token.sol/Token.json")
 
   (define-contract token #:file "../examples/contracts/out/Token.sol/Token.json")
   (define-contract erc20
@@ -23,17 +26,12 @@
       (function transfer ([#f address] [#f uint256]) #:returns ([#f bool]))
       (error BezzleError ([#f uint256]))))
 
-  (define (revert-of e)
-    (if (exn:fail:web3:transaction? e)
-        (exn:fail:web3:transaction-revert e)
-        (exn:fail:web3:rpc:revert-revert e)))
-
   (define (check-reverts thunk pred name arguments)
     (define e (raised thunk))
     (check-pred pred e)
     (when (pred e)
-      (check-equal? (abi-revert-name (revert-of e)) name)
-      (check-equal? (abi-revert-arguments (revert-of e)) arguments)))
+      (check-equal? (abi-revert-name (exn->abi-revert e)) name)
+      (check-equal? (abi-revert-arguments (exn->abi-revert e)) arguments)))
 
   (define (nonce account)
     (eth-get-transaction-count account "latest"))
@@ -46,23 +44,22 @@
        (parameterize ([current-account anvil-alice])
          (define before (nonce anvil-alice))
          (define gold (token-deploy "Gold" "GLD" 1000000))
-         (define sent #f)
 
          (test-case "a bound deploy creates the contract at its CREATE address"
            (check-equal? gold (create-address anvil-alice before))
-           (check-equal? (string-downcase (eth-get-code gold "latest")) (artifact-deployed-bytecode "Token")))
+           (check-equal? (string-downcase (eth-get-code gold "latest"))
+                         (hash-ref (hash-ref (call-with-input-file token-file read-json) 'deployedBytecode)
+                                   'object)))
 
          (test-case "bound calls return the contract's outputs"
            (check-equal? (token-balance-of gold anvil-alice) 1000000)
            (check-equal? (call-with-values (lambda () (token-info gold)) list) '("Gold" "GLD" 18 1000000))
            (check-equal? (token-balances-of gold (list anvil-alice anvil-bob)) '(1000000 0)))
 
-         (test-case "a bound send transfers"
-           (set! sent (token-transfer gold anvil-bob 250))
+         (test-case "a bound send transfers, and its event decodes by name from the receipt and the chain"
+           (define sent (token-transfer gold anvil-bob 250))
            (check-true (receipt-succeeded? sent))
-           (check-equal? (token-balance-of gold anvil-bob) 250))
-
-         (test-case "the send's event decodes by name, from the receipt and from the chain"
+           (check-equal? (token-balance-of gold anvil-bob) 250)
            (define logs (receipt-logs sent #:events (contract-abi-events token)))
            (check-equal? (map event-log-name logs) '("Transfer"))
            (check-equal? (event-log-ref (car logs) 'value) 250)
@@ -81,7 +78,7 @@
            (check-reverts (lambda () (token-mint gold anvil-carol 5 #:from anvil-bob))
                           exn:fail:web3:rpc:revert? "Unauthorized" (list anvil-bob))
            (define panic (raised (lambda () (token-burn gold 1 #:from anvil-carol))))
-           (check-equal? (abi-revert->string (revert-of panic)) "Panic(0x11): arithmetic underflow or overflow"))
+           (check-equal? (abi-revert->string (exn->abi-revert panic)) "Panic(0x11): arithmetic underflow or overflow"))
 
          (test-case "an inline binding works against the same contract"
            (check-equal? (erc20-balance-of gold anvil-bob) 250)
@@ -89,7 +86,7 @@
                           exn:fail:web3:rpc:revert? "InsufficientBalance" '(0 1)))
 
          (test-case "descriptions and instances at run time agree with the binding"
-           (check-equal? (file->contract-abi (artifact-path "Token")) token)
+           (check-equal? (file->contract-abi token-file) token)
            (define silver (deploy-contract-instance token "Silver" "SLV" 500))
            (check-equal? (contract-call silver 'balanceOf anvil-alice) 500)
            (check-equal? (contract-call (contract-instance token gold) 'transfer anvil-bob 1) #t)

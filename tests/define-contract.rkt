@@ -13,11 +13,12 @@
            racket/string
            rackunit
            web3
-           (only-in web3/private/define-contract solidity-name->racket-name)
+           (only-in web3/private/define-contract solidity-name->racket-name syntax->abi-item)
            "../examples/common.rkt"
            "abi-gen.rkt"
            (rename-in "helpers/mock.rkt" [token token-address])
            "modules.rkt"
+           "helpers/temporary.rkt"
            "util.rkt")
 
   (define-namespace-anchor anchor)
@@ -32,6 +33,7 @@
     "function f(address)"
     #:rename (["f(address)" f-address]))
   (define-contract c "function f(uint256 a) view returns (uint256)")
+  (define-contract mover #:file "../examples/contracts/out/Mover.sol/Mover.json")
 
   (define token-path (simplify-path (path->complete-path (artifact-path "Token"))))
   (define token-errors (contract-abi-errors token))
@@ -90,26 +92,25 @@
                                          events-note-event events-paired-event events-tagged-event
                                          events-transfer-event)))
     (check-true (andmap procedure? (list counter-count counter-increment counter-deploy)))
-    (define dir (make-temporary-directory))
-    (define bare (build-path dir "bare.json"))
-    (call-with-output-file bare (lambda (out) (write-string "[{\"type\":\"function\",\"name\":\"f\",\"inputs\":[]}]" out)))
-    (check-equal? (module-exports `(module m racket/base
-                                     (require web3)
-                                     (provide (contract-bindings-out b))
-                                     (define-contract b #:file ,(path->string bare))))
-                  '(b b-f))
-    (check-equal? (module-exports `(module m racket/base
-                                     (require web3)
-                                     (provide (contract-bindings-out b))
-                                     (define-contract b #:file ,(path->string bare) #:bytecode #"\x60\x80")))
-                  '(b b-deploy b-f))
-    (check-equal? (module-exports `(module m racket/base
-                                     (require web3)
-                                     (provide (all-defined-out))
-                                     (define-contract b "function f()" "event E()"
-                                       #:rename (["f" g] ["event E" h]))))
-                  '(b g h))
-    (delete-directory/files dir))
+    (with-temporary-directory (dir)
+      (define bare (build-path dir "bare.json"))
+      (call-with-output-file bare (lambda (out) (write-string "[{\"type\":\"function\",\"name\":\"f\",\"inputs\":[]}]" out)))
+      (check-equal? (module-exports `(module m racket/base
+                                       (require web3)
+                                       (provide (contract-bindings-out b))
+                                       (define-contract b #:file ,(path->string bare))))
+                    '(b b-f))
+      (check-equal? (module-exports `(module m racket/base
+                                       (require web3)
+                                       (provide (contract-bindings-out b))
+                                       (define-contract b #:file ,(path->string bare) #:bytecode #"\x60\x80")))
+                    '(b b-deploy b-f))
+      (check-equal? (module-exports `(module m racket/base
+                                       (require web3)
+                                       (provide (all-defined-out))
+                                       (define-contract b "function f()" "event E()"
+                                         #:rename (["f" g] ["event E" h]))))
+                    '(b g h))))
 
   (struct name-row (solidity racket) #:prefab)
 
@@ -241,46 +242,47 @@
     (check-exn exn:fail:contract:arity? (lambda () (apply nft-safe-transfer-from token-address '(1)))))
 
   (test-case "editing the JSON file recompiles the module that reads it"
-    (define dir (make-temporary-directory))
-    (define json (build-path dir "abi.json"))
-    (define m (build-path dir "m.rkt"))
-    (call-with-output-file json (lambda (out) (write-string "[{\"name\":\"f\",\"inputs\":[]}]" out)))
-    (call-with-output-file m
-      (lambda (out)
-        (write '(module m racket/base
-                  (require web3)
-                  (provide (contract-bindings-out c))
-                  (define-contract c #:file "abi.json"))
-               out)))
-    (define (compiled-exports)
-      (parameterize ([current-namespace (make-base-namespace)])
-        (managed-compile-zo m)
-        (module-declared? m #t)
-        (define-values (variables syntaxes) (module->exports m))
-        (for*/list ([phase+names (in-list (append variables syntaxes))]
-                    [name (in-list (cdr phase+names))])
-          (car name))))
-    (define before (compiled-exports))
-    (check-not-false (memq 'c-f before))
-    (check-false (memq 'c-g before))
-    (call-with-output-file json #:exists 'truncate
-      (lambda (out) (write-string "[{\"name\":\"f\",\"inputs\":[]},{\"name\":\"g\",\"inputs\":[]}]" out)))
-    (file-or-directory-modify-seconds json (+ (current-seconds) 5))
-    (check-not-false (memq 'c-g (compiled-exports)))
-    (define dep (file->string (build-path dir "compiled" "m_rkt.dep")))
-    (check-true (string-contains? dep (path->string (simplify-path json))))
-    (delete-directory/files dir))
+    (with-temporary-directory (dir)
+      (define json (build-path dir "abi.json"))
+      (define m (build-path dir "m.rkt"))
+      (call-with-output-file json (lambda (out) (write-string "[{\"name\":\"f\",\"inputs\":[]}]" out)))
+      (call-with-output-file m
+        (lambda (out)
+          (write '(module m racket/base
+                    (require web3)
+                    (provide (contract-bindings-out c))
+                    (define-contract c #:file "abi.json"))
+                 out)))
+      (define (compiled-exports)
+        (parameterize ([current-namespace (make-base-namespace)])
+          (managed-compile-zo m)
+          (module-declared? m #t)
+          (define-values (variables syntaxes) (module->exports m))
+          (for*/list ([phase+names (in-list (append variables syntaxes))]
+                      [name (in-list (cdr phase+names))])
+            (car name))))
+      (define before (compiled-exports))
+      (check-not-false (memq 'c-f before))
+      (check-false (memq 'c-g before))
+      (call-with-output-file json #:exists 'truncate
+        (lambda (out) (write-string "[{\"name\":\"f\",\"inputs\":[]},{\"name\":\"g\",\"inputs\":[]}]" out)))
+      (file-or-directory-modify-seconds json (+ (current-seconds) 5))
+      (check-not-false (memq 'c-g (compiled-exports)))
+      (define dep (file->string (build-path dir "compiled" "m_rkt.dep")))
+      (check-true (string-contains? dep (path->string (simplify-path json))))))
 
   (struct syntax-row (clauses message needle nth) #:prefab)
 
   (define syntax-rows
     '(#s(syntax-row ("function f(uint7 a)") "not an ABI type" "uint7" 0)
-      #s(syntax-row ("function f() veiw") "veiw" "veiw" 0)
+      #s(syntax-row ("function f() veiw")
+                    "unknown modifier veiw; expected external, public, view, pure, payable or returns"
+                    "veiw" 0)
       #s(syntax-row ("transfer(address,uint256)") "starts with function, event, error" "transfer" 0)
       #s(syntax-row ("function f(uint256\ta)") "" "\"function f(uint256\\ta)\"" 0)
       #s(syntax-row ((function f ([a uint7]))) "not an ABI type" "uint7" 0)
-      #s(syntax-row ((function f () #:view #:pure)) "" "#:pure" 0)
-      #s(syntax-row ((funktion f ())) "" "(funktion f ())" 0)
+      #s(syntax-row ((function f () #:view #:pure)) "" "(function f () #:view #:pure)" 0)
+      #s(syntax-row ((funktion f ())) "expected one of these literal symbols" "funktion" 0)
       #s(syntax-row ("function balanceOf(address) view returns (uint256)"
                      "function balance_of(address) view returns (uint256)")
                     "two bindings are named c-balance-of"
@@ -294,17 +296,27 @@
                      "function transferEvent()")
                     "c-transfer-event" "\"function transferEvent()\"" 0)
       #s(syntax-row ("function deploy()" #:bytecode #"\x60") "c-deploy" "\"function deploy()\"" 0)
-      #s(syntax-row ("function _()") "no Racket name for _" "\"function _()\"" 0)
+      #s(syntax-row ("function _()") "no Racket name for _; use #:rename" "\"function _()\"" 0)
+      #s(syntax-row ("function __()") "no Racket name for __; use #:rename" "\"function __()\"" 0)
+      #s(syntax-row ("event _(uint256 a)") "no Racket name for _; use #:rename"
+                    "\"event _(uint256 a)\"" 0)
+      #s(syntax-row ((event _ ([a uint256]))) "no Racket name for _; use #:rename"
+                    "(event _ ((a uint256)))" 0)
+      #s(syntax-row ("event T(uint256 a)" "event T(address a)" #:rename (["event T" t]))
+                    "event T is overloaded; use \"event T[(]…[)]\"" "\"event T\"" 0)
+      #s(syntax-row ("event E(uint256 indexed a)" "event E(uint256 b)")
+                    "two events share the signature E[(]uint256[)], so they cannot be bound"
+                    "\"event E(uint256 b)\"" 0)
       #s(syntax-row ("function f()" #:rename (["g" h])) "#:rename: no function or event g" "\"g\"" 0)
-      #s(syntax-row (#:file "nope.json") "cannot read" "\"nope.json\"" 0)
+      #s(syntax-row (#:file "nope.json") "cannot read /.*/nope.json" "\"nope.json\"" 0)
+      #s(syntax-row (#:file "") "expected a path" "\"\"" 0)
       #s(syntax-row (#:file "bad.json") "not JSON" "\"bad.json\"" 0)
       #s(syntax-row (#:file "item.json") "item 0: not an ABI type" "\"item.json\"" 0)
       #s(syntax-row (#:file "x.json" "function f()") "#:file excludes inline items" "\"function f()\"" 0)
-      #s(syntax-row (#:bytecode #"" #:bytecode #"") "too many #:bytecode" "#:bytecode" 1)
+      #s(syntax-row (#:bytecode #"" #:bytecode #"") "too many #:bytecode"
+                    "(define-contract c #:bytecode #\"\" #:bytecode #\"\")" 0)
       #s(syntax-row () "expected #:file or at least one item" "(define-contract c)" 0)))
 
-  ;; The syntax error expanding the module with forms raises, and the
-  ;; module's text.
   (define (expand-program forms #:dir [dir #f])
     (define text
       (with-output-to-string
@@ -339,17 +351,20 @@
                     label)))
 
   (test-case "mistakes in a definition are syntax errors at the offending syntax"
-    (define dir (make-temporary-directory))
-    (call-with-output-file (build-path dir "bad.json") (lambda (out) (write-string "[1," out)))
-    (call-with-output-file (build-path dir "item.json")
-      (lambda (out) (write-string "[{\"name\":\"f\",\"inputs\":[{\"name\":\"a\",\"type\":\"uint7\"}]}]" out)))
-    (for ([row (in-list syntax-rows)])
-      (match-define (struct* syntax-row ([clauses clauses] [message message] [needle needle] [nth nth])) row)
-      (define-values (e text) (expand-program (list `(define-contract c ,@clauses)) #:dir dir))
-      (check-srcloc e text needle nth (string-append "define-contract: .*" message)))
-    (define-values (e text) (expand-program '((define-contract "c" "function f()"))))
-    (check-srcloc e text "\"c\"" 0 "expected identifier")
-    (delete-directory/files dir))
+    (with-temporary-directory (dir)
+      (call-with-output-file (build-path dir "bad.json") (lambda (out) (write-string "[1," out)))
+      (call-with-output-file (build-path dir "x.json") (lambda (out) (write-string "[]" out)))
+      (call-with-output-file (build-path dir "item.json")
+        (lambda (out) (write-string "[{\"name\":\"f\",\"inputs\":[{\"name\":\"a\",\"type\":\"uint7\"}]}]" out)))
+      (for ([row (in-list syntax-rows)])
+        (match-define (struct* syntax-row ([clauses clauses] [message message] [needle needle] [nth nth])) row)
+        (define-values (e text) (expand-program (list `(define-contract c ,@clauses)) #:dir dir))
+        (check-srcloc e text needle nth (string-append "define-contract: .*" message)))
+      (define-values (missing _text) (expand-program '((define-contract c #:file "nope.json")) #:dir dir))
+      (check-equal? (cadr (regexp-match #rx"cannot read ([^:]*): " (exn-message missing)))
+                    (path->string (build-path dir "nope.json")))
+      (define-values (e text) (expand-program '((define-contract "c" "function f()"))))
+      (check-srcloc e text "\"c\"" 0 "expected identifier")))
 
   (struct use-row (form message) #:prefab)
 
@@ -376,6 +391,9 @@
                                      "unknown keyword #:valu; allowed: #:from #:block #:gas #:errors #:provider")
                           #s(use-row (c-deploy #:value 1) "not payable")
                           #s(use-row (c-deploy 1) "^c-deploy: takes 0 arguments; given 1")
+                          #s(use-row (c-f A 1 #:from)
+                                     "^c-f: expected more terms starting with a value after the keyword")
+                          #s(use-row (c-f A . 5) "#%app: bad syntax")
                           #s(use-row (set! c-f 5) "cannot mutate")))])
       (match-define (struct* use-row ([form form] [message message])) row)
       (define e (syntax-error-of ns form))
@@ -401,6 +419,45 @@
                (define (run) (c-f 42 1))))
       (check-exn #rx"blaming: [^\n]*M" (dynamic-require ''M 'run))))
 
+  (test-case "a deploy procedure without bytecode raises before it sends anything"
+    (define ns (fresh-namespace))
+    (for ([definition (list '(define-contract d "function f()" #:bytecode #f)
+                            '(define-contract d "function f()" #:bytecode "0x")
+                            '(define-contract d "function f()" #:bytecode #"")
+                            `(define-contract d #:file ,(path->string token-path) #:bytecode #f))]
+          [arguments (list '() '() '() '("Token" "TOK" 1))])
+      (eval definition ns)
+      (define-values (e calls)
+        (run-mock (sending) (lambda () (eval `(d-deploy ,@arguments #:from ,anvil-alice) ns))))
+      (check-pred exn:fail:web3? e (format "~s" definition))
+      (check-equal? (and (exn? e) (exn-message e)) "d-deploy: no bytecode" (format "~s" definition))
+      (check-equal? calls '() (format "~s" definition))))
+
+  (test-case "an artifact listing an error and an event twice binds each once"
+    (check-equal? (module-exports `(module m racket/base
+                                     (require web3)
+                                     (provide (contract-bindings-out mover))
+                                     (define-contract mover
+                                       #:file ,(path->string (path->complete-path
+                                                              (artifact-path "Mover"))))))
+                  '(mover mover-deploy mover-move-left mover-move-right mover-moved-event mover-owner))
+    (check-equal? mover-moved-event (string->abi-event "Moved(uint256 x)"))
+    (check-equal? (contract-abi-errors mover) (list (string->abi-item "error Unauthorized(address who)")))
+    (define-values (moved calls)
+      (run-mock (sending) (lambda () (mover-move-left token-address 7 #:from anvil-alice))))
+    (check-eq? (first moved) mined)
+    (check-equal? (hash-ref (second (first calls)) 'data)
+                  (bytes->hex-string (encode-call "moveLeft(uint256)" 7))))
+
+  (test-case "an item written as syntax is the item its datum or string describes"
+    (define prng (seeded 6 0 6 0 2 3))
+    (for ([_ (in-range 500)])
+      (define i (random-abi-item prng))
+      (define sexp (abi-item->sexp i))
+      (define string (abi-item->string i))
+      (check-equal? (syntax->abi-item (datum->syntax #f sexp)) (sexp->abi-item sexp) string)
+      (check-equal? (syntax->abi-item (datum->syntax #f string)) (string->abi-item string) string)))
+
   (test-case "expanding define-contract loads no keccak, FFI or network module"
     (define names (filter values (map module-name (import-closure 'web3/private/define-contract))))
     (check-equal? (filter (lambda (n) (member (collection n) '("ffi" "net" "openssl" "keccak"))) names) '()))
@@ -412,13 +469,12 @@
     (check-equal? (eval `(c-f ,token-address 1 #:provider ,node) ns) 9)
     (check-regexp-match #rx"^c-f: f takes 1 argument after the address; given 0"
                         (exn-message (syntax-error-of ns '(c-f))))
-    (define dir (make-temporary-directory))
-    (call-with-output-file (build-path dir "x.json")
-      (lambda (out) (write-string "[{\"name\":\"g\",\"inputs\":[]}]" out)))
-    (parameterize ([current-directory dir])
-      (eval '(define-contract x #:file "x.json") ns))
-    (check-pred procedure? (eval 'x-g ns))
-    (delete-directory/files dir))
+    (with-temporary-directory (dir)
+      (call-with-output-file (build-path dir "x.json")
+        (lambda (out) (write-string "[{\"name\":\"g\",\"inputs\":[]}]" out)))
+      (parameterize ([current-directory dir])
+        (eval '(define-contract x #:file "x.json") ns))
+      (check-pred procedure? (eval 'x-g ns))))
 
   (define bezzle-items
     '((function balanceOf ([#f address]) #:view #:returns ([#f uint256]))

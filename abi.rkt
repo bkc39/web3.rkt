@@ -49,7 +49,8 @@
           [rpc-exn->revert-exn (->* (exn:fail:web3:rpc?)
                                     (#:errors (listof abi-signature-spec/c))
                                     (or/c #f exn:fail:web3:rpc:revert?))]
-          [decode-revert-reason (-> bytes? (or/c string? #f))]))
+          [decode-revert-reason (-> bytes? (or/c string? #f))]
+          [exn->abi-revert (-> exn? (or/c abi-revert? #f))]))
 
 (module+ test
   (require rackunit
@@ -242,6 +243,9 @@
 (define (error-selector signature)
   (signature-selector (error-signature/who 'error-selector signature)))
 
+(define (same-signature? a b)
+  (equal? (abi-signature->string a) (abi-signature->string b)))
+
 (define (check-error-signatures/who who errors)
   (for/fold ([lookup (hash)])
             ([sig (in-list (list* error-signature
@@ -251,7 +255,7 @@
     (match (hash-ref lookup selector #f)
       [#f (hash-set lookup selector sig)]
       [other
-       #:when (equal? (abi-signature->string other) (abi-signature->string sig))
+       #:when (same-signature? other sig)
        lookup]
       [other
        (raise-abi-type-error who
@@ -341,6 +345,12 @@
   (and payload
        (with-handlers ([exn:fail:web3:abi:decode? (lambda (_) (raw-abi-revert #f '() payload))])
          (lookup-revert who lookup payload))))
+
+(define (exn->abi-revert e)
+  (match e
+    [(struct* exn:fail:web3:rpc:revert ([revert revert])) revert]
+    [(struct* exn:fail:web3:transaction ([revert revert])) revert]
+    [_ #f]))
 
 (define (rpc-exn->revert-exn e #:errors [errors '()])
   (match-define

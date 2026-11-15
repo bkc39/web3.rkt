@@ -832,6 +832,21 @@ not decode is returned unrecognised.
 @racket[e] as an @racket[exn:fail:web3:rpc:revert], for re-raising, or
 @racket[#f].}
 
+@defproc[(exn->abi-revert [e exn?]) (or/c #f abi-revert?)]{
+The revert an @racket[exn:fail:web3:rpc:revert] or
+@racket[exn:fail:web3:transaction] carries, or @racket[#f].  Where
+@racket[rpc-exn->revert] and @racket[rpc-exn->revert-exn] decode an RPC
+error's data, this reads the revert decoded when @racket[e] was raised.
+
+@examples[#:eval abi-eval
+          (abi-revert->string
+           (exn->abi-revert
+            (rpc-exn->revert-exn
+             (with-handlers ([exn:fail:web3:rpc? values])
+               (raise-rpc-error "eth_call" 3 "execution reverted"
+                                (bytes->hex-string (encode-call "Error(string)" "oops!")))))))
+          (exn->abi-revert (exn:fail "f: no" (current-continuation-marks)))]}
+
 @defstruct*[(exn:fail:web3:rpc:revert exn:fail:web3:rpc) ([revert abi-revert?])]{
 A call that reverted, with its decoded @racket[revert].}
 
@@ -1025,9 +1040,11 @@ are read.  Anything else raises @racket[exn:fail:web3:abi:type].
                                    #f])
          contract-abi?]{
 A contract's description: its items, in order, and the init code that
-deploys it, if known.  Two functions, errors or events with one signature,
-or two constructors, fallbacks or receives, raise
-@racket[exn:fail:web3:abi:type].
+deploys it, if known; empty bytecode is none.  An error or event listed
+twice, as solc lists one declared by two libraries, is kept once.  Two
+functions or errors with one signature, two events with one signature and
+as many indexed parameters, or two constructors, fallbacks or receives,
+raise @racket[exn:fail:web3:abi:type].
 
 @examples[#:eval abi-eval
  (define erc20
@@ -1050,12 +1067,14 @@ or two constructors, fallbacks or receives, raise
               @defproc[(contract-abi-receive [d contract-abi?]) (or/c #f abi-receive?)])]{
 The items of each kind, in order.}
 
-@defproc[(contract-abi-function [d contract-abi?] [key (or/c symbol? string?)]
+@defproc[(contract-abi-function [d contract-abi?]
+                                [key (or/c symbol? string? abi-signature?)]
                                 [#:arity arity exact-nonnegative-integer?])
          abi-function?]{
-The function named @racket[key], or with the signature @racket[key].  An
-overloaded name needs @racket[arity], the number of inputs, to pick one.
-A key that names no function, or more than one, is a contract violation.
+The function named @racket[key], with the signature @racket[key], or
+@racket[key] itself.  An overloaded name needs @racket[arity], the number
+of inputs, to pick one.  A key that names no function, or more than one,
+raises @racket[exn:fail:web3:abi].
 
 @examples[#:eval abi-eval
  (define nft
@@ -1066,14 +1085,22 @@ A key that names no function, or more than one, is a contract violation.
  (abi-item->string (contract-abi-function nft "safeTransferFrom(address,address,uint256)"))
  (eval:error (contract-abi-function nft 'safeTransferFrom))]}
 
-@deftogether[(@defproc[(contract-abi-event [d contract-abi?] [key (or/c symbol? string?)]) abi-event?]
-              @defproc[(contract-abi-error [d contract-abi?] [key (or/c symbol? string?)]) abi-error?])]{
-The event or error named @racket[key], or with that signature.}
+@deftogether[(@defproc[(contract-abi-event [d contract-abi?]
+                                            [key (or/c symbol? string? abi-event?)])
+                        abi-event?]
+              @defproc[(contract-abi-error [d contract-abi?]
+                                            [key (or/c symbol? string? abi-signature?)])
+                        abi-error?])]{
+The event or error named @racket[key], with that signature, or
+@racket[key] itself; anything else raises @racket[exn:fail:web3:abi].}
 
 @defproc[(jsexpr->contract-abi [v any/c]) contract-abi?]{
 A description from a JSON ABI (a list of items) or a compiled artifact with
 an @tt{abi}, as forge, solc, Hardhat and Truffle write them; the bytecode
-is read from the artifact.  Anything else raises
+is read from the artifact's @tt{bytecode}, @tt{bytecode.object},
+@tt{evm.bytecode.object} or @tt{bin}, the first present and not
+@tt{null}.  Bytecode with unlinked library references, a bytecode key
+holding the wrong kind of value, and anything else raise
 @racket[exn:fail:web3:abi:type].}
 
 @defproc[(contract-abi->jsexpr [d contract-abi?]) (listof hash?)]{
@@ -1112,8 +1139,10 @@ returns its outputs as multiple values: one value per output, none for
 @tt{()}.  @racket[function] must give its outputs.  Nothing is sent.  With
 a @racket[contract-instance], @racket[function] may be a name, resolved by
 its number of arguments, and the instance's ABI errors, provider and sender
-are the defaults.  A @racket[value] above 0 for an @racket[abi-function]
-that is not @tt{payable} is a contract violation.
+are the defaults.  With an address, @racket[function] must be a signature,
+with its parentheses; a name is a contract violation.  A name or signature
+an instance's ABI does not hold, and a @racket[value] above 0 for a
+function that is not @tt{payable}, raise @racket[exn:fail:web3:abi].
 
 @examples[#:eval contract-eval
           (define token "0x5FbDB2315678afecb367f032d93F642f64180aa3")
@@ -1145,8 +1174,9 @@ Sends a transaction calling @racket[function] from @racket[from], an
 account the node manages, and returns its receipt once mined.  Outputs in
 @racket[function] are ignored.  With a @racket[contract-instance],
 @racket[function] may be a name, resolved by its number of arguments, and
-the instance's ABI errors, provider and sender are the defaults.  Without @racket[gas] the gas is estimated
-first, so a transaction that would revert raises
+the instance's ABI errors, provider and sender are the defaults; names,
+signatures and @racket[value] are checked as for @racket[contract-call].
+Without @racket[gas] the gas is estimated first, so a transaction that would revert raises
 @racket[exn:fail:web3:rpc:revert] and is not sent.  A transaction mined with
 status 0 raises @racket[exn:fail:web3:transaction].  A malformed or zero
 estimate raises @racket[exn:fail:web3] and nothing is sent.
@@ -1284,7 +1314,11 @@ call that would revert raises @racket[exn:fail:web3:rpc:revert].}
          (listof log?)]{
 The logs @racket[target] emitted, as @racket[get-logs] gives them:
 @racket[event]'s, filtered by @racket[where], or all of them, decoded with
-an instance's events.}
+an instance's events.  A name is allowed only with an instance, and
+@racket[where] only with an @racket[event]; anything else is a contract
+violation.  A name the instance's ABI does not hold, and a @racket[where]
+that names no indexed parameter of @racket[event], raise
+@racket[exn:fail:web3:abi].}
 
 @defproc[(deploy-contract-instance [abi (and/c contract-abi? contract-abi-bytecode)]
                                    [arg any/c] ...
@@ -1310,13 +1344,14 @@ payable is a contract violation.}
 
 @defform[#:literals (function error constructor fallback receive event)
          (define-contract id clause ...+)
-         #:grammar ([clause item
-                            (code:line #:file path-string)
+         #:grammar ([clause (code:line #:file path-string)
+                            (code:line item ...+)
                             (code:line #:bytecode bytecode-expr)
                             (code:line #:rename ([key rename-id] ...))]
                     [item string-literal sexp-item]
                     [key string-literal])
-         #:contracts ([bytecode-expr (or/c #f bytes? (and/c string? #px"^0x(?:[0-9a-fA-F]{2})*$"))])]{
+         #:contracts ([bytecode-expr
+                       (or/c #f bytes? (and/c string? #px"^0x(?:[0-9a-fA-F]{2})*$"))])]{
 Binds @racket[id] to a @racket[contract-abi], read from the JSON ABI or
 artifact @racket[path-string] (relative to the enclosing file) when the
 module is compiled, or written as @tech{items}.  It also binds, for each
@@ -1324,7 +1359,11 @@ function, a procedure named @racket[id] followed by the function's name in
 the table below; for each event, that name followed by
 @racketidfont{-event}, bound to the @racket[abi-event]; and, when the
 bytecode is known, @racket[id]@racketidfont{-deploy}, which deploys it
-with the constructor's inputs and returns the address.
+with the constructor's inputs and returns the address.  There is one
+source, @racket[#:file] or the items, which come together, and at most one
+@racket[#:bytecode] and one @racket[#:rename], before or after it.  With
+@racket[#:bytecode], @racket[id]@racketidfont{-deploy} is bound even when
+@racket[bytecode-expr] gives none, and then raises @racket[exn:fail:web3].
 
 A function procedure takes the contract's address and the function's
 inputs: a @tt{view} or @tt{pure} function is a @racket[contract-call],
@@ -1332,9 +1371,11 @@ any other a @racket[contract-send], with their keywords (@racket[#:value]
 only for a @tt{payable} function) and the ABI's errors.  Overloads with
 different numbers of inputs share one procedure; @racket[#:rename] gives a
 function (@racket["name"]), an overload (@racket["name(T,...)"]) or an
-event (@racket["event Name"]) another name.  Arity and keywords are checked
-where a procedure is applied, and mistakes in the items are syntax errors
-at the item.
+event (@racket["event Name"], or @racket["event Name(T,...)"] when the name
+is overloaded) another name.  Arity and keywords are checked where a
+procedure is applied, and mistakes in the items are syntax errors at the
+item.  Two events with one signature, which a @racket[contract-abi] allows
+when they index different numbers of parameters, cannot be bound.
 
 @tabular[#:sep @hspace[2]
          (list (list @bold{Solidity} @bold{bound, with @racket[id] @racketidfont{token}})
@@ -1352,7 +1393,8 @@ at the item.
 Words split at underscores, before an uppercase letter that follows a
 lowercase letter or a digit, and before the last letter of an uppercase run
 followed by a lowercase letter; they are lowercased and joined with
-@litchar{-}.  Two bindings with one name are a syntax error naming both.
+@litchar{-}.  Two bindings with one name are a syntax error naming both,
+and a name with no words, such as @tt{_}, needs @racket[#:rename].
 
 @examples[#:eval contract-eval
  (define-contract erc20

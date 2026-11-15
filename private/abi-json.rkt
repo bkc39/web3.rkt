@@ -1,8 +1,5 @@
 #lang racket/base
 
-;; Descriptions from JSON text, under the caller's who: one JSON value,
-;; after an optional byte order mark, with only whitespace after it.
-
 (require (only-in json read-json)
          (only-in racket/file file->bytes)
          (only-in racket/port port->bytes)
@@ -15,13 +12,17 @@
 
 (define (bytes->jsexpr who bs input)
   (define (fail reason)
-    (raise (exn:fail:web3:abi:type (format "~a: not JSON: ~a" who reason) (current-continuation-marks) input #f)))
+    (raise (exn:fail:web3:abi:type (format "~a: not JSON: ~a" who reason)
+                                   (current-continuation-marks)
+                                   input
+                                   #f)))
   (define text
     (with-handlers ([exn:fail:contract? (lambda (_) (fail "the text is not UTF-8"))])
       (bytes->string/utf-8 bs)))
   (define in (open-input-string (if (string-prefix? text "﻿") (substring text 1) text)))
   (define j
-    (with-handlers ([exn:fail:read? (lambda (e) (fail (exn-message e)))])
+    (with-handlers ([exn:fail:read? (lambda (e) (fail (exn-message e)))]
+                    [exn:fail? (lambda (_) (fail "the text ends inside a value"))])
       (read-json in)))
   (cond
     [(eof-object? j) (fail "no JSON value")]

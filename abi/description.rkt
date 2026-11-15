@@ -1,15 +1,15 @@
 #lang racket/base
 
 (require racket/contract/base
-         (only-in racket/contract/combinator raise-blame-error)
-         (only-in racket/list remove-duplicates)
-         (only-in racket/match match match* struct*)
+         (only-in racket/list check-duplicates remove-duplicates)
+         (only-in racket/match == match match* struct*)
          (only-in racket/string string-contains? string-join string-prefix?)
          "event-type.rkt"
          (submod "event-type.rkt" private)
          "type.rkt"
          (submod "type.rkt" private)
-         "../private/abi-item.rkt")
+         "../private/abi-item.rkt"
+         (only-in "../private/binding-rules.rkt" count-of or-list))
 
 (provide
  abi-item-spec/c
@@ -58,18 +58,17 @@
   [contract-abi-constructor (-> contract-abi? (or/c #f abi-constructor?))]
   [contract-abi-fallback (-> contract-abi? (or/c #f abi-fallback?))]
   [contract-abi-receive (-> contract-abi? (or/c #f abi-receive?))]
-  [contract-abi-function (->i ([d contract-abi?] [key (d n) (function-key/c d n)])
-                              (#:arity [n exact-nonnegative-integer?])
-                              [_ abi-function?])]
-  [contract-abi-event (->i ([d contract-abi?] [key (d) (event-key/c d)]) [_ abi-event?])]
-  [contract-abi-error (->i ([d contract-abi?] [key (d) (error-key/c d)]) [_ abi-error?])]
+  [contract-abi-function (->* (contract-abi? signature-key/c)
+                              (#:arity exact-nonnegative-integer?)
+                              abi-function?)]
+  [contract-abi-event (-> contract-abi? event-key/c abi-event?)]
+  [contract-abi-error (-> contract-abi? signature-key/c abi-error?)]
   [jsexpr->contract-abi (-> any/c contract-abi?)]
   [contract-abi->jsexpr (-> contract-abi? (listof hash?))]))
 
-;;;; contracts
-
 (define parameter-spec/c
-  (flat-named-contract 'parameter-spec/c (lambda (v) (or (abi-parameter? v) (abi-type-spec/c v)))))
+  (flat-named-contract 'parameter-spec/c
+                       (lambda (v) (or (abi-parameter? v) (abi-type-spec/c v)))))
 
 (define function-mutability/c
   (flat-named-contract 'function-mutability/c (or/c 'pure 'view 'nonpayable 'payable)))
@@ -85,27 +84,10 @@
 (define abi-item-spec/c
   (flat-named-contract 'abi-item-spec/c (lambda (v) (or (abi-item? v) (string? v) (pair? v)))))
 
-;; A flat contract on a key that resolve turns into an item or into the
-;; reason it names none.
-(define (resolution/c name resolve)
-  (flat-contract-with-explanation
-   (lambda (key)
-     (match (resolve key)
-       [(? string? reason) (lambda (blame) (raise-blame-error blame key '("~a" given: "~e") reason key))]
-       [_ #t]))
-   #:name name))
+(define signature-key/c
+  (flat-named-contract 'signature-key/c (or/c symbol? string? abi-signature?)))
 
-(define (function-key/c d n)
-  (resolution/c 'function-key/c
-                (lambda (key) (function-resolution 'contract-abi-function d key (and (not (unsupplied-arg? n)) n)))))
-
-(define (event-key/c d)
-  (resolution/c 'event-key/c (lambda (key) (event-resolution 'contract-abi-event d key))))
-
-(define (error-key/c d)
-  (resolution/c 'error-key/c (lambda (key) (error-resolution 'contract-abi-error d key))))
-
-;;;; items
+(define event-key/c (flat-named-contract 'event-key/c (or/c symbol? string? abi-event?)))
 
 (define (abi-parameter name type)
   (abi-parameter/who 'abi-parameter name type))
@@ -146,26 +128,34 @@
 (define (abi-item->jsexpr spec)
   (item->jsexpr (item/who 'abi-item->jsexpr spec)))
 
-;;;; JSON items
-
 (define missing (string->uninterned-symbol "missing"))
 
 (define (missing? v)
   (eq? v missing))
 
-;; thunk's result; a type error it raises under who becomes one whose
-;; input is j, its reason prefixed with the item's index when there is one.
 (define (in-item/who who index j thunk)
   (define prefix (format "~a: " who))
   (define (rethrow e)
     (define message (exn-message e))
-    (define reason (if (string-prefix? message prefix) (substring message (string-length prefix)) message))
-    (raise (exn:fail:web3:abi:type (if index (format "~aitem ~a: ~a" prefix index reason) (string-append prefix reason))
+    (define reason
+      (if (string-prefix? message prefix) (substring message (string-length prefix)) message))
+    (raise (exn:fail:web3:abi:type (if index
+                                       (format "~aitem ~a: ~a" prefix index reason)
+                                       (string-append prefix reason))
                                    (exn-continuation-marks e)
                                    j
                                    #f)))
   (with-handlers ([exn:fail:web3:abi:type? rethrow])
     (thunk)))
+
+(define (with-array-suffixes who j base suffixes)
+  (for/fold ([t base])
+            ([size (in-list (regexp-match* #px"\\[([0-9]*)\\]" suffixes #:match-select cadr))])
+    (match size
+      ["" (abi-array t)]
+      [(pregexp #px"^[1-9][0-9]*$" (list (app string->number (? array-length? k))))
+       (abi-fixed-array t k)]
+      [_ (raise-abi-type-error who (format "not an array length: ~a" size) j #f)])))
 
 (define (jsexpr->abi-item/who who j)
   (define (fail reason)
@@ -177,11 +167,13 @@
     (match (field p 'type)
       [(pregexp #px"^tuple((?:\\[[0-9]*\\])*)$" (list _ suffixes))
        (define base
-         (if (and (pair? components) (list? components))
-             (abi-tuple (for/list ([c (in-list components)])
-                          (if (hash? c) (json-type c) (fail "expected a component object"))))
-             (fail "a tuple needs a non-empty list of components")))
-       (string->type who (string-append (type->string base) suffixes))]
+         (match components
+           [(cons _ _)
+            #:when (list? components)
+            (abi-tuple (for/list ([c (in-list components)])
+                         (if (hash? c) (json-type c) (fail "expected a component object"))))]
+           [_ (fail "a tuple needs a non-empty list of components")]))
+       (with-array-suffixes who j base suffixes)]
       [(? string? t)
        #:when (missing? components)
        (string->type who t)]
@@ -233,7 +225,8 @@
    (lambda ()
      (match (and (hash? j) (hash-ref j 'type "function"))
        [#f (fail "expected an item object")]
-       ["function" (abi-function/who who (name) (parameters 'inputs #f) (parameters 'outputs #f) (mutability))]
+       ["function"
+        (abi-function/who who (name) (parameters 'inputs #f) (parameters 'outputs #f) (mutability))]
        ["event" (event)]
        ["error" (abi-error/who who (name) (parameters 'inputs #f))]
        ["constructor" (abi-constructor/who who (parameters 'inputs #f) (payability "constructor"))]
@@ -246,7 +239,8 @@
     (let loop ([t t] [suffixes '()])
       (match t
         [(struct* abi-array ([element e])) (loop e (cons "[]" suffixes))]
-        [(struct* abi-fixed-array ([element e] [length k])) (loop e (cons (format "[~a]" k) suffixes))]
+        [(struct* abi-fixed-array ([element e] [length k]))
+         (loop e (cons (format "[~a]" k) suffixes))]
         [_ (values t (apply string-append suffixes))])))
   (define named (hasheq 'name (or name "")))
   (define typed
@@ -277,7 +271,9 @@
                        (type->jsexpr (abi-event-parameter-name p) (abi-event-parameter-type p)
                                      #:indexed (abi-event-parameter-indexed? p))))]
     [(? abi-error?)
-     (hasheq 'type "error" 'name (abi-signature-name i) 'inputs (parameters->jsexpr (abi-error-parameters i)))]
+     (hasheq 'type "error"
+             'name (abi-signature-name i)
+             'inputs (parameters->jsexpr (abi-error-parameters i)))]
     [(? abi-constructor?)
      (hasheq 'type "constructor"
              'inputs (parameters->jsexpr (abi-constructor-parameters i))
@@ -285,8 +281,6 @@
     [(? abi-fallback?)
      (hasheq 'type "fallback" 'stateMutability (symbol->string (abi-fallback-state-mutability i)))]
     [(? abi-receive?) (hasheq 'type "receive" 'stateMutability "payable")]))
-
-;;;; descriptions
 
 (define (item-label i)
   (match i
@@ -297,16 +291,27 @@
     [(? abi-fallback?) "fallback"]
     [(? abi-receive?) "receive"]))
 
-;; #f, or (cons reason i) for the first item i that repeats an earlier one.
-(define (contract-abi-failure items)
-  (let loop ([items items] [i 0] [seen (hash)])
+(define (item-key i)
+  (match i
+    [(? abi-event?)
+     (list (item-label i)
+           (abi-event-anonymous? i)
+           (length (filter abi-event-parameter-indexed? (abi-event-parameters i))))]
+    [_ (item-label i)]))
+
+(define (repeatable? i)
+  (or (abi-event? i) (abi-error? i)))
+
+(define (described-items items)
+  (let loop ([items items] [i 0] [seen (hash)] [kept '()])
     (match items
-      ['() #f]
+      ['() (values (reverse kept) #f)]
       [(cons item rest)
-       (define label (item-label item))
-       (if (hash-ref seen label #f)
-           (cons (format "duplicate ~a" label) i)
-           (loop rest (add1 i) (hash-set seen label #t)))])))
+       (define key (item-key item))
+       (match (hash-ref seen key #f)
+         [#f (loop rest (add1 i) (hash-set seen key item) (cons item kept))]
+         [(== item) #:when (repeatable? item) (loop rest (add1 i) seen kept)]
+         [_ (values #f (cons (format "duplicate ~a" (item-label item)) i))])])))
 
 (define (write-contract-abi d port _mode)
   (define (group label names)
@@ -320,8 +325,10 @@
                   (and (contract-abi-constructor d) "constructor")
                   (and (contract-abi-fallback d) "fallback")
                   (and (contract-abi-receive d) "receive")
-                  (and bytecode (format "bytecode: ~a bytes" (bytes-length bytecode))))))
-  (fprintf port "#<contract-abi~a>" (if (null? groups) "" (string-append " " (string-join groups "; ")))))
+                  (and bytecode
+                       (format "bytecode: ~a" (count-of (bytes-length bytecode) "byte"))))))
+  (fprintf port "#<contract-abi~a>"
+           (if (null? groups) "" (string-append " " (string-join groups "; ")))))
 
 (struct contract-abi (items bytecode) #:transparent
   #:name contract-abi-struct
@@ -339,8 +346,9 @@
     [_ (hex->bytes (substring b 2))]))
 
 (define (contract-abi/who who specs inputs bytecode)
-  (define items (for/list ([spec (in-list specs)]) (item/who who spec)))
-  (match (contract-abi-failure items)
+  (define-values (items failure)
+    (described-items (for/list ([spec (in-list specs)]) (item/who who spec))))
+  (match failure
     [#f (raw-contract-abi items (bytecode->bytes bytecode))]
     [(cons reason i) (raise-abi-type-error who reason (list-ref inputs i) #f)]))
 
@@ -361,41 +369,65 @@
 (define contract-abi-fallback (item-of abi-fallback?))
 (define contract-abi-receive (item-of abi-receive?))
 
+(define (raise-artifact-error who reason j)
+  (raise (exn:fail:web3:abi:type (format "~a: ~a" who reason) (current-continuation-marks) j #f)))
+
 (define (artifact-bytecode who j)
-  (define (fail reason)
-    (raise-abi-type-error who reason j #f))
-  (define (lookup path)
-    (for/fold ([v j]) ([key (in-list path)])
-      (and (hash? v) (hash-ref v key #f))))
-  (define hex
-    (for*/first ([path (in-list '((bytecode object) (bytecode) (evm bytecode object) (bin)))]
-                 [v (in-value (lookup path))]
-                 #:when (string? v))
-      (if (string-prefix? v "0x") (substring v 2) v)))
+  (define (field h key)
+    (match (hash-ref h key missing)
+      ['null missing]
+      [v v]))
+  (define (leaf where v)
+    (match v
+      [(? missing?) #f]
+      [(? string?) v]
+      [_ (raise-artifact-error who (format "~a is not a hex string" where) j)]))
+  (define (node where v)
+    (match v
+      [(? missing?) #f]
+      [(? hash?) v]
+      [_ (raise-artifact-error who (format "~a is not an object" where) j)]))
+  (define text
+    (or (match (field j 'bytecode)
+          [(? hash? h) (leaf "bytecode.object" (field h 'object))]
+          [v (leaf "bytecode" v)])
+        (match (node "evm" (field j 'evm))
+          [#f #f]
+          [evm (match (node "evm.bytecode" (field evm 'bytecode))
+                 [#f #f]
+                 [b (leaf "evm.bytecode.object" (field b 'object))])])
+        (leaf "bin" (field j 'bin))))
+  (define hex (and text (if (string-prefix? text "0x") (substring text 2) text)))
   (cond
     [(not hex) #f]
-    [(string-contains? hex "__") (fail "bytecode has unlinked library references")]
+    [(regexp-match-positions #rx"__" hex)
+     => (lambda (at)
+          (define start (caar at))
+          (raise-artifact-error
+           who
+           (format "bytecode has unlinked library references, the first ~a"
+                   (substring hex start (min (string-length hex) (+ start 40))))
+           j))]
     [(regexp-match? #px"^(?:[0-9a-fA-F]{2})*$" hex) (bytecode->bytes (hex->bytes hex))]
-    [else (fail "bytecode is not hex")]))
+    [else (raise-artifact-error who "bytecode is not hex" j)]))
 
 (define (jsexpr->contract-abi/who who j)
-  (define (fail reason)
-    (raise-abi-type-error who reason j #f))
   (define-values (abi bytecode)
     (match j
       [(? list?) (values j #f)]
       [(? hash?)
        (match (hash-ref j 'abi #f)
          [(? list? abi) (values abi (artifact-bytecode who j))]
-         [_ (fail "an artifact's abi is a list of items")])]
-      [_ (fail "expected a list of items, or an artifact with an abi")]))
-  (define items
-    (for/list ([x (in-list abi)]
-               [i (in-naturals)])
-      (in-item/who who i x (lambda () (jsexpr->abi-item/who who x)))))
-  (match (contract-abi-failure items)
+         [_ (raise-artifact-error who "an artifact's abi is a list of items" j)])]
+      [_ (raise-abi-type-error who "expected a list of items, or an artifact with an abi" j #f)]))
+  (define-values (items failure)
+    (described-items (for/list ([x (in-list abi)]
+                                [i (in-naturals)])
+                       (in-item/who who i x (lambda () (jsexpr->abi-item/who who x))))))
+  (match failure
     [#f (raw-contract-abi items bytecode)]
-    [(cons reason i) (raise-abi-type-error who (format "item ~a: ~a" i reason) (list-ref abi i) #f)]))
+    [(cons reason i)
+     (raise-abi-type-error who (format "item ~a: ~a" i reason) (list-ref abi i) #f)]))
 
 (define (jsexpr->contract-abi j)
   (jsexpr->contract-abi/who 'jsexpr->contract-abi j))
@@ -403,93 +435,81 @@
 (define (contract-abi->jsexpr d)
   (map item->jsexpr (contract-abi-items d)))
 
-;;;; lookups
-
-(define (count-of n what)
-  (format "~a ~a~a" n what (if (= n 1) "" "s")))
-
-(define (or-list ns)
-  (match ns
-    [(list n) (format "~a" n)]
-    [_ (format "~a or ~a"
-               (string-join (map number->string (reverse (cdr (reverse ns)))) ", ")
-               (car (reverse ns)))]))
-
 (define (signature-of i)
   (abi-signature->string (if (abi-event? i) (abi-event->signature i) i)))
-
-;; The item of items that key names, or the reason there is none.  A
-;; string with ( is parsed by parse and matched by canonical signature.
-(define (resolution what items key n parse hint)
-  (define (by-signature signature)
-    (or (findf (lambda (i) (equal? (signature-of i) signature)) items)
-        (format "no ~a ~a in this ABI" what signature)))
-  (define (by-name name)
-    (define candidates (filter (lambda (i) (equal? (item-name i) name)) items))
-    (define (signatures is)
-      (string-join (map signature-of is) ", "))
-    (define (inputs i)
-      (length (abi-signature-inputs i)))
-    (match* (candidates n)
-      [('() _) (format "no ~a ~a in this ABI" what name)]
-      [((list i) _) i]
-      [(_ #f)
-       (format "ambiguous: ~a has ~a overloads; ~a: ~a" name (length candidates) hint (signatures candidates))]
-      [(_ n)
-       (match (filter (lambda (i) (= (inputs i) n)) candidates)
-         [(list i) i]
-         ['()
-          (format "no overload of ~a takes ~a; it takes ~a" name (count-of n "argument")
-                  (or-list (sort (remove-duplicates (map inputs candidates)) <)))]
-         [same
-          (format "ambiguous: ~a has ~a overloads taking ~a: ~a; pass a signature"
-                  name (length same) (count-of n "argument") (signatures same))])]))
-  (match key
-    [(? symbol?) (by-name (symbol->string key))]
-    [(? string?) #:when (string-contains? key "(") (by-signature (signature-of (parse key)))]
-    [(? string?) (by-name key)]
-    [(or (? abi-signature?) (? abi-event?)) (by-signature (signature-of key))]
-    [_ (format "expected a name, a signature or an item, given ~e" key)]))
 
 (define (item-name i)
   (if (abi-event? i) (abi-event-name i) (abi-signature-name i)))
 
-(define (function-resolution who d key n)
-  (if (abi-event? key)
-      (format "expected a function, given ~e" key)
-      (resolution "function" (contract-abi-functions d) key n
-                  (lambda (s) (string->signature who s)) "pass #:arity or a signature")))
+(define (raise-lookup-error who reason)
+  (raise (exn:fail:web3:abi (format "~a: ~a" who reason) (current-continuation-marks))))
 
-(define (event-resolution who d key)
-  (if (abi-signature? key)
-      (format "expected an event, given ~e" key)
-      (resolution "event" (contract-abi-events d) key #f
-                  (lambda (s) (string->abi-event/who who s)) "pass a signature")))
+(define (resolve who what items key n parse hint)
+  (define (fail fmt . args)
+    (raise-lookup-error who (apply format fmt args)))
+  (define (listed is)
+    (define signatures (map signature-of is))
+    (string-join (if (check-duplicates signatures) (map item->string is) signatures) ", "))
+  (define (by-signature parsed)
+    (define signature (signature-of parsed))
+    (match (filter (lambda (i) (equal? (signature-of i) signature)) items)
+      ['() (fail "no ~a ~a in this ABI" what signature)]
+      [(list i) i]
+      [same
+       (or (findf (lambda (i) (equal? i parsed)) same)
+           (fail "ambiguous: ~a ~as share the signature ~a: ~a"
+                 (length same) what signature (listed same)))]))
+  (define (by-name name)
+    (define candidates (filter (lambda (i) (equal? (item-name i) name)) items))
+    (define (inputs i)
+      (length (abi-signature-inputs (if (abi-event? i) (abi-event->signature i) i))))
+    (match* (candidates n)
+      [('() _) (fail "no ~a ~a in this ABI" what name)]
+      [((list i) _) i]
+      [(_ #f)
+       (fail "ambiguous: ~a has ~a overloads; ~a: ~a"
+             name (length candidates) hint (listed candidates))]
+      [(_ n)
+       (match (filter (lambda (i) (= (inputs i) n)) candidates)
+         [(list i) i]
+         ['()
+          (fail "no overload of ~a takes ~a; it takes ~a" name (count-of n "argument")
+                (or-list (sort (remove-duplicates (map inputs candidates)) <)))]
+         [same
+          (fail "ambiguous: ~a has ~a overloads taking ~a: ~a; pass a signature"
+                name (length same) (count-of n "argument") (listed same))])]))
+  (match key
+    [(? symbol?) (by-name (symbol->string key))]
+    [(? string?) #:when (string-contains? key "(") (by-signature (parse key))]
+    [(? string?) (by-name key)]
+    [_ (by-signature key)]))
 
-(define (error-resolution who d key)
-  (if (abi-event? key)
-      (format "expected an error, given ~e" key)
-      (resolution "error" (contract-abi-errors d) key #f
-                  (lambda (s) (string->signature who s)) "pass a signature")))
+(define (resolve-function who d key n)
+  (resolve who "function" (contract-abi-functions d) key n
+           (lambda (s) (string->signature who s)) "pass #:arity or a signature"))
+
+(define (resolve-event who d key)
+  (resolve who "event" (contract-abi-events d) key #f
+           (lambda (s) (string->abi-event/who who s)) "pass a signature"))
+
+(define (resolve-error who d key)
+  (resolve who "error" (contract-abi-errors d) key #f
+           (lambda (s) (string->signature who s)) "pass a signature"))
 
 (define (contract-abi-function d key #:arity [n #f])
-  (function-resolution 'contract-abi-function d key n))
+  (resolve-function 'contract-abi-function d key n))
 
 (define (contract-abi-event d key)
-  (event-resolution 'contract-abi-event d key))
+  (resolve-event 'contract-abi-event d key))
 
 (define (contract-abi-error d key)
-  (error-resolution 'contract-abi-error d key))
+  (resolve-error 'contract-abi-error d key))
 
-;; The descriptions' readers and lookups under their caller's who, for
-;; web3/contract and define-contract.
 (module* private #f
   (provide bytecode/c
-           contract-abi-failure
            contract-abi/who
-           error-resolution
-           event-resolution
-           function-resolution
+           described-items
            jsexpr->contract-abi/who
            raw-contract-abi
-           resolution/c))
+           resolve-event
+           resolve-function))

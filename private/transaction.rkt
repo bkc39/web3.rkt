@@ -1,9 +1,5 @@
 #lang racket/base
 
-;; Calls, sends, estimates and deploys under their caller's who, with every
-;; option given.  web3/contract and the procedures define-contract binds
-;; supply the defaults.
-
 (require (only-in racket/match match struct*)
          "../abi.rkt"
          (submod "../abi.rkt" internal)
@@ -47,7 +43,12 @@
                             (current-continuation-marks)))))
 
 (define (call-function who address signature args
-                       #:from from #:value value #:gas gas #:block block #:errors errors #:provider provider)
+                       #:from from
+                       #:value value
+                       #:gas gas
+                       #:block block
+                       #:errors errors
+                       #:provider provider)
   (define sig (result-signature/who who signature))
   (check-error-signatures/who who errors)
   (define tx (transaction #:to address
@@ -73,17 +74,23 @@
             provider))
   receipt)
 
-(define (estimate-function who address signature args #:from from #:value value #:errors errors #:provider provider)
+(define (estimate-function who address signature args
+                           #:from from #:value value #:errors errors #:provider provider)
   (define sig (string->abi-signature/who who signature))
   (check-error-signatures/who who errors)
   (define data (apply encode-call/who who sig args))
-  (estimate-gas who (transaction #:to address #:from from #:data data #:value value #:gas #f) errors provider))
+  (estimate-gas who
+                (transaction #:to address #:from from #:data data #:value value #:gas #f)
+                errors
+                provider))
 
 (define (estimate-gas who tx errors provider)
   (define estimate
-    (call-raising-reverts errors (lambda () (rpc-call "eth_estimateGas" (list tx) #:provider provider))))
+    (call-raising-reverts errors
+                          (lambda () (rpc-call "eth_estimateGas" (list tx) #:provider provider))))
   (match (node-quantity->number who "gas estimate" estimate)
-    [0 (raise (exn:fail:web3 (format "~a: the node estimated 0 gas" who) (current-continuation-marks)))]
+    [0 (raise (exn:fail:web3 (format "~a: the node estimated 0 gas" who)
+                             (current-continuation-marks)))]
     [gas gas]))
 
 (define (with-message e message)
@@ -114,7 +121,9 @@
     (call-raising-reverts errors (lambda () (eth-send-transaction tx+gas #:provider provider))))
   (define receipt (wait-for-outcome who tx-hash provider))
   (cond
-    [(node-status->boolean who (of-transaction "receipt status" tx-hash) (hash-ref receipt 'status #f))
+    [(node-status->boolean who
+                           (of-transaction "receipt status" tx-hash)
+                           (hash-ref receipt 'status #f))
      (values tx-hash receipt)]
     [else
      (define block
@@ -136,7 +145,8 @@
 
 (define (replay tx block errors provider)
   (with-handlers ([exn:fail:web3:rpc? (lambda (e) (rpc-replay-outcome e errors))]
-                  [exn:fail? (lambda (e) (values #f (format "replaying it raised: ~a" (exn-message e))))])
+                  [exn:fail?
+                   (lambda (e) (values #f (format "replaying it raised: ~a" (exn-message e))))])
     (eth-call tx block #:provider provider)
     (values #f "replaying it did not fail")))
 
@@ -149,13 +159,13 @@
 (define (init-code->bytes code)
   (if (bytes? code) code (hex-string->bytes code)))
 
-;; The new contract's address and the receipt.
 (define (deploy-code who init-code constructor args
                      #:from from #:value value #:gas gas #:errors errors #:provider provider)
   (define sig (constructor-signature who constructor))
   (check-error-signatures/who who errors)
   (define data
-    (bytes-append (init-code->bytes init-code) (abi-encode/who who (abi-signature-inputs sig) args)))
+    (bytes-append (init-code->bytes init-code)
+                  (abi-encode/who who (abi-signature-inputs sig) args)))
   (define-values (tx-hash receipt)
     (submit who (transaction #:from (sender who from) #:data data #:value value #:gas gas)
             errors

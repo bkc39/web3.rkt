@@ -28,7 +28,6 @@
 (define ((reverting method [data (bytes->hex-string insufficient-payload)]) _params)
   (raise-rpc-error method 3 "execution reverted: custom error" data))
 
-;; What thunk returned, as a list, or what it raised; and the calls it made.
 (define (run-mock handler thunk)
   (define node (mock-provider handler))
   (define result

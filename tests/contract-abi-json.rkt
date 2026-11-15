@@ -14,16 +14,11 @@
            "../examples/common.rkt"
            "abi-gen.rkt"
            "helpers/event-fixtures.rkt"
+           "helpers/temporary.rkt"
            "util.rkt")
 
   (define fixtures '("Token" "Counter" "Events"))
 
-  (define (type-error thunk)
-    (with-handlers ([exn:fail:web3:abi:type? values])
-      (thunk)
-      #f))
-
-  ;; j without internalType, and with every tuple component unnamed.
   (define (norm j [component? #f])
     (match j
       [(? list?) (map (lambda (x) (norm x component?)) j)]
@@ -66,6 +61,15 @@
     (check-equal? (map (lambda (e) (bytes->hex-string (error-selector e))) (contract-abi-errors token))
                   '("0xcf479181" "0x8e4a23d6")))
 
+  (test-case "an artifact listing one error and one event twice keeps each once"
+    (define j (artifact "Mover"))
+    (define d (jsexpr->contract-abi j))
+    (check-equal? (length (hash-ref j 'abi)) 7)
+    (check-equal? (contract-abi->jsexpr d) (remove-duplicates (norm (hash-ref j 'abi))))
+    (check-equal? (contract-abi-error d 'Unauthorized) (string->abi-item "error Unauthorized(address who)"))
+    (check-equal? (contract-abi-event d 'Moved) (string->abi-event "Moved(uint256 x)"))
+    (check-equal? (file->contract-abi (artifact-path "Mover")) d))
+
   (test-case "every fixture item reads back from its string and its JSON"
     (for* ([name (in-list fixtures)]
            [i (in-list (contract-abi-items (jsexpr->contract-abi (artifact name))))])
@@ -97,22 +101,39 @@
     (check-equal? (bytecode (hasheq 'abi abi 'evm (hasheq 'bytecode (hasheq 'object "6080")))) #"\x60\x80")
     (check-equal? (bytecode (hasheq 'abi abi 'bin "6080")) #"\x60\x80")
     (check-equal? (length (contract-abi-items (jsexpr->contract-abi (hasheq 'abi abi)))) 1)
+    (check-false (bytecode (hasheq 'abi abi 'bytecode 'null)))
+    (check-equal? (bytecode (hasheq 'abi abi 'bytecode 'null 'bin "6080")) #"\x60\x80")
     (for ([j (list (hasheq 'abi abi 'bytecode "0x6080__$abcdef$__6080")
                    (hasheq 'abi (jsexpr->string abi))
                    (hasheq 'bytecode "0x6080")
                    (hasheq 'abi 5)
-                   (hasheq 'abi abi 'bytecode "0x6"))])
-      (check-pred exn:fail:web3:abi:type? (type-error (lambda () (jsexpr->contract-abi j))) (format "~s" j)))
-    (check-regexp-match #rx"unlinked library"
-                        (exn-message (type-error (lambda () (jsexpr->contract-abi
-                                                             (hasheq 'abi abi 'bin "6080__$abcdef$__"))))))
+                   (hasheq 'abi abi 'bytecode "0x6")
+                   (hasheq 'abi abi 'bytecode 5)
+                   (hasheq 'abi abi 'bytecode (hasheq 'object 5))
+                   (hasheq 'abi abi 'evm (hasheq 'bytecode (hasheq 'object #t)))
+                   (hasheq 'abi abi 'evm 5)
+                   (hasheq 'abi abi 'bin (list "6080")))])
+      (check-pred exn:fail:web3:abi:type? (raised-type-error (lambda () (jsexpr->contract-abi j)))
+                  (format "~s" j)))
+    (check-equal? (exn-message (raised-type-error
+                                (lambda () (jsexpr->contract-abi (hasheq 'abi abi 'bytecode 5)))))
+                  "jsexpr->contract-abi: bytecode is not a hex string")
+    (define placeholder (string-append "__$" (make-string 34 #\a) "$__"))
+    (define linked
+      (raised-type-error
+       (lambda ()
+         (jsexpr->contract-abi
+          (hasheq 'abi abi 'bin (string-append "6080" placeholder (make-string 20000 #\0)))))))
+    (check-equal? (exn-message linked)
+                  (string-append "jsexpr->contract-abi: bytecode has unlinked library references,"
+                                 " the first " placeholder))
     (check-regexp-match #rx"item 1: "
-                        (exn-message (type-error (lambda () (jsexpr->contract-abi
+                        (exn-message (raised-type-error (lambda () (jsexpr->contract-abi
                                                              (list (first abi) (hasheq 'type "x"))))))))
 
   (test-case "text that is not one JSON value raises, and a leading byte order mark is skipped"
-    (for ([text (list "[1," "[] []" #"\377" "" "[\"\377\"]")])
-      (define e (type-error (lambda () (read-contract-abi (open-input-bytes (if (bytes? text)
+    (for ([text (list "[1," "[] []" #"\377" "" "[\"\377\"]" "[{\"anonymous\": f" "[tru" "[\"\\u12")])
+      (define e (raised-type-error (lambda () (read-contract-abi (open-input-bytes (if (bytes? text)
                                                                                  text
                                                                                  (string->bytes/latin-1 text)))))))
       (check-pred exn:fail:web3:abi:type? e (format "~s" text))
@@ -123,11 +144,10 @@
     (check-equal? (read-contract-abi (open-input-string " [] \n")) (contract-abi '()))
     (check-equal? (parameterize ([current-input-port (open-input-string "[]")]) (read-contract-abi))
                   (contract-abi '()))
-    (define dir (make-temporary-directory))
-    (define bad (build-path dir "bad.json"))
-    (call-with-output-file bad (lambda (out) (write-string "[1," out)))
-    (define e (type-error (lambda () (file->contract-abi bad))))
-    (check-regexp-match #rx"^file->contract-abi: not JSON" (exn-message e))
-    (check-equal? (exn:fail:web3:abi:type-input e) bad)
-    (check-exn exn:fail:filesystem? (lambda () (file->contract-abi (build-path dir "missing.json"))))
-    (delete-directory/files dir)))
+    (with-temporary-directory (dir)
+      (define bad (build-path dir "bad.json"))
+      (call-with-output-file bad (lambda (out) (write-string "[1," out)))
+      (define e (raised-type-error (lambda () (file->contract-abi bad))))
+      (check-regexp-match #rx"^file->contract-abi: not JSON" (exn-message e))
+      (check-equal? (exn:fail:web3:abi:type-input e) bad)
+      (check-exn exn:fail:filesystem? (lambda () (file->contract-abi (build-path dir "missing.json")))))))

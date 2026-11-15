@@ -1,8 +1,7 @@
 #lang racket/base
 
-;; define-contract, contract-bindings-out, and the procedures they bind.
-
 (require (for-syntax racket/base
+                     (only-in racket/match match)
                      racket/provide-transform
                      syntax/parse
                      "../abi/description.rkt"
@@ -17,31 +16,74 @@
          (only-in "../eth.rkt" block-param/c)
          (only-in "../rpc.rkt" current-provider provider?)
          "binding-rules.rkt"
+         "exn.rkt"
          "transaction.rkt")
 
 (provide contract-bindings-out
          define-contract)
 
-;;;; the procedures
-
-(define from/c (or/c #f (abi-value/c 'address)))
+(define address/c (abi-value/c 'address))
+(define from/c (or/c #f address/c))
 (define value/c exact-nonnegative-integer?)
 (define block/c (flat-named-contract 'block-param/c block-param/c))
 (define gas/c (or/c #f exact-positive-integer?))
 (define errors/c (listof (or/c string? abi-signature?)))
 (define provider/c (or/c #f provider?))
 
-;; A bound procedure, its contract, the module that defines it, and its
-;; contracted forms by the module using them.
+(define view-procedure/c
+  (->* (address/c)
+       (#:from from/c #:block block/c #:gas gas/c #:errors errors/c #:provider provider/c)
+       #:rest list?
+       any))
+
+(define nonpayable-procedure/c
+  (->* (address/c)
+       (#:from from/c #:gas gas/c #:errors errors/c #:provider provider/c)
+       #:rest list?
+       any))
+
+(define payable-procedure/c
+  (->* (address/c)
+       (#:from from/c #:value value/c #:gas gas/c #:errors errors/c #:provider provider/c)
+       #:rest list?
+       any))
+
+(define any-procedure/c
+  (->* (address/c)
+       (#:from from/c #:value value/c #:block block/c #:gas gas/c #:errors errors/c
+        #:provider provider/c)
+       #:rest list?
+       any))
+
+(define nonpayable-deploy/c
+  (->* () (#:from from/c #:gas gas/c #:errors errors/c #:provider provider/c) #:rest list? any))
+
+(define payable-deploy/c
+  (->* ()
+       (#:from from/c #:value value/c #:gas gas/c #:errors errors/c #:provider provider/c)
+       #:rest list?
+       any))
+
 (struct bound (procedure contract positive name uses))
 
 (define (bound-reference b negative)
   (define neg (or negative 'top-level))
   (hash-ref! (bound-uses b) neg
-             (lambda () (contract (bound-contract b) (bound-procedure b) (bound-positive b) neg (bound-name b) #f))))
+             (lambda ()
+               (contract (bound-contract b) (bound-procedure b) (bound-positive b) neg
+                         (bound-name b) #f))))
 
 (define-syntax-parse-rule (here)
   (variable-reference->module-source (#%variable-reference)))
+
+(define-syntax-parse-rule (define-bound id:id procedure:expr procedure/c:id solidity:str
+                            (overload ...) deploy?:boolean)
+  #:with (record) (generate-temporaries #'(id))
+  (begin
+    (define record (bound procedure procedure/c (here) 'id (make-hash)))
+    (define-syntax id
+      (bound-procedure-info (quote-syntax (bound-reference record (here)))
+                            'id solidity '(overload ...) deploy?))))
 
 (define (raise-arity name message)
   (raise (exn:fail:contract:arity (format "~a: ~a" name message) (current-continuation-marks))))
@@ -89,7 +131,8 @@
                       #:gas (opt '#:gas #f)
                       #:errors all-errors
                       #:provider (opt '#:provider current-provider))]))
-  (procedure-rename (make-keyword-procedure (lambda (kws kw-args . positional) (run kws kw-args positional)))
+  (procedure-rename (make-keyword-procedure (lambda (kws kw-args . positional)
+                                              (run kws kw-args positional)))
                     name))
 
 (define (deploy-procedure name d)
@@ -97,108 +140,100 @@
   (define arity (if constructor (length (abi-signature-inputs constructor)) 0))
   (define payable? (and constructor (eq? (abi-constructor-state-mutability constructor) 'payable)))
   (define errors (contract-abi-errors d))
+  (define bytecode (contract-abi-bytecode d))
   (define (run kws kw-args args)
+    (unless bytecode
+      (raise (exn:fail:web3 (format "~a: no bytecode" name) (current-continuation-marks))))
     (unless (= (length args) arity)
       (raise-arity name (arity-message "the constructor" (list arity) (length args) #:deploy? #t)))
-    (define opts (options name "the constructor" "not payable" (deploy-keywords payable?) kws kw-args))
+    (define opts
+      (options name "the constructor" "not payable" (deploy-keywords payable?) kws kw-args))
     (define (opt kw default)
       (hash-ref opts kw default))
     (define-values (address _receipt)
-      (deploy-code name (contract-abi-bytecode d) (or constructor "constructor()") args
+      (deploy-code name bytecode (or constructor "constructor()") args
                    #:from (opt '#:from current-account)
                    #:value (opt '#:value 0)
                    #:gas (opt '#:gas #f)
                    #:errors (append errors (opt '#:errors '()))
                    #:provider (opt '#:provider current-provider)))
     address)
-  (procedure-rename (make-keyword-procedure (lambda (kws kw-args . args) (run kws kw-args args))) name))
-
-;;;; the forms
+  (procedure-rename (make-keyword-procedure (lambda (kws kw-args . args) (run kws kw-args args)))
+                    name))
 
 (begin-for-syntax
-  (define (keyword-contract kw)
-    (case kw
-      [(#:from) #'from/c]
-      [(#:value) #'value/c]
-      [(#:block) #'block/c]
-      [(#:gas) #'gas/c]
-      [(#:errors) #'errors/c]
-      [(#:provider) #'provider/c]))
+  (define (procedure-contract keywords)
+    (cond
+      [(equal? keywords (function-keywords 'view)) #'view-procedure/c]
+      [(equal? keywords (function-keywords 'nonpayable)) #'nonpayable-procedure/c]
+      [(equal? keywords (function-keywords 'payable)) #'payable-procedure/c]
+      [else #'any-procedure/c]))
 
-  (define (keyword-contracts keywords)
-    (for*/list ([kw (in-list all-keywords)]
-                #:when (memq kw keywords)
-                [part (in-list (list (datum->syntax #f kw) (keyword-contract kw)))])
-      part))
+  (define (function-keyword-union overloads)
+    (filter (lambda (kw)
+              (for/or ([o (in-list overloads)])
+                (memq kw (function-keywords (overload-mutability o)))))
+            all-keywords))
 
-  ;; The definitions of a bound procedure named id: its runtime record p,
-  ;; and its static information.
-  (define (procedure-definitions id procedure keywords positional solidity overloads deploy?)
-    (with-syntax ([(p) (generate-temporaries (list id))])
-      (list #`(define p
-                (bound #,procedure
-                       (->* #,positional (#,@(keyword-contracts keywords)) #:rest list? any)
-                       (here)
-                       '#,id
-                       (make-hash)))
-            #`(define-syntax #,id
-                (bound-procedure-info (quote-syntax (bound-reference p (here))) '#,id #,solidity
-                                      '#,overloads #,deploy?)))))
-
-  ;; The definitions of binding b of description d, whose runtime value
-  ;; abi names.
-  (define (binding-definitions b d abi)
+  (define (binding-definition b d abi)
     (define id (binding-id b))
     (define indices (binding-indices b))
+    (define items (contract-abi-items d))
     (case (binding-kind b)
-      [(event) (list #`(define #,id (list-ref (contract-abi-items #,abi) #,indices)))]
+      [(event) #`(define #,id (list-ref (contract-abi-items #,abi) #,indices))]
       [(deploy)
        (define constructor (contract-abi-constructor d))
        (define arity (if constructor (length (abi-constructor-parameters constructor)) 0))
-       (define mutability (if constructor (abi-constructor-state-mutability constructor) 'nonpayable))
-       (procedure-definitions id #`(deploy-procedure '#,id #,abi) (deploy-keywords (eq? mutability 'payable))
-                              #'() "the constructor" (list (overload arity mutability)) #t)]
+       (define mutability
+         (if constructor (abi-constructor-state-mutability constructor) 'nonpayable))
+       #`(define-bound #,id (deploy-procedure '#,id #,abi)
+           #,(if (eq? mutability 'payable) #'payable-deploy/c #'nonpayable-deploy/c)
+           "the constructor" (#,(overload arity mutability)) #t)]
       [else
-       (define functions (for/list ([k (in-list indices)]) (list-ref (contract-abi-items d) k)))
+       (define functions (for/list ([k (in-list indices)]) (list-ref items k)))
        (define overloads
          (for/list ([f (in-list functions)])
            (overload (length (abi-function-parameters f)) (abi-function-state-mutability f))))
-       (procedure-definitions id #`(function-procedure '#,id #,abi '#,indices)
-                              (apply append (map (lambda (o) (function-keywords (overload-mutability o))) overloads))
-                              #'((abi-value/c 'address)) (abi-signature-name (car functions)) overloads #f)])))
+       #`(define-bound #,id (function-procedure '#,id #,abi '#,indices)
+           #,(procedure-contract (function-keyword-union overloads))
+           #,(abi-signature-name (car functions)) #,overloads #f)])))
 
 (define-syntax (define-contract stx)
   (syntax-parse stx
     [(_ name:id
-        (~alt (~seq (~and file-kw #:file) path:str)
-              (~seq (~and bytecode-kw #:bytecode)
-                    (~var bytecode (expr/c #'bytecode/c #:name "the #:bytecode expression")))
-              (~seq (~and rename-kw #:rename) (rename:rename-clause ...))
-              item:item-clause)
+        (~alt src:source
+              (~optional (~seq #:bytecode
+                               (~var bytecode (expr/c #'bytecode/c
+                                                      #:name "the #:bytecode expression"))
+                               (~bind [bytecode? #t]))
+                         #:name "#:bytecode clause"
+                         #:too-many "too many #:bytecode clauses"
+                         #:defaults ([bytecode? #f]))
+              (~optional (~seq #:rename (rename:rename-clause ...))
+                         #:name "#:rename clause"
+                         #:too-many "too many #:rename clauses"
+                         #:defaults ([(rename 1) '()])))
         ...)
-     #:fail-when (second-of #'(file-kw ...)) "too many #:file clauses"
-     #:fail-when (second-of #'(bytecode-kw ...)) "too many #:bytecode clauses"
-     #:fail-when (second-of #'(rename-kw ...)) "too many #:rename clauses"
-     #:do [(define files (syntax->list #'(path ...)))
-           (define items (syntax->list #'(item ...)))]
-     #:fail-when (and (pair? files) (pair? items) (car items)) "#:file excludes inline items"
-     #:fail-unless (or (pair? files) (pair? items)) "expected #:file or at least one item"
-     (define d
-       (if (pair? files) (file-description stx (car files)) (inline-description stx items)))
-     (define bytecode-exprs (syntax->list #'(bytecode.c ...)))
-     (define at (if (pair? files) (map (lambda (_) (car files)) (contract-abi-items d)) items))
-     (define deploy? (or (pair? bytecode-exprs) (and (contract-abi-bytecode d) #t)))
-     (define bindings
-       (description-bindings stx #'name d at (syntax->list #'(rename ... ...)) deploy?))
-     (with-syntax ([(abi) (generate-temporaries '(abi))])
-       #`(begin
-           (define abi
-             (contract-abi '#,(map abi-item->sexp (contract-abi-items d))
-                           #:bytecode #,(if (pair? bytecode-exprs) (car bytecode-exprs) (contract-abi-bytecode d))))
-           (define-syntax name
-             (contract-binding-info (quote-syntax abi)
-                                    (list #,@(for/list ([b (in-list bindings)]) #`(quote-syntax #,(binding-id b))))))
-           #,@(apply append (for/list ([b (in-list bindings)]) (binding-definitions b d #'abi)))))]))
+     #:fail-when (null? (attribute src.start)) "expected #:file or at least one item"
+     #:fail-when (match (attribute src.start)
+                   [(list _ second _ ...) second]
+                   [_ #f])
+                 "#:file excludes inline items, and inline items come together"
+     #:do [(define d (car (attribute src.description)))
+           (define deploy? (or (attribute bytecode?) (and (contract-abi-bytecode d) #t)))
+           (define bindings
+             (description-bindings stx #'name d (car (attribute src.where))
+                                   (syntax->list #'(rename ...)) deploy?))]
+     #:with (abi) (generate-temporaries '(abi))
+     #:with items #`'#,(map abi-item->sexp (contract-abi-items d))
+     #:with artifact-bytecode (datum->syntax #'name (contract-abi-bytecode d))
+     #:with (id ...) (map binding-id bindings)
+     #:with (definition ...) (map (lambda (b) (binding-definition b d #'abi)) bindings)
+     #'(begin
+         (define abi (contract-abi items #:bytecode (~? bytecode.c artifact-bytecode)))
+         (define-syntax name
+           (contract-binding-info (quote-syntax abi) (list (quote-syntax id) ...)))
+         definition ...)]))
 
 (define-syntax contract-bindings-out
   (make-provide-transformer

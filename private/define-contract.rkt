@@ -1,21 +1,22 @@
 #lang racket/base
 
-;; define-contract's expansion-time half: the item and option syntax, the
-;; descriptions they denote, the names they bind, and the transformers that
-;; check applications of bound procedures.  Never loads keccak.
-
 (require (for-template (only-in racket/base set!))
          (only-in compiler/cm-accomplice register-external-file)
-         (only-in racket/list index-of remove-duplicates)
+         (only-in racket/list append-map filter-not index-of remove-duplicates)
          (only-in racket/match match match-define struct*)
          (only-in racket/string string-contains? string-join string-prefix?)
          syntax/parse
          "../abi/description.rkt"
-         (submod "../abi/description.rkt" private)
+         (only-in (submod "../abi/description.rkt" private) described-items raw-contract-abi)
          "../abi/event-type.rkt"
+         (only-in (submod "../abi/event-type.rkt" private) parameters-failure)
          "../abi/type.rkt"
-         (only-in (submod "../abi/type.rkt" private) identifier-end string->signature)
-         (only-in "abi-item.rkt" identifier? parameter-name? sexp->abi-item/who string->abi-item/who)
+         (only-in (submod "../abi/type.rkt" private)
+                  array-length? elementary elementary-failure identifier-end string->signature)
+         (only-in "abi-item.rkt"
+                  constructor-item duplicate-index error-item function-item identifier?
+                  parameter-name? raw-abi-fallback raw-abi-parameter raw-abi-receive
+                  string->abi-item/who)
          "abi-json.rkt"
          "binding-rules.rkt")
 
@@ -24,98 +25,131 @@
          (struct-out contract-binding-info)
          (struct-out overload)
          description-bindings
-         file-description
-         inline-description
-         item-clause
          rename-clause
-         second-of
-         solidity-name->racket-name)
-
-;;;; names
+         solidity-name->racket-name
+         source
+         syntax->abi-item)
 
 (define (solidity-name->racket-name name)
   (define words
     (for*/list ([chunk (in-list (regexp-split #rx"_+" name))]
                 #:unless (string=? chunk "")
-                [word (in-list (regexp-split #px"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])" chunk))])
+                [word (in-list (regexp-split #px"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])"
+                                             chunk))])
       (string-downcase word)))
   (and (pair? words) (string-join words "-")))
 
-;;;; item syntax
+(define (keyword->mutability kw)
+  (string->symbol (keyword->string (syntax-e kw))))
 
-(define (type-datum? d)
-  (with-handlers ([exn:fail? (lambda (_) #f)])
-    (sexp->abi-type d)
-    #t))
+(define (duplicate-parameter forms parameters)
+  (match (duplicate-index (map abi-parameter-name parameters))
+    [#f (values #f #f)]
+    [i (values (list-ref forms i)
+               (format "duplicate parameter name: ~a"
+                       (abi-parameter-name (list-ref parameters i))))]))
 
 (define-syntax-class abi-type-sexp
   #:description "an ABI type"
-  #:attributes ()
-  (pattern t:id #:fail-unless (type-datum? (syntax-e #'t)) "not an ABI type")
-  (pattern ((~datum array) _:abi-type-sexp (~optional _:exact-positive-integer)))
-  (pattern ((~datum tuple) _:abi-type-sexp ...+)))
+  #:attributes (type)
+  (pattern t:id
+           #:attr type (elementary (symbol->string (syntax-e #'t)))
+           #:fail-unless (attribute type) (elementary-failure (symbol->string (syntax-e #'t))))
+  (pattern ((~datum array) e:abi-type-sexp)
+           #:attr type (abi-array (attribute e.type)))
+  (pattern ((~datum array) e:abi-type-sexp k:exact-positive-integer)
+           #:fail-unless (array-length? (syntax-e #'k)) "expected an array length from 1 to 2^64-1"
+           #:attr type (abi-fixed-array (attribute e.type) (syntax-e #'k)))
+  (pattern ((~datum tuple) c:abi-type-sexp ...+)
+           #:attr type (abi-tuple (attribute c.type))))
 
 (define-syntax-class parameter-name
   #:description "a parameter name or #f"
-  #:attributes ()
-  (pattern #f)
-  (pattern x:id #:fail-unless (parameter-name? (symbol->string (syntax-e #'x))) "not a parameter name"))
+  #:attributes (name)
+  (pattern #f #:attr name #f)
+  (pattern x:id
+           #:attr name (symbol->string (syntax-e #'x))
+           #:fail-unless (parameter-name? (attribute name)) "not a parameter name"))
 
-(define-syntax-class item-name
+(define-syntax-class solidity-name
   #:description "a name"
-  #:attributes ()
-  (pattern x:id #:fail-unless (identifier? (symbol->string (syntax-e #'x))) "not a name"))
+  #:attributes (name)
+  (pattern x:id
+           #:attr name (symbol->string (syntax-e #'x))
+           #:fail-unless (identifier? (attribute name)) "not a name"))
 
 (define-syntax-class parameter
   #:description "[name type]"
-  #:attributes ()
-  (pattern [_:parameter-name _:abi-type-sexp]))
+  #:attributes (parameter)
+  (pattern [n:parameter-name t:abi-type-sexp]
+           #:attr parameter (raw-abi-parameter (attribute n.name) (attribute t.type))))
+
+(define-syntax-class parameters
+  #:description "(parameter ...)"
+  #:attributes (parameters forms)
+  (pattern (p:parameter ...)
+           #:attr parameters (attribute p.parameter)
+           #:attr forms (syntax->list #'(p ...))))
 
 (define-syntax-class event-parameter
   #:description "[name type] or [name type #:indexed]"
-  #:attributes ()
-  (pattern [_:parameter-name _:abi-type-sexp (~optional #:indexed)]))
+  #:attributes (parameter)
+  (pattern [n:parameter-name t:abi-type-sexp
+            (~optional (~and #:indexed (~bind [indexed? #t])) #:defaults ([indexed? #f]))]
+           #:attr parameter
+           (abi-event-parameter (attribute n.name) (attribute t.type) (attribute indexed?))))
 
-(define-syntax-class function-item
-  #:attributes ()
-  (pattern ((~datum function) _:item-name (_:parameter ...)
-            (~alt (~seq (~and returns #:returns) (_:parameter ...))
-                  (~and mutability (~or* #:view #:pure #:payable)))
+(define-syntax-class function-clause
+  #:description "(function name (parameter ...) option ...)"
+  #:attributes (item)
+  (pattern ((~datum function) name:solidity-name inputs:parameters
+            (~alt (~optional (~seq #:returns outputs:parameters)
+                             #:name "#:returns"
+                             #:too-many "at most one #:returns"
+                             #:defaults ([outputs.parameters '()] [outputs.forms '()]))
+                  (~optional (~and mutability (~or* #:view #:pure #:payable))
+                             #:too-many "at most one of #:view, #:pure and #:payable"
+                             #:defaults ([mutability #'#:nonpayable])))
             ...)
-           #:fail-when (second-of #'(returns ...)) "at most one #:returns"
-           #:fail-when (second-of #'(mutability ...)) "at most one of #:view, #:pure and #:payable"))
+           #:do [(define-values (duplicate reason)
+                   (duplicate-parameter (append (attribute inputs.forms) (attribute outputs.forms))
+                                        (append (attribute inputs.parameters)
+                                                (attribute outputs.parameters))))]
+           #:fail-when duplicate reason
+           #:attr item (function-item (attribute name.name)
+                                      (attribute inputs.parameters)
+                                      (attribute outputs.parameters)
+                                      (keyword->mutability #'mutability))))
 
-(define (second-of stx)
-  (match (syntax->list stx)
-    [(list* _ second _) second]
-    [_ #f]))
+(define-syntax-class other-clause
+  #:attributes (item)
+  (pattern ((~datum error) name:solidity-name inputs:parameters)
+           #:do [(define-values (duplicate reason)
+                   (duplicate-parameter (attribute inputs.forms) (attribute inputs.parameters)))]
+           #:fail-when duplicate reason
+           #:attr item (error-item (attribute name.name) (attribute inputs.parameters)))
+  (pattern ((~datum constructor) inputs:parameters
+            (~optional (~and mutability #:payable) #:defaults ([mutability #'#:nonpayable])))
+           #:do [(define-values (duplicate reason)
+                   (duplicate-parameter (attribute inputs.forms) (attribute inputs.parameters)))]
+           #:fail-when duplicate reason
+           #:attr item (constructor-item (attribute inputs.parameters)
+                                         (keyword->mutability #'mutability)))
+  (pattern ((~datum fallback)
+            (~optional (~and mutability #:payable) #:defaults ([mutability #'#:nonpayable])))
+           #:attr item (raw-abi-fallback (keyword->mutability #'mutability)))
+  (pattern ((~datum receive))
+           #:attr item (raw-abi-receive))
+  (pattern ((~datum event) name:solidity-name (p:event-parameter ...)
+            (~optional (~and #:anonymous (~bind [anonymous? #t])) #:defaults ([anonymous? #f])))
+           #:do [(define-values (at reason)
+                   (match (parameters-failure (attribute p.parameter) (attribute anonymous?))
+                     [#f (values #f #f)]
+                     [(cons reason i) (values (list-ref (syntax->list #'(p ...)) i) reason)]))]
+           #:fail-when at reason
+           #:attr item
+           (abi-event (attribute name.name) (attribute p.parameter) (attribute anonymous?))))
 
-(define-syntax-class other-item
-  #:attributes ()
-  (pattern ((~datum error) _:item-name (_:parameter ...)))
-  (pattern ((~datum constructor) (_:parameter ...) (~optional #:payable)))
-  (pattern ((~datum fallback) (~optional #:payable)))
-  (pattern ((~datum receive)))
-  (pattern ((~datum event) _:item-name (_:event-parameter ...) (~optional #:anonymous))))
-
-(define item-heads '(function event error constructor fallback receive))
-
-(define-syntax-class item-clause
-  #:description "an item"
-  #:attributes ()
-  (pattern _:str)
-  (pattern (head:id . _)
-           #:when (memq (syntax-e #'head) item-heads)))
-
-(define-syntax-class rename-clause
-  #:description "[key identifier]"
-  #:attributes (key new)
-  (pattern [key:str new:id]))
-
-;;;; descriptions
-
-;; The syntax at index i of the string literal lit, spanning the token
-;; there, or lit itself when its text is not the string's.
 (define (string-position->syntax lit i)
   (define s (syntax-e lit))
   (define n (string-length s))
@@ -136,43 +170,34 @@
     [else lit]))
 
 (define (reason-of e)
-  (define message (exn-message e))
+  (define message (car (regexp-split #rx"\n" (exn-message e))))
   (define prefix "define-contract: ")
   (if (string-prefix? message prefix) (substring message (string-length prefix)) message))
 
-(define (fail form at reason)
-  (raise-syntax-error 'define-contract reason form at))
+(define (string-clause lit)
+  (with-handlers ([exn:fail:web3:abi:type?
+                   (lambda (e)
+                     (values #f
+                             (match (exn:fail:web3:abi:type-position e)
+                               [#f lit]
+                               [i (string-position->syntax lit i)])
+                             (reason-of e)))])
+    (values (string->abi-item/who 'define-contract (syntax-e lit)) #f #f)))
 
-;; The item a clause denotes, raising at its offending syntax.
-(define (clause->item form clause)
-  (define (fail-at at e)
-    (fail form at (car (regexp-split #rx"\n" (reason-of e)))))
-  (syntax-parse clause
-    [s:str
-     (with-handlers ([exn:fail:web3:abi:type?
-                      (lambda (e)
-                        (fail-at (match (exn:fail:web3:abi:type-position e)
-                                   [#f clause]
-                                   [i (string-position->syntax clause i)])
-                                 e))])
-       (string->abi-item/who 'define-contract (syntax-e #'s)))]
-    [((~datum function) . _)
-     (syntax-parse clause #:context form [_:function-item (void)])
-     (with-handlers ([exn:fail:web3:abi:type? (lambda (e) (fail-at clause e))])
-       (sexp->abi-item/who 'define-contract (syntax->datum clause)))]
-    [_
-     (syntax-parse clause #:context form [_:other-item (void)])
-     (with-handlers ([exn:fail:web3:abi:type? (lambda (e) (fail-at clause e))])
-       (sexp->abi-item/who 'define-contract (syntax->datum clause)))]))
+(define-syntax-class item-clause
+  #:description "an item"
+  #:attributes (item)
+  (pattern s:str
+           #:do [(define-values (parsed at reason) (string-clause #'s))]
+           #:fail-when at reason
+           #:attr item parsed)
+  (pattern i:function-clause #:attr item (attribute i.item))
+  (pattern i:other-clause #:attr item (attribute i.item)))
 
-;; The description of inline clauses.
-(define (inline-description form clauses)
-  (define items (for/list ([c (in-list clauses)]) (clause->item form c)))
-  (match (contract-abi-failure items)
-    [#f (raw-contract-abi items #f)]
-    [(cons reason i) (fail form (list-ref clauses i) reason)]))
+(define (syntax->abi-item stx)
+  (syntax-parse stx
+    [i:item-clause (attribute i.item)]))
 
-;; The directory a relative #:file in path-stx is read from.
 (define (base-directory path-stx)
   (define source (syntax-source path-stx))
   (cond
@@ -181,115 +206,141 @@
     [(current-load-relative-directory)]
     [else (current-directory)]))
 
-;; The description in the file path-stx names.
-(define (file-description form path-stx)
+(define (system-error e)
+  (match (regexp-match #rx"system error: ([^;\n]*)" (exn-message e))
+    [(list _ reason) (string-append ": " reason)]
+    [#f ""]))
+
+(define (file-description path-stx)
   (define written (syntax-e path-stx))
   (define complete (simplify-path (path->complete-path written (base-directory path-stx))))
   (register-external-file complete)
   (with-handlers ([exn:fail:filesystem?
-                   (lambda (e) (fail form path-stx (format "cannot read ~a: ~a" written (exn-message e))))]
-                  [exn:fail:web3:abi:type? (lambda (e) (fail form path-stx (exn-message e)))])
-    (file->contract-abi/who (string->symbol written) complete)))
+                   (lambda (e) (values #f (format "cannot read ~a~a" complete (system-error e))))]
+                  [exn:fail:web3:abi:type? (lambda (e) (values #f (reason-of e)))])
+    (values (file->contract-abi/who (string->symbol written) complete) #f)))
 
-;;;; bindings
+(define (inline-description clauses items)
+  (define-values (kept failure) (described-items items))
+  (match failure
+    [#f (values (raw-contract-abi kept #f)
+                (for/hasheq ([item (in-list items)]
+                             [clause (in-list clauses)])
+                  (values item clause))
+                #f
+                #f)]
+    [(cons reason i) (values #f #f (list-ref clauses i) reason)]))
 
-;; An overload of a bound procedure: its input count and mutability.
+(define-splicing-syntax-class source
+  #:description "#:file path or items"
+  #:attributes (start description where)
+  (pattern (~seq (~and start #:file) path:str)
+           #:fail-when (and (string=? (syntax-e #'path) "") #'path) "expected a path"
+           #:do [(define-values (d reason) (file-description #'path))]
+           #:fail-when (and reason #'path) reason
+           #:attr description d
+           #:attr where (for/hasheq ([item (in-list (contract-abi-items d))])
+                          (values item #'path)))
+  (pattern (~seq clause:item-clause ...+ (~peek-not _:item-clause))
+           #:do [(define-values (d where at reason)
+                   (inline-description (syntax->list #'(clause ...)) (attribute clause.item)))]
+           #:fail-when at reason
+           #:with (start _ ...) #'(clause ...)
+           #:attr description d
+           #:attr where where))
+
+(define-syntax-class rename-clause
+  #:description "[key identifier]"
+  #:attributes (key new)
+  (pattern [key:str new:id]))
+
 (struct overload (arity mutability) #:prefab)
 
-;; One name define-contract binds: id, kind 'function (indices of its
-;; functions), 'event (the event's index) or 'deploy, and the syntax a
-;; collision is reported at.
 (struct binding (id kind indices at))
 
-;; The bindings of description d for name; at lists the syntax of each
-;; item, renames the #:rename clauses.
-(define (description-bindings form name d at renames deploy?)
-  (define items (contract-abi-items d))
-  (define (index-of-item i)
-    (index-of items i eq?))
-  (define (named suffix)
-    (datum->syntax name (string->symbol (format "~a-~a" (syntax-e name) suffix)) name))
-  (define (racket-name item)
-    (or (solidity-name->racket-name (if (abi-event? item) (abi-event-name item) (abi-signature-name item)))
-        (fail form (list-ref at (index-of-item item))
-              (format "no Racket name for ~a; use #:rename" (abi-signature-name item)))))
-  (define functions (contract-abi-functions d))
-  (define events (contract-abi-events d))
-  (define (rename-targets key)
-    (define text (syntax-e key))
-    (define (functions-for match?)
-      (filter match? functions))
-    (cond
-      [(string-prefix? text "event ")
-       (define spec (substring text 6))
-       (filter (lambda (e)
-                 (if (string-contains? spec "(")
-                     (equal? (abi-signature->string (abi-event->signature e))
-                             (abi-signature->string (string->signature 'define-contract spec)))
-                     (equal? (abi-event-name e) spec)))
-               events)]
-      [(string-contains? text "(")
-       (define sig (abi-signature->string (string->signature 'define-contract text)))
-       (functions-for (lambda (f) (equal? (abi-signature->string f) sig)))]
-      [else (functions-for (lambda (f) (equal? (abi-signature-name f) text)))]))
-  (define renamed
-    (for/list ([r (in-list renames)])
-      (syntax-parse r
-        [c:rename-clause
-         (match (with-handlers ([exn:fail:web3:abi:type? (lambda (e) (fail form #'c.key (reason-of e)))])
-                  (rename-targets #'c.key))
-           ['() (fail form #'c.key (format "#:rename: no function or event ~a" (syntax-e #'c.key)))]
-           [targets (cons #'c.new targets)])])))
-  (define taken (apply append (map cdr renamed)))
-  (define (binding-of id targets)
-    (match targets
-      [(list (? abi-event? e)) (binding id 'event (index-of-item e) (list-ref at (index-of-item e)))]
-      [fs (binding id 'function (map index-of-item fs) (list-ref at (index-of-item (car fs))))]))
-  (define remaining (filter (lambda (f) (not (memq f taken))) functions))
-  (define groups
-    (for/list ([n (in-list (remove-duplicates (map abi-signature-name remaining)))])
-      (filter (lambda (f) (equal? (abi-signature-name f) n)) remaining)))
-  (for ([group (in-list (append groups (map cdr renamed)))]
-        #:unless (abi-event? (car group)))
-    (check-arities form group at index-of-item))
-  (define all
-    (append (for/list ([group (in-list groups)])
-              (binding-of (named (racket-name (car group))) group))
-            (for/list ([e (in-list events)]
-                       #:unless (memq e taken))
-              (binding-of (named (format "~a-event" (racket-name e))) (list e)))
-            (for/list ([r (in-list renamed)])
-              (binding-of (car r) (cdr r)))
-            (if deploy? (list (binding (named "deploy") 'deploy '() form)) '())))
-  (check-collisions form all items)
-  all)
+(define (fail form at reason)
+  (raise-syntax-error 'define-contract reason form at))
 
-(define (check-arities form fs at index-of-item)
+(define (item-name item)
+  (if (abi-event? item) (abi-event-name item) (abi-signature-name item)))
+
+(define (event-signature e)
+  (abi-signature->string (abi-event->signature e)))
+
+(define (rename-targets form d key)
+  (define text (syntax-e key))
+  (define (signature-of spec)
+    (with-handlers ([exn:fail:web3:abi:type? (lambda (e) (fail form key (reason-of e)))])
+      (abi-signature->string (string->signature 'define-contract spec))))
+  (define events (contract-abi-events d))
+  (define functions (contract-abi-functions d))
+  (cond
+    [(string-prefix? text "event ")
+     (define spec (substring text 6))
+     (cond
+       [(string-contains? spec "(")
+        (define signature (signature-of spec))
+        (filter (lambda (e) (equal? (event-signature e) signature)) events)]
+       [else
+        (match (filter (lambda (e) (equal? (abi-event-name e) spec)) events)
+          [(list _ _ _ ...) (fail form key (format "event ~a is overloaded; use \"event ~a(…)\""
+                                                  spec spec))]
+          [found found])])]
+    [(string-contains? text "(")
+     (define signature (signature-of text))
+     (filter (lambda (f) (equal? (abi-signature->string f) signature)) functions)]
+    [else (filter (lambda (f) (equal? (abi-signature-name f) text)) functions)]))
+
+(define (renamed-groups form d renames)
+  (for/list ([r (in-list renames)])
+    (syntax-parse r
+      [c:rename-clause
+       (match (rename-targets form d #'c.key)
+         ['() (fail form #'c.key (format "#:rename: no function or event ~a" (syntax-e #'c.key)))]
+         [targets (cons #'c.new targets)])])))
+
+(define (group-overloads functions)
+  (for/list ([name (in-list (remove-duplicates (map abi-signature-name functions)))])
+    (filter (lambda (f) (equal? (abi-signature-name f) name)) functions)))
+
+(define (check-arities form where group)
   (for/fold ([seen '()] #:result (void))
-            ([f (in-list fs)])
+            ([f (in-list group)])
     (define n (length (abi-signature-inputs f)))
     (match (assv n seen)
       [#f (cons (cons n f) seen)]
       [(cons _ other)
-       (fail form (list-ref at (index-of-item f))
-             (format "~a and ~a both take ~a argument~a; use #:rename"
-                     (abi-signature->string other) (abi-signature->string f) n (if (= n 1) "" "s")))])))
+       (fail form (hash-ref where f)
+             (format "~a and ~a both take ~a; use #:rename"
+                     (abi-signature->string other) (abi-signature->string f)
+                     (count-of n "argument")))])))
+
+(define (check-event-signatures form where events)
+  (for/fold ([seen (hash)] #:result (void))
+            ([e (in-list events)])
+    (define signature (event-signature e))
+    (match (hash-ref seen signature #f)
+      [#f (hash-set seen signature e)]
+      [other
+       (fail form (hash-ref where e)
+             (format "two events share the signature ~a, so they cannot be bound: ~a and ~a"
+                     signature (abi-event->string other) (abi-event->string e)))])))
 
 (define (binding-label b items)
   (match b
     [(struct* binding ([kind 'deploy])) "the deployment"]
-    [(struct* binding ([kind 'event] [indices i])) (format "event ~a" (abi-event-name (list-ref items i)))]
+    [(struct* binding ([kind 'event] [indices i]))
+     (format "event ~a" (abi-event-name (list-ref items i)))]
     [(struct* binding ([indices (cons i _)])) (abi-signature-name (list-ref items i))]))
 
-(define (check-collisions form all items)
+(define (check-collisions form bindings items)
   (define (position b)
     (match (binding-indices b)
       [(cons i _) i]
       [(? exact-integer? i) i]
       [_ (length items)]))
-  (define ordered (sort all < #:key position))
   (for/fold ([seen '()] #:result (void))
-            ([b (in-list ordered)])
+            ([b (in-list (sort bindings < #:key position))])
     (define key (syntax-e (binding-id b)))
     (match (assq key seen)
       [#f (cons (cons key b) seen)]
@@ -298,53 +349,90 @@
              (format "two bindings are named ~a: ~a and ~a; use #:rename"
                      key (binding-label other items) (binding-label b items)))])))
 
-;;;; static information
+(define (description-bindings form name d where renames deploy?)
+  (define items (contract-abi-items d))
+  (define (index-of-item i)
+    (index-of items i eq?))
+  (define (named suffix)
+    (datum->syntax name (string->symbol (format "~a-~a" (syntax-e name) suffix)) name))
+  (define (racket-name item)
+    (or (solidity-name->racket-name (item-name item))
+        (fail form (hash-ref where item)
+              (format "no Racket name for ~a; use #:rename" (item-name item)))))
+  (define (binding-of id targets)
+    (match targets
+      [(list (? abi-event? e)) (binding id 'event (index-of-item e) (hash-ref where e))]
+      [fs (binding id 'function (map index-of-item fs) (hash-ref where (car fs)))]))
+  (check-event-signatures form where (contract-abi-events d))
+  (define renamed (renamed-groups form d renames))
+  (define taken (append-map cdr renamed))
+  (define groups
+    (group-overloads (filter-not (lambda (f) (memq f taken)) (contract-abi-functions d))))
+  (for ([group (in-list (append groups (map cdr renamed)))]
+        #:unless (abi-event? (car group)))
+    (check-arities form where group))
+  (define bindings
+    (append (for/list ([group (in-list groups)])
+              (binding-of (named (racket-name (car group))) group))
+            (for/list ([e (in-list (contract-abi-events d))]
+                       #:unless (memq e taken))
+              (binding-of (named (format "~a-event" (racket-name e))) (list e)))
+            (for/list ([r (in-list renamed)])
+              (binding-of (car r) (cdr r)))
+            (if deploy? (list (binding (named "deploy") 'deploy '() form)) '())))
+  (check-collisions form bindings items)
+  bindings)
 
-;; What a contract binding knows at expansion: the reference to its
-;; description and the names it introduced.
 (struct contract-binding-info (reference names)
   #:property prop:procedure
   (lambda (self stx)
     (syntax-parse stx
       [_:id (contract-binding-info-reference self)]
-      [(_ . args) (datum->syntax stx (cons (contract-binding-info-reference self) #'args) stx stx)])))
+      [(_ . args)
+       (datum->syntax stx (cons (contract-binding-info-reference self) #'args) stx stx)])))
+
+(define-splicing-syntax-class argument
+  #:description "an argument"
+  #:attributes (keyword)
+  (pattern (~seq kw:keyword (~describe "a value after the keyword" _:expr))
+           #:attr keyword #'kw)
+  (pattern _:expr #:attr keyword #f))
 
 (define (check-application self stx)
   (match-define (struct* bound-procedure-info ([name name] [solidity what] [overloads overloads]
                                                [deploy? deploy?]))
     self)
-  (define-values (positional keywords)
-    (let loop ([args (cdr (syntax->list stx))] [positional 0] [keywords '()])
-      (match args
-        ['() (values positional (reverse keywords))]
-        [(list* kw _ rest) #:when (keyword? (syntax-e kw)) (loop rest positional (cons kw keywords))]
-        [(cons _ rest) (loop rest (add1 positional) keywords)])))
-  (define given (if deploy? positional (max 0 (sub1 positional))))
-  (define chosen (findf (lambda (o) (= (overload-arity o) given)) overloads))
   (define (refuse at message)
     (raise-syntax-error name message stx at))
-  (cond
-    [(or (not chosen) (and (not deploy?) (zero? positional)))
-     (refuse #f (arity-message what (map overload-arity overloads) given #:deploy? deploy?))]
-    [else
-     (define mutability (overload-mutability chosen))
-     (define allowed (if deploy? (deploy-keywords (eq? mutability 'payable)) (function-keywords mutability)))
-     (for ([kw (in-list keywords)]
-           #:unless (memq (syntax-e kw) allowed))
-       (refuse kw (keyword-message (if deploy? "the constructor" what)
-                                   (if deploy? "not payable" mutability)
-                                   (syntax-e kw)
-                                   allowed)))]))
+  (when (syntax->list stx)
+    (syntax-parse stx
+      [(_ arg:argument ...)
+       #:do [(define keywords (filter values (attribute arg.keyword)))
+             (define positional (- (length (attribute arg.keyword)) (length keywords)))
+             (define given (if deploy? positional (max 0 (sub1 positional))))
+             (define chosen (findf (lambda (o) (= (overload-arity o) given)) overloads))]
+       #:fail-when (and (or (not chosen) (and (not deploy?) (zero? positional))) stx)
+       (arity-message what (map overload-arity overloads) given #:deploy? deploy?)
+       #:do [(define mutability (overload-mutability chosen))
+             (define allowed
+               (if deploy?
+                   (deploy-keywords (eq? mutability 'payable))
+                   (function-keywords mutability)))]
+       (for ([kw (in-list keywords)]
+             #:unless (memq (syntax-e kw) allowed))
+         (refuse kw (keyword-message (if deploy? "the constructor" what)
+                                     (if deploy? "not payable" mutability)
+                                     (syntax-e kw)
+                                     allowed)))])))
 
-;; What a bound procedure knows at expansion: the reference to its
-;; contracted procedure, its name, the Solidity name, and its overloads.
 (struct bound-procedure-info (reference name solidity overloads deploy?)
   #:property prop:set!-transformer
   (lambda (self stx)
     (define reference (bound-procedure-info-reference self))
     (syntax-parse stx
       #:literals (set!)
-      [(set! _ _) (raise-syntax-error (bound-procedure-info-name self) "cannot mutate a bound procedure" stx)]
+      [(set! _ _)
+       (raise-syntax-error (bound-procedure-info-name self) "cannot mutate a bound procedure" stx)]
       [_:id reference]
       [(_ . args)
        (check-application self stx)
