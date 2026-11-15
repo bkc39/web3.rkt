@@ -2,9 +2,11 @@
 
 (module+ test
   (require racket/list
+           racket/match
            rackunit
            web3/abi
            web3/abi/vectors
+           (only-in web3/rpc hex-string->bytes)
            "util.rkt")
 
   (test-case "every committed vector reproduces"
@@ -34,4 +36,39 @@
             [x (in-list (abi-vector-values v))])
         (check-true (abi-value? t x) (abi-vector-name v))))
     (for ([name (in-list required-names)])
-      (check-not-false (member name names) name))))
+      (check-not-false (member name names) name)))
+
+  (test-case "every encoding and call vector decodes back"
+    (for ([v (in-list abi-encode-vectors)])
+      (match-define (abi-vector mode name signature vs hex) v)
+      (define inputs (signature-inputs signature))
+      (define data (hex-string->bytes hex))
+      (match mode
+        ['encode (check-equal? (abi-decode inputs data) (checksummed inputs vs) name)]
+        ['call (check-equal? (decode-call signature data) (checksummed inputs vs) name)]
+        ['packed (void)])))
+
+  (test-case "decode vectors decode to their values"
+    (for ([v (in-list abi-decode-vectors)])
+      (match-define (abi-vector mode name signature vs hex) v)
+      (define inputs (signature-inputs signature))
+      (define data (hex-string->bytes hex))
+      (check-equal? mode 'decode name)
+      (check-equal? (abi-decode inputs data) vs name)
+      (check-decoded inputs data vs name)))
+
+  (test-case "reject vectors raise their reason at their offset"
+    (for ([v (in-list abi-reject-vectors)])
+      (match-define (abi-reject-vector name signature hex reason offset) v)
+      (check-decode-error (abi-decode (signature-inputs signature) (hex-string->bytes hex))
+                          'abi-decode reason offset)))
+
+  (test-case "vector names are unique across the three lists"
+    (define names (append (map abi-vector-name abi-encode-vectors)
+                          (map abi-vector-name abi-decode-vectors)
+                          (map abi-reject-vector-name abi-reject-vectors)))
+    (check-false (check-duplicates names))
+    (for ([v (in-list abi-decode-vectors)])
+      (for ([t (in-list (signature-inputs (abi-vector-signature v)))]
+            [x (in-list (abi-vector-values v))])
+        (check-true (abi-value? t x) (abi-vector-name v))))))

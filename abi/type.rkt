@@ -10,6 +10,7 @@
  (struct-out exn:fail:web3:abi)
  (struct-out exn:fail:web3:abi:type)
  (struct-out exn:fail:web3:abi:value)
+ (struct-out exn:fail:web3:abi:decode)
  abi-type-spec/c
  (contract-out
   (struct abi-uint ([bits abi-int-bits/c]))
@@ -396,4 +397,5 @@
            static-size
            string->signature
            type->string
+           type-label
            types/who))

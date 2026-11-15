@@ -7,12 +7,13 @@
                     web3/abi
                     web3/abi/type
                     web3/abi/vectors
+                    web3/address
                     web3/anvil
                     web3/eth
                     web3/rpc]
           scribble/example]
 
-@(define abi-eval (make-base-eval '(require web3/abi web3/rpc)))
+@(define abi-eval (make-base-eval '(require web3/abi web3/address web3/rpc)))
 
 @title{web3: Ethereum JSON-RPC for Racket}
 @author{bkc}
@@ -25,8 +26,8 @@ support for running local
 @hyperlink["https://book.getfoundry.sh/anvil/"]{anvil} nodes.
 
 @racket[(require web3)] provides everything in @racketmodname[web3/rpc],
-@racketmodname[web3/eth], @racketmodname[web3/abi] and
-@racketmodname[web3/anvil].
+@racketmodname[web3/eth], @racketmodname[web3/abi],
+@racketmodname[web3/address] and @racketmodname[web3/anvil].
 
 @racketblock[
 (require web3)
@@ -71,7 +72,7 @@ as hash tables such as
 
 A JSON-RPC error response raises @racket[exn:fail:web3:rpc]; contract
 reverts carry their payload in @racket[exn:fail:web3:rpc-data], which
-@racket[decode-revert-reason] can read.  A result that does not decode
+@racket[rpc-exn->revert] decodes.  A result that does not decode
 as documented raises @racket[exn:fail:web3].
 
 @section{Providers and Calls}
@@ -247,9 +248,7 @@ put a reverting call's return data in @racket[data] as a hex string.
 
 @racketblock[
 (with-handlers ([exn:fail:web3:rpc?
-                 (lambda (e)
-                   (decode-revert-reason
-                    (hex-string->bytes (exn:fail:web3:rpc-data e))))])
+                 (lambda (e) (abi-revert->string (rpc-exn->revert e)))])
   (eth-call (hasheq 'to contract 'data "0x") "latest"))
 ]}
 
@@ -454,13 +453,31 @@ receipt once mined.}
 @defproc[(receipt-succeeded? [receipt hash?]) boolean?]{
 Whether the receipt's status is success, @racket["0x1"].}
 
+@section{Addresses}
+
+@defmodule[web3/address]
+
+@defproc[(address->checksum-string [address (abi-value/c 'address)]) string?]{
+The @hyperlink["https://eips.ethereum.org/EIPS/eip-55"]{EIP-55} form of @racket[address].
+The case of @racket[address] is ignored.
+
+@examples[#:eval abi-eval
+          (address->checksum-string "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed")]}
+
+@defproc[(checksum-address? [v any/c]) boolean?]{
+Whether @racket[v] is an address string in its EIP-55 form.
+
+@examples[#:eval abi-eval
+          (checksum-address? "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed")
+          (checksum-address? "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed")]}
+
 @section{Contract ABI}
 
 @defmodule[web3/abi]
 
-Encodes values for the
+Encodes and decodes values for the
 @hyperlink["https://docs.soliditylang.org/en/latest/abi-spec.html"]{contract ABI}
-and reads revert reasons.  Also provides everything in
+and decodes reverts.  Also provides everything in
 @racketmodname[web3/abi/type].
 
 @subsection{ABI Types}
@@ -638,6 +655,117 @@ raised; a byte string is hashed as given.
 Reads @racket[bs] as consecutive 32-byte big-endian words.  A trailing
 chunk shorter than 32 bytes is read as a number on its own.}
 
+@subsection{Decoding}
+
+Decoders treat their input as untrusted.  They return the values in
+@secref["abi-values"], with addresses checksummed, and raise
+@racket[exn:fail:web3:abi:decode] for bytes that are not an encoding:
+data shorter than its head, an offset or length past the end, tails that
+overlap or point backwards, dirty high bits, a @tt{bool} other than 0 or
+1, and invalid UTF-8.  Trailing bytes, gaps between tails and the padding
+after @tt{bytes} and @tt{string} are not checked.
+
+@defproc[(abi-decode [types (listof abi-type-spec/c)] [data bytes?]) list?]{
+The values @racket[data] encodes as @racket[types].
+
+@examples[#:eval abi-eval
+          (abi-decode '(uint8 string) (abi-encode '(uint8 string) '(7 "hi")))
+          (abi-decode '(address) (abi-encode '(address) '("0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed")))
+          (eval:error (abi-decode '(uint8) (word->bytes 256)))]}
+
+@defproc[(decode-result [signature (or/c string? abi-signature?)] [data bytes?]) list?]{
+@racket[data], as returned by @racket[eth-call], decoded as the outputs of
+@racket[signature].  Raises @racket[exn:fail:web3:abi:type] when
+@racket[signature] has no outputs.
+
+@examples[#:eval abi-eval
+          (decode-result "balanceOf(address)(uint256)" (word->bytes 1000))]}
+
+@defproc[(decode-call [signature (or/c string? abi-signature?)] [data bytes?]) list?]{
+The arguments in call data for @racket[signature]; the inverse of
+@racket[encode-call].  A different selector raises
+@racket[exn:fail:web3:abi:decode] with reason @racket['selector].
+
+@examples[#:eval abi-eval
+          (decode-call "transfer(address,uint256)"
+                       (encode-call "transfer(address,uint256)"
+                                    "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed" 1000))]}
+
+@subsection{Reverts}
+
+A revert's data is a selector and arguments, like call data.
+@tt{Error(string)} and @tt{Panic(uint256)} are always recognised; custom
+errors are passed as signatures.
+
+@defstruct*[abi-revert ([signature (or/c #f abi-signature?)]
+                        [arguments list?]
+                        [data bytes?])
+            #:transparent]{
+A decoded revert.  @racket[signature] is @racket[#f], and
+@racket[arguments] is @racket['()], when the selector is not recognised
+or @racket[data] is shorter than four bytes.}
+
+@deftogether[(@defproc[(abi-revert-name [r abi-revert?]) (or/c #f string?)]
+              @defproc[(abi-revert-selector [r abi-revert?]) (or/c #f bytes?)])]{
+The name of the error, and the first four bytes of its data.}
+
+@defproc[(error-selector [signature (or/c string? abi-signature?)]) bytes?]{
+The selector of a custom error.
+
+@examples[#:eval abi-eval
+          (bytes->hex-string (error-selector "InsufficientBalance(uint256,uint256)"))]}
+
+@defproc[(decode-revert [data bytes?]
+                        [#:errors errors (listof (or/c string? abi-signature?)) '()])
+         abi-revert?]{
+Decodes revert @racket[data] against the built-in errors and
+@racket[errors].  An unrecognised selector is not an error.  Two
+signatures with one selector raise @racket[exn:fail:web3:abi:type].
+
+@examples[#:eval abi-eval
+          (define data (encode-call "InsufficientBalance(uint256,uint256)" 10 20))
+          (abi-revert-arguments
+           (decode-revert data #:errors '("InsufficientBalance(uint256,uint256)")))
+          (abi-revert->string (decode-revert data))]}
+
+@defproc[(abi-revert->string [r abi-revert?]) string?]{
+A readable form of @racket[r].
+
+@examples[#:eval abi-eval
+          (abi-revert->string (decode-revert (encode-call "Panic(uint256)" #x11)))]}
+
+@defproc[(panic-description [code exact-nonnegative-integer?]) (or/c #f string?)]{
+What a Solidity panic code means, or @racket[#f].
+
+@examples[#:eval abi-eval
+          (panic-description #x32)]}
+
+@defproc[(rpc-exn->revert [e exn:fail:web3:rpc?]
+                          [#:errors errors (listof (or/c string? abi-signature?)) '()])
+         (or/c #f abi-revert?)]{
+The revert carried by @racket[e]'s @racket[data]: a hex string,
+@racket["Reverted 0x..."], or an object whose @tt{data} is one of those.
+No data under the message @tt{execution reverted} is an empty revert.
+Gives @racket[#f] when @racket[e] carries no revert.  A payload that does
+not decode is returned unrecognised.
+
+@examples[#:eval abi-eval
+          (with-handlers ([exn:fail:web3:rpc?
+                           (lambda (e) (abi-revert->string (rpc-exn->revert e)))])
+            (raise-rpc-error "eth_call" 3 "execution reverted"
+                             (bytes->hex-string (encode-call "Error(string)" "oops!"))))]}
+
+@defproc[(rpc-exn->revert-exn [e exn:fail:web3:rpc?]
+                              [#:errors errors (listof (or/c string? abi-signature?)) '()])
+         (or/c #f exn:fail:web3:rpc:revert?)]{
+@racket[e] as an @racket[exn:fail:web3:rpc:revert], for re-raising, or
+@racket[#f].}
+
+@defproc[(decode-revert-reason [data bytes?]) (or/c string? #f)]{
+@racket[(abi-revert->string (decode-revert data))] for @tt{Error}
+payloads and @racket["Panic(0x11)"] for @tt{Panic} payloads; @racket[#f]
+for anything else, including malformed data.}
+
 @subsection[#:tag "abi-errors"]{Errors}
 
 @declare-exporting[web3/abi/type web3/abi]
@@ -657,18 +785,21 @@ indexes a string @racket[input].}
 A value that does not fit @racket[type]; @racket[path] is the argument
 index followed by element and component indices.}
 
-@subsection{Revert Reasons}
+@defstruct*[(exn:fail:web3:abi:decode exn:fail:web3:abi)
+            ([type (or/c abi-type? (listof abi-type?))]
+             [offset exact-nonnegative-integer?]
+             [reason (or/c 'short 'offset 'overlap 'length 'non-canonical 'utf-8 'selector)])]{
+Bytes that do not decode.  @racket[offset] indexes the data passed in;
+@racket[type] is the type being read there.}
 
-@defproc[(decode-revert-reason [data bytes?]) (or/c string? #f)]{
-A readable form of a revert payload encoded as @tt{Error(string)} or
-@tt{Panic(uint256)}, such as @racket["Error(\"oops!\")"] or
-@racket["Panic(0x11)"], or @racket[#f] for any other payload.}
+@defstruct*[(exn:fail:web3:rpc:revert exn:fail:web3:rpc) ([revert abi-revert?])]{
+A call that reverted, with its decoded @racket[revert].}
 
 @subsection{Conformance Vectors}
 
 @defmodule[web3/abi/vectors]
 
-@defstruct*[abi-vector ([mode (or/c 'encode 'packed 'call)]
+@defstruct*[abi-vector ([mode (or/c 'encode 'packed 'call 'decode)]
                         [name string?]
                         [signature string?]
                         [values list?]
@@ -679,6 +810,22 @@ One case: @racket[hex] is what @racket[abi-encode],
 
 @defthing[abi-encode-vectors (listof abi-vector?)]{
 The cases, checked against Foundry's @tt{cast}.}
+
+@defthing[abi-decode-vectors (listof abi-vector?)]{
+Inputs in mode @racket['decode]: @racket[hex] decodes to @racket[values]
+but need not be canonical.}
+
+@defstruct*[abi-reject-vector ([name string?]
+                               [signature string?]
+                               [hex string?]
+                               [reason symbol?]
+                               [offset exact-nonnegative-integer?])]{
+Bytes that do not decode as the inputs of @racket[signature].
+@racket['overlap] and @racket['utf-8] rows are this library's rules;
+Solidity's decoder accepts them.}
+
+@defthing[abi-reject-vectors (listof abi-reject-vector?)]{
+The rejected inputs.}
 
 @section{Local Nodes with anvil}
 

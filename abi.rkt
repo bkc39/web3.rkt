@@ -6,9 +6,16 @@
          (only-in racket/list make-list)
          (only-in racket/match match struct*)
          "abi/type.rkt"
-         (submod "abi/type.rkt" private))
+         (submod "abi/type.rkt" private)
+         (only-in "private/exn.rkt"
+                  exn:fail:web3:rpc?
+                  exn:fail:web3:rpc:revert
+                  exn:fail:web3:rpc:revert?
+                  struct:exn:fail:web3:rpc:revert
+                  exn:fail:web3:rpc:revert-revert))
 
 (provide (all-from-out "abi/type.rkt")
+         (struct-out exn:fail:web3:rpc:revert)
          (contract-out
           [function-selector (-> (or/c string? bytes? abi-signature?) bytes?)]
           [word->bytes (-> (integer-in 0 (sub1 (expt 2 256))) bytes?)]
@@ -16,7 +23,28 @@
           [abi-encode (-> (listof abi-type-spec/c) list? bytes?)]
           [abi-encode-packed (-> (listof abi-type-spec/c) list? bytes?)]
           [encode-call (->* ((or/c string? abi-signature?)) #:rest list? bytes?)]
+          [abi-decode (-> (listof abi-type-spec/c) bytes? list?)]
+          [decode-result (-> (or/c string? abi-signature?) bytes? list?)]
+          [decode-call (-> (or/c string? abi-signature?) bytes? list?)]
+          (struct abi-revert ([signature (or/c #f abi-signature?)]
+                              [arguments list?]
+                              [data bytes?]))
+          [abi-revert-name (-> abi-revert? (or/c #f string?))]
+          [abi-revert-selector (-> abi-revert? (or/c #f bytes?))]
+          [abi-revert->string (-> abi-revert? string?)]
+          [error-selector (-> error-signature/c bytes?)]
+          [decode-revert (->* (bytes?) (#:errors (listof error-signature/c)) abi-revert?)]
+          [panic-description (-> exact-nonnegative-integer? (or/c #f string?))]
+          [rpc-exn->revert (->* (exn:fail:web3:rpc?)
+                                (#:errors (listof error-signature/c))
+                                (or/c #f abi-revert?))]
+          [rpc-exn->revert-exn (->* (exn:fail:web3:rpc?)
+                                    (#:errors (listof error-signature/c))
+                                    (or/c #f exn:fail:web3:rpc:revert?))]
           [decode-revert-reason (-> bytes? (or/c string? #f))]))
+
+(define error-signature/c
+  (flat-named-contract 'error-signature/c (or/c string? abi-signature?)))
 
 (module+ test
   (require rackunit
@@ -124,31 +152,79 @@
   (bytes-append (function-selector sig)
                 (encode-arguments 'encode-call (abi-signature-inputs sig) vs)))
 
-(define error-selector (bytes #x08 #xc3 #x79 #xa0)) ; Error(string)
-(define panic-selector (bytes #x4e #x48 #x7b #x71)) ; Panic(uint256)
+(define (abi-decode types data)
+  (error 'unimplemented))
+
+(define (decode-result signature data)
+  (error 'unimplemented))
+
+(define (decode-call signature data)
+  (error 'unimplemented))
+
+(struct abi-revert (signature arguments data) #:transparent)
+
+(define (abi-revert-name r)
+  (error 'unimplemented))
+
+(define (abi-revert-selector r)
+  (error 'unimplemented))
+
+(define (abi-revert->string r)
+  (error 'unimplemented))
+
+(define (error-selector signature)
+  (error 'unimplemented))
+
+(define (decode-revert data #:errors [errors '()])
+  (error 'unimplemented))
+
+(define (panic-description code)
+  (error 'unimplemented))
+
+(define (rpc-exn->revert e #:errors [errors '()])
+  (error 'unimplemented))
+
+(define (rpc-exn->revert-exn e #:errors [errors '()])
+  (error 'unimplemented))
 
 (define (decode-revert-reason data)
-  (define n (bytes-length data))
-  (define (word-at i) (car (bytes->words (subbytes data i (+ i 32)))))
-  (cond
-    [(and (>= n 68) (equal? (subbytes data 0 4) error-selector))
-     (define len (word-at 36))
-     (and (>= n (+ 68 len))
-          (format "Error(~s)" (bytes->string/utf-8 (subbytes data 68 (+ 68 len)) #\?)))]
-    [(and (= n 36) (equal? (subbytes data 0 4) panic-selector))
-     (format "Panic(0x~a)" (number->string (word-at 4) 16))]
-    [else #f]))
+  (error 'unimplemented))
+
+;; Uncontracted entry points for web3's own modules, which raise under
+;; the name of the function their caller called.
+(module* internal #f
+  (provide abi-decode/who
+           abi-encode/who
+           abi-value->display-string
+           check-error-signatures/who
+           decode-result/who
+           encode-call/who
+           string->abi-signature/who))
+
+(define (string->abi-signature/who who signature)
+  (error 'unimplemented))
+
+(define (abi-encode/who who types vs)
+  (error 'unimplemented))
+
+(define (encode-call/who who signature vs)
+  (error 'unimplemented))
+
+(define (abi-decode/who who types data base)
+  (error 'unimplemented))
+
+(define (decode-result/who who signature data)
+  (error 'unimplemented))
+
+(define (check-error-signatures/who who errors)
+  (error 'unimplemented))
+
+(define (abi-value->display-string type v)
+  (error 'unimplemented))
 
 (module+ test
   (check-equal? (bytes->hex-string (function-selector "transfer(address,uint256)")) "0xa9059cbb")
   (check-equal? (bytes->hex-string (function-selector "inc()")) "0x371303c0")
   (check-equal? (bytes->words (bytes-append (word->bytes 1) (word->bytes (sub1 (expt 2 256)))))
                 (list 1 (sub1 (expt 2 256))))
-  (check-equal? (bytes-length (encode-call "f(uint256,uint256)" 1 2)) 68)
-  (check-equal? (decode-revert-reason
-                 (bytes-append error-selector (word->bytes 32) (word->bytes 5) #"oops!"
-                               (make-bytes 27 0)))
-                "Error(\"oops!\")")
-  (check-equal? (decode-revert-reason (bytes-append panic-selector (word->bytes #x11)))
-                "Panic(0x11)")
-  (check-false (decode-revert-reason #"")))
+  (check-equal? (bytes-length (encode-call "f(uint256,uint256)" 1 2)) 68))

@@ -8,9 +8,16 @@
          rackunit
          syntax/parse/define
          web3/abi
+         web3/address
          (only-in web3/rpc bytes->hex-string))
 
 (provide check-blames-here
+         check-decode-error
+         check-decoded
+         checksummed
+         downcased
+         decode-error
+         decoded-size
          encode-hex
          signature-inputs
          widths)
@@ -39,3 +46,68 @@
   (check-exn (lambda (e) (blames? file-name e))
              (lambda () expr)
              (format "~s" 'expr)))
+
+;; v with f applied to every address in it.
+(define (map-addresses f type v)
+  (let loop ([t (abi-type type)] [v v])
+    (match t
+      [(struct* abi-address ()) (f v)]
+      [(or (struct* abi-array ([element e])) (struct* abi-fixed-array ([element e])))
+       (map (lambda (x) (loop e x)) v)]
+      [(struct* abi-tuple ([components cs])) (map loop cs v)]
+      [_ v])))
+
+;; vs with every address in its EIP-55 form, as the decoders return them.
+(define (checksummed types vs)
+  (map (lambda (t v) (map-addresses address->checksum-string t v)) types vs))
+
+(define (downcased types vs)
+  (map (lambda (t v) (map-addresses string-downcase t v)) types vs))
+
+;; What every successful decode of data as types promises of its result:
+;; values of the types, addresses checksummed, and no more bytes than the
+;; input.
+(define (check-decoded types data vs [name ""])
+  (check-equal? (length vs) (length types) name)
+  (for ([t (in-list types)]
+        [v (in-list vs)])
+    (check-true (abi-value? t v) name)
+    (check-equal? (map-addresses (lambda (a) (and (checksum-address? a) a)) t v) v name))
+  (check-true (<= (for/sum ([t (in-list types)] [v (in-list vs)]) (decoded-size t v))
+                  (bytes-length data))
+              name))
+
+;; The bytes a decoded value accounts for: a word per static leaf, and
+;; the content of each bytes and string.
+(define (decoded-size type v)
+  (match (abi-type type)
+    [(struct* abi-bytes ()) (bytes-length v)]
+    [(struct* abi-string ()) (bytes-length (string->bytes/utf-8 v))]
+    [(or (struct* abi-array ([element e])) (struct* abi-fixed-array ([element e])))
+     (for/sum ([x (in-list v)]) (decoded-size e x))]
+    [(struct* abi-tuple ([components cs])) (for/sum ([t (in-list cs)] [x (in-list v)]) (decoded-size t x))]
+    [_ 32]))
+
+(define (decode-error thunk)
+  (with-handlers ([exn:fail:web3:abi:decode? values])
+    (thunk)
+    #f))
+
+;; expr raises exn:fail:web3:abi:decode with this reason and offset, a
+;; message under who, and (when given) this type: a type string, or a
+;; list of them for a whole head.
+(define-syntax-parse-rule (check-decode-error expr who:expr reason:expr offset:expr
+                                              (~optional (~seq #:type type:expr)))
+  (let ([e (decode-error (lambda () expr))]
+        [name (format "~s" 'expr)])
+    (check-pred exn:fail:web3:abi:decode? e name)
+    (when e
+      (check-regexp-match (regexp (string-append "^" (regexp-quote (symbol->string who)) ": "))
+                          (exn-message e)
+                          name)
+      (check-equal? (exn:fail:web3:abi:decode-reason e) reason name)
+      (check-equal? (exn:fail:web3:abi:decode-offset e) offset name)
+      (~? (check-equal? (exn:fail:web3:abi:decode-type e) (expected-type type) name)))))
+
+(define (expected-type spec)
+  (if (list? spec) (map abi-type spec) (abi-type spec)))
