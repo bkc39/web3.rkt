@@ -9,6 +9,7 @@
          (only-in racket/list make-list)
          (only-in racket/match == match match-define struct*)
          (only-in racket/string string-join string-prefix?)
+         "abi/description.rkt"
          "abi/event-type.rkt"
          "abi/type.rkt"
          (submod "abi/type.rkt" private)
@@ -18,7 +19,7 @@
          (only-in "private/hex.rkt" bytes->hex hex->bytes)
          "private/who.rkt")
 
-(provide (all-from-out "abi/event-type.rkt" "abi/type.rkt")
+(provide (all-from-out "abi/description.rkt" "abi/event-type.rkt" "abi/type.rkt")
          (struct-out exn:fail:web3:rpc:revert)
          abi-revert
          struct:abi-revert
@@ -48,7 +49,8 @@
           [rpc-exn->revert-exn (->* (exn:fail:web3:rpc?)
                                     (#:errors (listof abi-signature-spec/c))
                                     (or/c #f exn:fail:web3:rpc:revert?))]
-          [decode-revert-reason (-> bytes? (or/c string? #f))]))
+          [decode-revert-reason (-> bytes? (or/c string? #f))]
+          [exn->abi-revert (-> exn? (or/c abi-revert? #f))]))
 
 (module+ test
   (require rackunit
@@ -241,6 +243,9 @@
 (define (error-selector signature)
   (signature-selector (error-signature/who 'error-selector signature)))
 
+(define (same-signature? a b)
+  (equal? (abi-signature->string a) (abi-signature->string b)))
+
 (define (check-error-signatures/who who errors)
   (for/fold ([lookup (hash)])
             ([sig (in-list (list* error-signature
@@ -249,7 +254,9 @@
     (define selector (signature-selector sig))
     (match (hash-ref lookup selector #f)
       [#f (hash-set lookup selector sig)]
-      [(== sig) lookup]
+      [other
+       #:when (same-signature? other sig)
+       lookup]
       [other
        (raise-abi-type-error who
                              (format "selector collision: ~a and ~a"
@@ -338,6 +345,12 @@
   (and payload
        (with-handlers ([exn:fail:web3:abi:decode? (lambda (_) (raw-abi-revert #f '() payload))])
          (lookup-revert who lookup payload))))
+
+(define (exn->abi-revert e)
+  (match e
+    [(struct* exn:fail:web3:rpc:revert ([revert revert])) revert]
+    [(struct* exn:fail:web3:transaction ([revert revert])) revert]
+    [_ #f]))
 
 (define (rpc-exn->revert-exn e #:errors [errors '()])
   (match-define

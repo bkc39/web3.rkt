@@ -1,20 +1,25 @@
 #lang racket/base
 
-(require (for-syntax racket/base)
-         racket/contract/base
+(require racket/contract/base
+         (only-in racket/contract/combinator raise-blame-error)
          (only-in json jsexpr?)
          (only-in keccak keccak256)
-         (only-in racket/match match struct*)
+         (only-in racket/match match match* struct*)
+         (only-in racket/string string-contains? string-join)
          syntax/parse/define
          "abi.rkt"
-         (submod "abi.rkt" internal)
-         (only-in (submod "abi/type.rkt" private) raise-abi-type-error)
+         (submod "abi/description.rkt" private)
+         (only-in (submod "abi/event.rkt" internal) event-where/c)
+         (only-in (submod "abi/event-type.rkt" private) spec->abi-event/who)
          "address.rkt"
-         "eth.rkt"
+         (only-in "eth.rkt" block-param/c)
+         "event.rkt"
          "rpc.rkt"
+         "private/abi-json.rkt"
+         "private/bindings.rkt"
          "private/exn.rkt"
          (only-in "private/hex.rkt" hex-data-string?)
-         "private/node.rkt"
+         "private/transaction.rkt"
          "private/who.rkt")
 
 (define-syntax-parse-rule (transaction->* (required:expr ...) (optional ...) result:expr)
@@ -29,158 +34,287 @@
        result))
 
 (provide (struct-out exn:fail:web3:transaction)
+         define-contract
+         contract-bindings-out
          (contract-out
           [current-account (parameter/c (or/c #f (abi-value/c 'address)))]
-          [contract-call
-           (transaction->* ((abi-value/c 'address) signature/c) (#:block block-param/c) any)]
-          [contract-send (transaction->* ((abi-value/c 'address) signature/c) () receipt/c)]
+          [contract-call call/c]
+          [contract-send send/c]
+          [contract-estimate-gas estimate/c]
+          [contract-instance (->* (contract-abi? (abi-value/c 'address))
+                                  (#:provider (or/c #f provider?)
+                                   #:from (or/c #f (abi-value/c 'address)))
+                                  contract-instance?)]
+          [contract-instance? (-> any/c boolean?)]
+          [contract-instance-abi (-> contract-instance? contract-abi?)]
+          [contract-instance-address (-> contract-instance? checksum-address?)]
+          [contract-instance-provider (-> contract-instance? (or/c #f provider?))]
+          [contract-instance-from (-> contract-instance? (or/c #f (abi-value/c 'address)))]
+          [contract-logs
+           (->i ([target target/c])
+                ([event (target) (event/c target)]
+                 #:where [where (event) (where/c event)]
+                 #:from-block [from block/c]
+                 #:to-block [to block/c]
+                 #:chunk [chunk (or/c #f exact-positive-integer?)]
+                 #:provider [provider provider/c])
+                [_ (listof log?)])]
+          [deploy-contract-instance
+           (->i ([d deployable-abi/c])
+                (#:from [from from/c]
+                 #:value [value (d) (value/c d)]
+                 #:gas [gas (or/c #f exact-positive-integer?)]
+                 #:errors [errors errors/c]
+                 #:provider [provider provider/c])
+                #:rest [args list?]
+                [_ contract-instance?])]
+          [read-contract-abi (->* () (input-port?) contract-abi?)]
+          [file->contract-abi (-> path-string? contract-abi?)]
           [deploy-contract (transaction->* (init-code/c) (signature/c) checksum-address?)]
           [deploy-contract/receipt
            (transaction->* (init-code/c) (signature/c) (values checksum-address? receipt/c))]
           [create-address (-> (abi-value/c 'address) nonce/c checksum-address?)]
           [create2-address (-> (abi-value/c 'address) salt/c init-code/c checksum-address?)]))
 
+(define (count-of n what)
+  (and (positive? n) (format "~a ~a~a" n what (if (= n 1) "" "s"))))
+
+(define (write-instance i port _mode)
+  (define d (contract-instance-abi i))
+  (define counts
+    (filter values
+            (list (count-of (length (contract-abi-functions d)) "function")
+                  (count-of (length (contract-abi-events d)) "event")
+                  (count-of (length (contract-abi-errors d)) "error"))))
+  (fprintf port "#<contract-instance ~a~a>"
+           (contract-instance-address i)
+           (if (null? counts) "" (string-append " " (string-join counts ", ")))))
+
+(struct contract-instance (abi address provider from) #:transparent
+  #:name contract-instance-struct
+  #:constructor-name raw-contract-instance
+  #:property prop:custom-write write-instance)
+
 (define signature/c (or/c string? abi-signature?))
 (define errors/c (listof (or/c string? abi-signature?)))
 (define init-code/c
-  (or/c bytes? (flat-named-contract '(and/c string? #px"^0x(?:[0-9a-fA-F]{2})*$") hex-data-string?)))
+  (or/c bytes?
+        (flat-named-contract '(and/c string? #px"^0x(?:[0-9a-fA-F]{2})*$") hex-data-string?)))
 (define salt/c
   (or/c (and/c bytes? (property/c bytes-length (=/c 32))) (integer-in 0 (sub1 (expt 2 256)))))
 (define nonce/c (integer-in 0 (- (expt 2 64) 2)))
 (define receipt/c (and/c hash? jsexpr?))
+(define block/c (flat-named-contract 'block-param/c block-param/c))
+(define from/c (or/c #f (abi-value/c 'address)))
+(define provider/c (or/c #f provider?))
 
-(define current-account (make-parameter #f))
+(define target/c
+  (flat-named-contract 'target/c (or/c (abi-value/c 'address) contract-instance?)))
 
-(define receipt-timeout (make-parameter 30.0))
+(define named-function/c
+  (flat-named-contract 'named-function/c (or/c symbol? string? abi-signature?)))
 
-(define (transaction #:to [to #f] #:from from #:data data #:value value #:gas gas)
-  (define fields
-    (hasheq 'to to
-            'from from
-            'data (bytes->hex-string data)
-            'value (and (positive? value) (number->hex-string value))
-            'gas (and gas (number->hex-string gas))))
-  (for/hasheq ([(key v) (in-hash fields)]
-               #:when v)
-    (values key v)))
+(define signature-function/c
+  (flat-named-contract 'signature-function/c
+                       (or/c abi-signature? (and/c string? (lambda (s) (string-contains? s "("))))))
 
-(define (call-raising-reverts errors thunk)
-  (with-handlers ([exn:fail:web3:rpc?
-                   (lambda (e) (raise (or (rpc-exn->revert-exn e #:errors errors) e)))])
-    (thunk)))
+(define (function/c target)
+  (if (contract-instance? target) named-function/c signature-function/c))
 
-(define (sender who from)
-  (or from
-      (raise (exn:fail:web3 (format "~a: no sender; pass #:from or set current-account" who)
-                            (current-continuation-marks)))))
+(define named-event/c (flat-named-contract 'named-event/c (or/c #f abi-event-spec/c symbol?)))
 
-(define/who (contract-call who address signature
-                           #:from [from (current-account)]
+(define (event/c target)
+  (if (contract-instance? target) named-event/c (or/c #f abi-event-spec/c)))
+
+(define (supplied? v)
+  (not (unsupplied-arg? v)))
+
+(define no-where/c (flat-named-contract 'no-where/c (lambda (v) (and (hash? v) (hash-empty? v)))))
+
+(define (where/c event)
+  (if (and (supplied? event) event) hash? no-where/c))
+
+(define constructor-value/c
+  (flat-contract-with-explanation
+   (lambda (v)
+     (or (eqv? v 0)
+         (lambda (blame)
+           (raise-blame-error blame v '("~a" given: "~e")
+                              "the constructor is nonpayable; #:value must be 0" v))))
+   #:name 'constructor-value/c))
+
+(define (value/c d)
+  (define constructor (and (contract-abi? d) (contract-abi-constructor d)))
+  (if (and constructor (eq? (abi-constructor-state-mutability constructor) 'payable))
+      exact-nonnegative-integer?
+      (and/c exact-nonnegative-integer? constructor-value/c)))
+
+(define deployable-abi/c
+  (flat-named-contract 'deployable-abi/c
+                       (lambda (v) (and (contract-abi? v) (contract-abi-bytecode v) #t))))
+
+(define call/c
+  (->i ([target target/c]
+        [function (target) (function/c target)])
+       (#:from [from from/c]
+        #:value [value exact-nonnegative-integer?]
+        #:gas [gas (or/c #f exact-positive-integer?)]
+        #:block [block block/c]
+        #:errors [errors errors/c]
+        #:provider [provider provider/c])
+       #:rest [args list?]
+       any))
+
+(define send/c
+  (->i ([target target/c]
+        [function (target) (function/c target)])
+       (#:from [from from/c]
+        #:value [value exact-nonnegative-integer?]
+        #:gas [gas (or/c #f exact-positive-integer?)]
+        #:errors [errors errors/c]
+        #:provider [provider provider/c])
+       #:rest [args list?]
+       [_ receipt/c]))
+
+(define estimate/c
+  (->i ([target target/c]
+        [function (target) (function/c target)])
+       (#:from [from from/c]
+        #:value [value exact-nonnegative-integer?]
+        #:errors [errors errors/c]
+        #:provider [provider provider/c])
+       #:rest [args list?]
+       [_ exact-nonnegative-integer?]))
+
+(define (contract-instance abi address #:provider [provider #f] #:from [from #f])
+  (raw-contract-instance abi (address->checksum-string address) provider from))
+
+(define unset (string->uninterned-symbol "unset"))
+
+(define (given v default)
+  (if (eq? v unset) (default) v))
+
+(define (raise-abi-error who fmt . args)
+  (raise (exn:fail:web3:abi (format "~a: ~a" who (apply format fmt args))
+                            (current-continuation-marks))))
+
+(define (check-value who f value)
+  (when (and (positive? value)
+             (abi-function? f)
+             (not (eq? (abi-function-state-mutability f) 'payable)))
+    (raise-abi-error who "~a is ~a; #:value must be 0"
+                     (abi-signature-name f) (abi-function-state-mutability f))))
+
+(define (request who target function args from value errors provider)
+  (define-values (address f sender errors* node)
+    (match target
+      [(struct* contract-instance-struct ([abi d] [address address] [provider p] [from f]))
+       (values address
+               (if (abi-signature? function)
+                   function
+                   (resolve-function who d function (length args)))
+               (given from (lambda () (or f (current-account))))
+               (append (contract-abi-errors d) errors)
+               (given provider (lambda () (or p (current-provider)))))]
+      [_ (values target
+                 function
+                 (given from current-account)
+                 errors
+                 (given provider current-provider))]))
+  (check-value who f value)
+  (values address f sender errors* node))
+
+(define/who (contract-call who target function
+                           #:from [from unset]
                            #:value [value 0]
                            #:gas [gas #f]
                            #:block [block "latest"]
                            #:errors [errors '()]
-                           #:provider [provider (current-provider)]
+                           #:provider [provider unset]
                            . args)
-  (define sig (result-signature/who who signature))
-  (check-error-signatures/who who errors)
-  (define tx (transaction #:to address
-                          #:from from
-                          #:data (apply encode-call/who who sig args)
-                          #:value value
-                          #:gas gas))
-  (define result (call-raising-reverts errors (lambda () (eth-call tx block #:provider provider))))
-  (apply values
-         (cond
-           [(null? (abi-signature-outputs sig)) '()]
-           [else (decode-result/who who sig (node-data->bytes who "return data" result))])))
+  (define-values (address f sender errors* node)
+    (request who target function args from value errors provider))
+  (call-function who address f args
+                 #:from sender #:value value #:gas gas #:block block #:errors errors*
+                 #:provider node))
 
-(define/who (contract-send who address signature
-                           #:from [from (current-account)]
+(define/who (contract-send who target function
+                           #:from [from unset]
                            #:value [value 0]
                            #:gas [gas #f]
                            #:errors [errors '()]
-                           #:provider [provider (current-provider)]
+                           #:provider [provider unset]
                            . args)
-  (define sig (string->abi-signature/who who signature))
-  (check-error-signatures/who who errors)
-  (define data (apply encode-call/who who sig args))
-  (define-values (_tx-hash receipt)
-    (submit who
-            (transaction #:to address #:from (sender who from) #:data data #:value value #:gas gas)
-            errors
-            provider))
-  receipt)
+  (define-values (address f sender errors* node)
+    (request who target function args from value errors provider))
+  (send-function who address f args
+                 #:from sender #:value value #:gas gas #:errors errors* #:provider node))
 
-(define (estimate-gas who tx errors provider)
-  (define estimate
-    (call-raising-reverts errors (lambda () (rpc-call "eth_estimateGas" (list tx) #:provider provider))))
-  (match (node-quantity->number who "gas estimate" estimate)
-    [0 (raise (exn:fail:web3 (format "~a: the node estimated 0 gas" who) (current-continuation-marks)))]
-    [gas gas]))
+(define/who (contract-estimate-gas who target function
+                                   #:from [from unset]
+                                   #:value [value 0]
+                                   #:errors [errors '()]
+                                   #:provider [provider unset]
+                                   . args)
+  (define-values (address f sender errors* node)
+    (request who target function args from value errors provider))
+  (estimate-function who address f args
+                     #:from sender #:value value #:errors errors* #:provider node))
 
-(define (with-message e message)
-  (define marks (exn-continuation-marks e))
-  (match e
-    [(exn:fail:web3:rpc:revert _ _ method code rpc-message data revert)
-     (exn:fail:web3:rpc:revert message marks method code rpc-message data revert)]
-    [(exn:fail:web3:rpc _ _ method code rpc-message data)
-     (exn:fail:web3:rpc message marks method code rpc-message data)]
-    [_ (exn:fail:web3 message marks)]))
+(define (target-event who target event)
+  (match* (target event)
+    [((struct* contract-instance-struct ([abi d])) (or (? symbol?) (? string?) (? abi-event?)))
+     (resolve-event who d event)]
+    [((struct* contract-instance-struct ([abi d])) _)
+     (resolve-event who d (spec->abi-event/who who event))]
+    [(_ _) (spec->abi-event/who who event)]))
 
-(define (of-transaction what tx-hash)
-  (format "~a of transaction ~a" what tx-hash))
+(define/who (contract-logs who target [event #f]
+                           #:where [where (hasheq)]
+                           #:from-block [from "earliest"]
+                           #:to-block [to "latest"]
+                           #:chunk [chunk #f]
+                           #:provider [provider unset])
+  (define e (and event (target-event who target event)))
+  (when (and e (not ((flat-contract-predicate (event-where/c who e)) where)))
+    (raise-abi-error who "#:where names no indexed parameter of ~a, or one twice: ~e"
+                     (abi-event-name e) where))
+  (define-values (address events node)
+    (match target
+      [(struct* contract-instance-struct ([abi d] [address address] [provider p]))
+       (values address
+               (if e (list e) (contract-abi-events d))
+               (given provider (lambda () (or p (current-provider)))))]
+      [_ (values target (if e (list e) '()) (given provider current-provider))]))
+  (get-logs (log-filter #:address address #:event e #:where where #:from-block from #:to-block to)
+            #:events events
+            #:chunk chunk
+            #:provider node))
 
-(define (wait-for-outcome who tx-hash provider)
-  (with-handlers ([exn:fail?
-                   (lambda (e)
-                     (raise (with-message e (format "~a: sent transaction ~a, outcome unknown: ~a"
-                                                    who tx-hash (exn-message e)))))])
-    (wait-for-receipt tx-hash #:timeout (receipt-timeout) #:provider provider)))
+(define (deploy-contract-instance d
+                                  #:from [from (current-account)]
+                                  #:value [value 0]
+                                  #:gas [gas #f]
+                                  #:errors [errors '()]
+                                  #:provider [provider #f]
+                                  . args)
+  (define-values (address _receipt)
+    (deploy-code 'deploy-contract-instance
+                 (contract-abi-bytecode d)
+                 (or (contract-abi-constructor d) "constructor()")
+                 args
+                 #:from from
+                 #:value value
+                 #:gas gas
+                 #:errors (append (contract-abi-errors d) errors)
+                 #:provider (or provider (current-provider))))
+  (contract-instance d address #:provider provider))
 
-(define (submit who tx errors provider)
-  (define tx+gas
-    (cond
-      [(hash-ref tx 'gas #f) tx]
-      [else (hash-set tx 'gas (number->hex-string (estimate-gas who tx errors provider)))]))
-  (define tx-hash
-    (call-raising-reverts errors (lambda () (eth-send-transaction tx+gas #:provider provider))))
-  (define receipt (wait-for-outcome who tx-hash provider))
-  (cond
-    [(node-status->boolean who (of-transaction "receipt status" tx-hash) (hash-ref receipt 'status #f))
-     (values tx-hash receipt)]
-    [else
-     (define block
-       (node-quantity->number who
-                              (of-transaction "block number" tx-hash)
-                              (hash-ref receipt 'blockNumber #f)))
-     (define-values (revert tail) (replay tx+gas block errors provider))
-     (raise (exn:fail:web3:transaction
-             (format "~a: transaction ~a failed in block ~a: ~a" who tx-hash block tail)
-             (current-continuation-marks)
-             receipt
-             revert))]))
+(define (read-contract-abi [in (current-input-port)])
+  (read-contract-abi/who 'read-contract-abi in))
 
-(define (rpc-replay-outcome e errors)
-  (cond
-    [(rpc-exn->revert e #:errors errors)
-     => (lambda (revert) (values revert (format "reverted with ~a" (abi-revert->string revert))))]
-    [else (values #f (exn:fail:web3:rpc-rpc-message e))]))
-
-(define (replay tx block errors provider)
-  (with-handlers ([exn:fail:web3:rpc? (lambda (e) (rpc-replay-outcome e errors))]
-                  [exn:fail? (lambda (e) (values #f (format "replaying it raised: ~a" (exn-message e))))])
-    (eth-call tx block #:provider provider)
-    (values #f "replaying it did not fail")))
-
-(define (constructor-signature who constructor)
-  (match (string->abi-signature/who who constructor)
-    [(and sig (struct* abi-signature ([name "constructor"] [outputs #f]))) sig]
-    [sig (raise-abi-type-error who "a constructor signature is constructor(T,...)"
-                               (abi-signature->string sig #:outputs? #t) #f)]))
-
-(define (init-code->bytes code)
-  (if (bytes? code) code (hex-string->bytes code)))
+(define (file->contract-abi path)
+  (file->contract-abi/who 'file->contract-abi path))
 
 (define/who (deploy-contract/receipt who init-code [constructor "constructor()"]
                                      #:from [from (current-account)]
@@ -189,18 +323,8 @@
                                      #:errors [errors '()]
                                      #:provider [provider (current-provider)]
                                      . args)
-  (define sig (constructor-signature who constructor))
-  (check-error-signatures/who who errors)
-  (define data
-    (bytes-append (init-code->bytes init-code) (abi-encode/who who (abi-signature-inputs sig) args)))
-  (define-values (tx-hash receipt)
-    (submit who (transaction #:from (sender who from) #:data data #:value value #:gas gas)
-            errors
-            provider))
-  (values (node-address->string who
-                                (of-transaction "contract address" tx-hash)
-                                (hash-ref receipt 'contractAddress #f))
-          receipt))
+  (deploy-code who init-code constructor args
+               #:from from #:value value #:gas gas #:errors errors #:provider provider))
 
 (define/who (deploy-contract who init-code [constructor "constructor()"]
                              #:from [from (current-account)]
@@ -210,9 +334,8 @@
                              #:provider [provider (current-provider)]
                              . args)
   (define-values (address _receipt)
-    (apply deploy-contract/receipt/who who init-code constructor
-           #:from from #:value value #:gas gas #:errors errors #:provider provider
-           args))
+    (deploy-code who init-code constructor args
+                 #:from from #:value value #:gas gas #:errors errors #:provider provider))
   address)
 
 (define (digest->address digest)

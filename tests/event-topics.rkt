@@ -146,9 +146,10 @@
 
   (test-case "web3/abi/event and web3/eth/log need no JSON or transport modules"
     (define allowed
-      '("web3/abi" "web3/abi/event" "web3/abi/event-type" "web3/abi/type" "web3/address"
-        "web3/eth/log" "web3/private/abi-decode" "web3/private/exn" "web3/private/hex"
-        "web3/private/node" "web3/private/who"))
+      '("web3/abi" "web3/abi/description" "web3/abi/event" "web3/abi/event-type" "web3/abi/type"
+        "web3/address" "web3/eth/log" "web3/private/abi-decode" "web3/private/abi-item"
+        "web3/private/binding-rules" "web3/private/exn" "web3/private/hex" "web3/private/node"
+        "web3/private/who"))
     (define keccak-names (map module-name (import-closure 'keccak)))
     (for ([root (in-list '(web3/abi/event web3/eth/log))])
       (define names (filter values (map module-name (import-closure root))))

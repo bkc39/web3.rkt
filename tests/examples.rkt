@@ -85,6 +85,14 @@
     (check-equal? (member "; exn:fail" (string-split out "\n" #:trim? #f))
                   '("; exn:fail" "; eth_call: execution reverted: custom error 0xcf479181" "")))
 
+  (test-case "show-error shows a syntax error its expression raises when it expands"
+    (define out
+      (with-output-to-string
+        (lambda ()
+          (show-error (let ())))))
+    (check-equal? (take (string-split out "\n") 3)
+                  '("> (let ())" "; exn:fail:syntax" "; let: bad syntax (missing binding pairs or body)")))
+
   (test-case "show-error fails when nothing is raised"
     (check-exn #rx"^show-error: 1 raised no exception$"
                (lambda () (with-output-to-string (lambda () (show-error 1))))))

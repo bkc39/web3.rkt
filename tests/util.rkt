@@ -29,6 +29,7 @@
          insufficient-balance
          max-word
          raised
+         raised-type-error
          seeded
          signature-inputs
          signature-string
@@ -123,6 +124,11 @@
 
 (define (raised thunk)
   (with-handlers ([exn:fail? values])
+    (thunk)
+    #f))
+
+(define (raised-type-error thunk)
+  (with-handlers ([exn:fail:web3:abi:type? values])
     (thunk)
     #f))
 
