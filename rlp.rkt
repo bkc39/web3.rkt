@@ -40,7 +40,13 @@
   (format "~a byte~a" n (if (= n 1) "" "s")))
 
 (define (rlp-item? v)
-  (or (bytes? v) (and (list? v) (andmap rlp-item? v))))
+  (let item? ([v v] [enclosing #hasheq()])
+    (or (bytes? v)
+        (and (list? v)
+             (not (hash-ref enclosing v #f))
+             (let ([enclosing (hash-set enclosing v #t)])
+               (for/and ([element (in-list v)])
+                 (item? element enclosing)))))))
 
 (define (natural->rlp-scalar n)
   (natural->bytes n (quotient (+ (integer-length n) 7) 8)))

@@ -113,7 +113,15 @@
     (for ([v (in-list (list "a" 'a 5 1.0 (vector #"") (cons #"" #"") '(((1))) (box #"")
                             '(#"" . #"") (list #"" "a")))])
       (check-false (rlp-item? v) (format "~s" v)))
-    (check-equal? (call-bounded (lambda () (rlp-item? (shared ([a (cons #"" a)]) a)))) '(ok #f)))
+    (check-equal? (call-bounded (lambda () (rlp-item? (shared ([a (cons #"" a)]) a)))) '(ok #f))
+    (for ([cyclic (in-list (list (shared ([a (list a)]) a)
+                                 (shared ([a (list #"" a)]) a)
+                                 (shared ([a (list (list #"" a))]) a)))])
+      (check-equal? (call-bounded (lambda () (rlp-item? cyclic))) '(ok #f))
+      (check-match (call-bounded (lambda () (rlp-encode cyclic)))
+                   (list 'raised (? exn:fail:contract?))))
+    (define twice (list #"a" (list #"b")))
+    (check-true (rlp-item? (list twice twice (list twice)))))
 
   (test-case "§2.5: the messages"
     (for ([row (in-list
