@@ -10,12 +10,12 @@ racket examples/00-provider.rkt
 
 | program | shows |
 |---|---|
-| `00-provider.rkt` | endpoints, a raw `rpc-call`, defining an endpoint, a node's error code |
-| `01-chain-state.rkt` | balances and nonces, sending one ether, waiting for the receipt |
+| `00-provider.rkt` | endpoints, a raw `rpc-call`, defining an endpoint, a node's error code and message |
+| `01-chain-state.rkt` | a balance and a nonce, sending one ether, waiting for the receipt |
 | `02-anvil.rkt` | installing code, funding and impersonating an address, a snapshot reverted |
 | `03-custom-providers.rkt` | a `gen:provider` struct that logs, wrapping a `mock-provider` that answers and refuses |
 | `04-abi-encode.rkt` | canonical signatures, selectors and the words of call data |
-| `05-abi-decode.rkt` | a call's result decoded, and a revert's custom error decoded |
+| `05-abi-decode.rkt` | a result with two outputs, call data back into its arguments, `Error`, `Panic` and custom reverts, truncated data refused |
 | `06-deploy-and-call.rkt` | deploying a token, a call, a send, a send refused with its custom error |
 | `07-events.rkt` | a receipt's transfer decoded, `get-logs` for every transfer and filtered by recipient |
 | `08-contract-bindings.rkt` | `define-contract` from an artifact: deploy, calls, sends, an error and events by name |
@@ -26,7 +26,7 @@ racket examples/00-provider.rkt
 | `13-signers.rkt` | a local key and a node account as signers: each one's EIP-191 signature verifies, and both sign the same transaction |
 | `14-sending.rkt` | a key the node does not hold: a contract deploy and send, an ether transfer |
 
-03, 04 and 09 to 12 need no node; the others start their own local
+03, 04, 05 and 09 to 12 need no node; the others start their own local
 [anvil](https://book.getfoundry.sh/anvil/), so nothing here touches a real
 chain.  anvil must be on `PATH` or named by `WEB3_ANVIL`; `nix develop`
 provides it.

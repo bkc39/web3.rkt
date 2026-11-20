@@ -73,8 +73,10 @@
                          '(1000000 250)))
 
          (test-case "a bound event filters get-logs, and contract-logs takes any of several values"
-           (check-equal? (get-logs (log-filter #:address gold #:event token-transfer-event
-                                               #:where (hasheq 'to anvil-bob)))
+           (define to-bob (get-logs (log-filter #:address gold #:event token-transfer-event
+                                                #:where (hasheq 'to anvil-bob))))
+           (check-equal? (map (lambda (l) (event-log-ref l 'value)) to-bob) '(250))
+           (check-equal? to-bob
                          (contract-logs gold token-transfer-event #:where (hasheq 'to anvil-bob)))
            (check-equal? (map (lambda (l) (event-log-ref l 'to))
                               (contract-logs gold token-transfer-event

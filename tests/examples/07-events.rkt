@@ -2,8 +2,7 @@
 
 (module+ test
   (require rackunit
-           (only-in web3 current-anvil-path)
-           (only-in "../helpers/examples.rkt" example-lines))
+           (only-in "../helpers/examples.rkt" example-lines example-tests))
 
   (define zero "0x0000000000000000000000000000000000000000")
   (define alice "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")
@@ -20,9 +19,6 @@
       "to bob"
       ,(format "  ~a -> ~a 250" alice bob)))
 
-  (cond
-    [(not (current-anvil-path))
-     (displayln "skipping example 07: anvil not found")]
-    [else
-     (test-case "X1: a receipt's transfer decodes, and get-logs finds every transfer and bob's"
-       (check-equal? (example-lines "07-events") expected))]))
+  (example-tests "07-events" #:anvil
+    (test-case "X1: a receipt's transfer decodes, and get-logs finds every transfer and bob's"
+      (check-equal? (example-lines "07-events") expected))))

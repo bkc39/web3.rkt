@@ -1,7 +1,7 @@
 #lang racket/base
 
 (module+ test
-  (require (only-in racket/string string-append* string-join)
+  (require (only-in racket/string string-append* string-split)
            rackunit
            (only-in web3/rpc hex-string->bytes)
            (only-in "../helpers/examples.rkt" example-output)
@@ -40,7 +40,7 @@
   (define output (example-output "12-transactions"))
 
   (test-case "X1: main prints three signed transactions, parsed back, and a refused truncation"
-    (check-equal? output (string-append (string-join expected "\n") "\n")))
+    (check-equal? (string-split output "\n") expected))
 
   (test-case "X2: the output shows no part of the key"
     (check-no-leak output #:secret key)))

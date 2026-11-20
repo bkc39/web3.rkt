@@ -2,8 +2,7 @@
 
 (module+ test
   (require rackunit
-           (only-in web3 current-anvil-path)
-           (only-in "../helpers/examples.rkt" example-lines))
+           (only-in "../helpers/examples.rkt" example-lines example-tests))
 
   (define expected
     '("Token at 0x5FbDB2315678afecb367f032d93F642f64180aa3"
@@ -11,9 +10,6 @@
       "balances (750 250)"
       "refused: InsufficientBalance(250, 1000)"))
 
-  (cond
-    [(not (current-anvil-path))
-     (displayln "skipping example 06: anvil not found")]
-    [else
-     (test-case "X1: a deploy, a call, a send, and a send refused with its custom error"
-       (check-equal? (example-lines "06-deploy-and-call") expected))]))
+  (example-tests "06-deploy-and-call" #:anvil
+    (test-case "X1: a deploy, a call, a send, and a send refused with its custom error"
+      (check-equal? (example-lines "06-deploy-and-call") expected))))

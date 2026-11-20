@@ -2,19 +2,13 @@
 
 (module+ test
   (require rackunit
-           (only-in web3 current-anvil-path)
-           (only-in "../helpers/examples.rkt" example-lines))
+           (only-in "../helpers/examples.rkt" example-lines example-tests))
 
   (define expected
-    '("alice 10000 ether, nonce 0"
-      "bob 10000 ether, nonce 0"
+    '("alice nonce 0, bob 10000 ether"
       "block 1, gas used 21000, succeeded #t"
-      "alice 9998.999958 ether, nonce 1"
-      "bob 10001 ether, nonce 0"))
+      "alice nonce 1, bob 10001 ether"))
 
-  (cond
-    [(not (current-anvil-path))
-     (displayln "skipping example 01: anvil not found")]
-    [else
-     (test-case "X1: one ether moves, the fee is paid and the sender's nonce advances"
-       (check-equal? (example-lines "01-chain-state") expected))]))
+  (example-tests "01-chain-state" #:anvil
+    (test-case "X1: one ether moves to bob, and alice's nonce advances"
+      (check-equal? (example-lines "01-chain-state") expected))))

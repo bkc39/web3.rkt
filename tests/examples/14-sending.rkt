@@ -1,11 +1,10 @@
 #lang racket/base
 
 (module+ test
-  (require (only-in racket/string string-join)
+  (require (only-in racket/string string-split)
            rackunit
-           (only-in web3 current-anvil-path)
            (only-in web3/rpc hex-string->bytes)
-           (only-in "../helpers/examples.rkt" example-output)
+           (only-in "../helpers/examples.rkt" example-output example-tests)
            (only-in "../helpers/secrets.rkt" check-no-leak))
 
   (define key
@@ -17,14 +16,11 @@
       "  sender 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
       "  balance 1.5 ether"))
 
-  (cond
-    [(not (current-anvil-path))
-     (displayln "skipping example 14: anvil not found")]
-    [else
-     (define output (example-output "14-sending"))
+  (example-tests "14-sending" #:anvil
+    (define output (example-output "14-sending"))
 
-     (test-case "X1: a key the node does not hold deploys, sends and transfers"
-       (check-equal? output (string-append (string-join expected "\n") "\n")))
+    (test-case "X1: a key the node does not hold deploys, sends and transfers"
+      (check-equal? (string-split output "\n") expected))
 
-     (test-case "X2: the output shows no part of the key"
-       (check-no-leak output #:secret key))]))
+    (test-case "X2: the output shows no part of the key"
+      (check-no-leak output #:secret key))))

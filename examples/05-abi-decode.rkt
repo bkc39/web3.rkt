@@ -1,27 +1,22 @@
 #lang racket/base
 
-(require racket/match
-         web3
-         "common.rkt")
+(require web3)
 
-(define balance-of "balanceOf(address)(uint256)")
+(define token-info "info()(string,uint256)")
 (define transfer "transfer(address,uint256)")
 (define errors '("InsufficientBalance(uint256,uint256)"))
 
-(define (call token from signature . arguments)
-  (define data (bytes->hex-string (apply encode-call signature arguments)))
-  (hex-string->bytes (eth-call (hasheq 'from from 'to token 'data data) "latest")))
-
-(define (print-revert e)
-  (printf "reverted ~a\n" (abi-revert->string (rpc-exn->revert e #:errors errors))))
+(define result (abi-encode '(string uint256) '("Token" 1000)))
+(define call-data (encode-call transfer "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" 250))
+(define reverts
+  (list (encode-call "Error(string)" "not the owner")
+        (encode-call "Panic(uint256)" #x11)
+        (encode-call "InsufficientBalance(uint256,uint256)" 250 1000)))
 
 (module+ main
-  (with-anvil ()
-    (match-define (list alice bob _ ...) (eth-accounts))
-    (define token
-      (deploy-contract (artifact-bytecode "Token") "constructor(string,string,uint256)"
-                       "Token" "TOK" 1000
-                       #:from alice))
-    (printf "balance ~s\n" (decode-result balance-of (call token alice balance-of alice)))
-    (with-handlers ([exn:fail:web3:rpc? print-revert])
-      (call token bob transfer alice 1))))
+  (printf "result ~s\n" (decode-result token-info result))
+  (printf "call ~s\n" (decode-call transfer call-data))
+  (for ([data (in-list reverts)])
+    (printf "revert ~a\n" (abi-revert->string (decode-revert data #:errors errors))))
+  (with-handlers ([exn:fail:web3:abi:decode? (lambda (e) (printf "refused: ~a\n" (exn-message e)))])
+    (decode-call transfer (subbytes call-data 0 36))))

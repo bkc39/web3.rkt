@@ -1,9 +1,8 @@
 #lang racket/base
 
 (module+ test
-  (require (only-in racket/string string-join)
-           rackunit
-           (only-in "../helpers/examples.rkt" example-output))
+  (require rackunit
+           (only-in "../helpers/examples.rkt" example-lines))
 
   (define expected
     '("nonce 0"
@@ -28,5 +27,4 @@
       "0xc2: short at byte 0"))
 
   (test-case "X1: main prints the CREATE preimages and addresses, and what each input decodes to"
-    (check-equal? (example-output "10-rlp")
-                  (string-append (string-join expected "\n") "\n"))))
+    (check-equal? (example-lines "10-rlp") expected)))

@@ -2,16 +2,12 @@
 
 (module+ test
   (require rackunit
-           (only-in web3 current-anvil-path)
-           (only-in "../helpers/examples.rkt" example-lines))
+           (only-in "../helpers/examples.rkt" example-lines example-tests))
 
   (define expected
     '("sent from 0x000000000000000000000000000000000000beef, stored 7"
       "reverted, stored 0"))
 
-  (cond
-    [(not (current-anvil-path))
-     (displayln "skipping example 02: anvil not found")]
-    [else
-     (test-case "X1: an impersonated send stores a value, and reverting the snapshot undoes it"
-       (check-equal? (example-lines "02-anvil") expected))]))
+  (example-tests "02-anvil" #:anvil
+    (test-case "X1: an impersonated send stores a value, and reverting the snapshot undoes it"
+      (check-equal? (example-lines "02-anvil") expected))))

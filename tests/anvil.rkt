@@ -29,12 +29,15 @@
     [else
      (test-case "a started node's port, provider and log file, and its process until stopped"
        (define node (start-anvil))
-       (check-true (anvil-running? node))
-       (check-equal? (http-provider-url (anvil-provider node))
-                     (format "http://127.0.0.1:~a" (anvil-port node)))
-       (check-true (file-exists? (anvil-log-file node)))
-       (check-equal? (eth-chain-id #:provider (anvil-provider node)) 31337)
-       (stop-anvil node)
+       (dynamic-wind
+        void
+        (lambda ()
+          (check-true (anvil-running? node))
+          (check-equal? (http-provider-url (anvil-provider node))
+                        (format "http://127.0.0.1:~a" (anvil-port node)))
+          (check-true (file-exists? (anvil-log-file node)))
+          (check-equal? (eth-chain-id #:provider (anvil-provider node)) 31337))
+        (lambda () (stop-anvil node)))
        (check-false (anvil-running? node)))
 
      (with-anvil ()
@@ -81,28 +84,38 @@
                        '("PUSH1" "PUSH1" "MSTORE" "PUSH1" "PUSH1" "RETURN"))
          (check-equal? (hex-string->number (hash-ref trace 'returnValue)) 42))
 
-       (test-case "a gas estimate, a block with its transactions, and an account without code"
-         (define tx (hasheq 'from me 'to stranger 'value (number->hex-string 1)))
-         (check-equal? (eth-estimate-gas tx) 21000)
-         (define tx-hash (eth-send-transaction tx))
+       (test-case "a plain transfer's gas estimate is 21000"
+         (check-equal? (eth-estimate-gas (hasheq 'from me 'to stranger 'value "0x1")) 21000))
+
+       (test-case "a block lists its transactions' hashes, or the transactions themselves"
+         (define tx-hash (eth-send-transaction (hasheq 'from me 'to stranger 'value "0x1")))
          (define height (hex-string->number (hash-ref (wait-for-receipt tx-hash) 'blockNumber)))
          (check-equal? (hash-ref (eth-get-block-by-number height #f) 'transactions) (list tx-hash))
          (check-equal? (for/list ([full (in-list (hash-ref (eth-get-block-by-number height #t)
                                                            'transactions))])
                          (list (hash-ref full 'hash) (hash-ref full 'value)))
-                       (list (list tx-hash "0x1")))
+                       (list (list tx-hash "0x1"))))
+
+       (test-case "an address without code has code 0x"
          (check-equal? (eth-get-code stranger "latest") "0x"))
 
-       (test-case "balances, storage, impersonation and blocks set by anvil's methods"
+       (test-case "anvil-set-balance sets an address's balance"
          (anvil-set-balance stranger (expt 10 18))
-         (check-equal? (eth-get-balance stranger "latest") (expt 10 18))
+         (check-equal? (eth-get-balance stranger "latest") (expt 10 18)))
+
+       (test-case "anvil-set-storage-at sets a storage slot"
          (anvil-set-storage-at contract 3 (bytes->hex-string (word->bytes 99)))
-         (check-equal? (hex-string->number (eth-get-storage-at contract 3 "latest")) 99)
+         (check-equal? (hex-string->number (eth-get-storage-at contract 3 "latest")) 99))
+
+       (test-case "an impersonated address sends until impersonation stops"
+         (anvil-set-balance stranger (expt 10 18))
          (define payment (hasheq 'from stranger 'to me 'value (number->hex-string 1000)))
          (anvil-impersonate-account stranger)
          (check-true (receipt-succeeded? (send-transaction/receipt payment)))
          (anvil-stop-impersonating-account stranger)
-         (check-exn exn:fail:web3:rpc? (lambda () (eth-send-transaction payment)))
+         (check-exn exn:fail:web3:rpc? (lambda () (eth-send-transaction payment))))
+
+       (test-case "anvil-mine mines one block"
          (define height (eth-block-number))
          (anvil-mine)
          (check-equal? (eth-block-number) (add1 height)))

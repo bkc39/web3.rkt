@@ -1,9 +1,12 @@
 #lang racket/base
 
 (require racket/match
-         web3
-         "common.rkt")
+         racket/runtime-path
+         web3)
 
+(define-runtime-path token-artifact "contracts/out/Token.sol/Token.json")
+
+(define init-code (contract-abi-bytecode (file->contract-abi token-artifact)))
 (define transfer "transfer(address,uint256)")
 (define errors '("InsufficientBalance(uint256,uint256)"))
 
@@ -15,8 +18,7 @@
     (match-define (list alice bob _ ...) (eth-accounts))
     (parameterize ([current-account alice])
       (define token
-        (deploy-contract (artifact-bytecode "Token") "constructor(string,string,uint256)"
-                         "Token" "TOK" 1000))
+        (deploy-contract init-code "constructor(string,string,uint256)" "Token" "TOK" 1000))
       (printf "~a at ~a\n" (contract-call token "name()(string)") token)
       (define receipt (contract-send token transfer bob 250))
       (printf "transfer succeeded ~a\n" (receipt-succeeded? receipt))

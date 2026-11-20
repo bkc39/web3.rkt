@@ -66,11 +66,12 @@ locally, and `raco docs web3` opens it.
 
 ## Examples
 
-[`examples/`](examples/) has numbered scripts to read and to try at the
-REPL, each against its own local anvil:
+[`examples/`](examples/) has numbered programs, one flow each.
+`racket examples/NN-name.rkt` runs its `main`, which prints a few lines;
+the ones that need a node start their own local anvil.
 
 ```
-racket -i -e '(enter! "examples/00-provider.rkt")'
+racket examples/00-provider.rkt
 ```
 
 ## Development
