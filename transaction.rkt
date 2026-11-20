@@ -191,33 +191,247 @@
 
 (define (legacy-transaction #:chain-id chain-id #:nonce nonce #:gas-price gas-price
                             #:gas-limit gas-limit #:to to #:value [value 0] #:data [data #""])
-  (error 'unimplemented))
+  (build 0 (hasheq 'chain-id chain-id 'nonce nonce 'gas-price gas-price 'gas-limit gas-limit
+                   'to (stored-address to) 'value value 'data (bytes->immutable-bytes data))))
 
 (define (eip2930-transaction #:chain-id chain-id #:nonce nonce #:gas-price gas-price
                              #:gas-limit gas-limit #:to to #:value [value 0] #:data [data #""]
                              #:access-list [access-list '()])
-  (error 'unimplemented))
+  (build 1 (hasheq 'chain-id chain-id 'nonce nonce 'gas-price gas-price 'gas-limit gas-limit
+                   'to (stored-address to) 'value value 'data (bytes->immutable-bytes data)
+                   'access-list (stored-access-list access-list))))
 
 (define (eip1559-transaction #:chain-id chain-id #:nonce nonce
                              #:max-priority-fee-per-gas priority #:max-fee-per-gas max-fee
                              #:gas-limit gas-limit #:to to #:value [value 0] #:data [data #""]
                              #:access-list [access-list '()])
-  (error 'unimplemented))
+  (build 2 (hasheq 'chain-id chain-id 'nonce nonce 'max-priority-fee-per-gas priority
+                   'max-fee-per-gas max-fee 'gas-limit gas-limit 'to (stored-address to)
+                   'value value 'data (bytes->immutable-bytes data)
+                   'access-list (stored-access-list access-list))))
+
+(define (stored-address address)
+  (and address (string->immutable-string (address->checksum-string address))))
+
+(define (stored-access-list access-list)
+  (for/list ([entry (in-list access-list)])
+    (match-define (cons address keys) entry)
+    (cons (stored-address address) (map bytes->immutable-bytes keys))))
+
+(define (build type fields)
+  (define (field name)
+    (hash-ref fields name #f))
+  (define payload
+    (for/list ([name (in-list (unsigned-fields type))])
+      (field->item (hash-ref field-kinds name) (field name))))
+  (unsigned-transaction type (field 'chain-id) (field 'nonce) (field 'gas-price)
+                        (field 'max-priority-fee-per-gas) (field 'max-fee-per-gas)
+                        (field 'gas-limit) (field 'to) (field 'value) (field 'data)
+                        (field 'access-list) payload
+                        (bytes->immutable-bytes
+                         (encode-unsigned type (field 'chain-id) payload))))
+
+(define (field->item kind value)
+  (match kind
+    [(or 'u64 'u256) (natural->rlp-scalar value)]
+    ['to (if value (hex->bytes value) #"")]
+    ['data value]
+    ['access-list
+     (for/list ([entry (in-list value)])
+       (match-define (cons address keys) entry)
+       (list (hex->bytes address) keys))]))
+
+(define (encode-unsigned type chain-id payload)
+  (cond
+    [(positive? type) (bytes-append (bytes type) (rlp-encode payload))]
+    [chain-id (rlp-encode (append payload (list (natural->rlp-scalar chain-id) #"" #"")))]
+    [else (rlp-encode payload)]))
+
+(define (encode-signed tx sig)
+  (match-define (signature r s y-parity) sig)
+  (define type (transaction-type tx))
+  (define chain-id (transaction-chain-id tx))
+  (define v
+    (cond
+      [(positive? type) y-parity]
+      [chain-id (+ 35 (* 2 chain-id) y-parity)]
+      [else (+ 27 y-parity)]))
+  (define encoded
+    (rlp-encode (append (transaction-payload tx) (map natural->rlp-scalar (list v r s)))))
+  (if (positive? type) (bytes-append (bytes type) encoded) encoded))
 
 (define (transaction->bytes tx)
-  (error 'unimplemented))
+  (bytes-copy (transaction-preimage tx)))
 
 (define (transaction-signing-hash tx)
-  (error 'unimplemented))
+  (keccak256 (transaction-preimage tx)))
 
 (define (sign-transaction key tx)
-  (error 'unimplemented))
+  (define digest (transaction-signing-hash tx))
+  (attach-signature/digest 'sign-transaction tx (sign-digest/who 'sign-transaction key digest)
+                           digest))
 
 (define (attach-signature tx sig)
-  (error 'unimplemented))
+  (attach-signature/digest 'signed-transaction tx sig (transaction-signing-hash tx)))
+
+(define (attach-signature/digest who tx sig digest)
+  (define low-s? (signature-low-s? sig))
+  (define sender (and low-s? (recover-address sig digest)))
+  (cond
+    [(not low-s?) (raise-signature-error who "s is more than half the curve order (EIP-2)")]
+    [(not sender) (raise-signature-error who "the signature recovers no address")]
+    [else (seal tx sig sender)]))
+
+(define (seal tx sig sender)
+  (define raw (bytes->immutable-bytes (encode-signed tx sig)))
+  (sealed-transaction tx sig sender (string->immutable-string (bytes->hex (keccak256 raw))) raw))
 
 (define (signed-transaction->bytes stx)
-  (error 'unimplemented))
+  (bytes-copy (signed-transaction-raw stx)))
+
+(define (raise-signature-error who detail)
+  (raise (exn:fail:web3:signature (format "~a: ~a" who detail) (current-continuation-marks))))
+
+(define (raise-raw who reason field detail)
+  (raise (exn:fail:web3:raw-transaction
+          (format "~a: ~a: ~a" who (hash-ref raw-transaction-phrases reason) detail)
+          (current-continuation-marks)
+          field
+          reason)))
 
 (define/who (bytes->signed-transaction who bs)
-  (error 'unimplemented))
+  (define type (envelope-type who bs))
+  (define items (fields-of who type (rlp-decode/who who bs (if (zero? type) 0 1))))
+  (define fields
+    (for/fold ([fields #hasheq()])
+              ([name (in-list (hash-ref wire-fields type))]
+               [item (in-list items)])
+      (hash-set fields name (read-field who name item))))
+  (define (field name)
+    (hash-ref fields name #f))
+  (define legacy-v (field 'v))
+  (define chain-id (if legacy-v (v-chain-id legacy-v) (field 'chain-id)))
+  (define sig
+    (signature (field 'r) (field 's) (if legacy-v (v-y-parity legacy-v) (field 'y-parity))))
+  (define priority (field 'max-priority-fee-per-gas))
+  (cond
+    [(and priority (> priority (field 'max-fee-per-gas)))
+     (raise-raw who 'range 'max-priority-fee-per-gas
+                "max-priority-fee-per-gas is more than max-fee-per-gas")]
+    [(not (signature-low-s? sig))
+     (raise-raw who 'high-s 's "s is more than half the curve order (EIP-2)")]
+    [else
+     (define tx (build type (hash-set fields 'chain-id chain-id)))
+     (define sender (recover-address sig (transaction-signing-hash tx)))
+     (unless sender
+       (raise-raw who 'no-sender #f "the signature recovers no address"))
+     (seal tx sig sender)]))
+
+(define (envelope-type who bs)
+  (define first-byte (and (positive? (bytes-length bs)) (bytes-ref bs 0)))
+  (cond
+    [(not first-byte) (raise-raw who 'type #f "no bytes")]
+    [(>= first-byte #xc0) 0]
+    [(memv first-byte '(1 2)) first-byte]
+    [(< first-byte #x80) (raise-raw who 'type #f (format "type ~a is not supported" first-byte))]
+    [else
+     (raise-raw who 'type #f
+                (format "first byte 0x~a is neither a type nor a list"
+                        (number->string first-byte 16)))]))
+
+(define (fields-of who type item)
+  (define expected (length (hash-ref wire-fields type)))
+  (define count (and (list? item) (length item)))
+  (cond
+    [(not count)
+     (raise-raw who 'shape #f (format "a type ~a transaction is a list, not a byte string" type))]
+    [(= count expected) item]
+    [(zero? type)
+     (raise-raw who 'shape #f (format "a legacy transaction has ~a fields, not ~a" expected count))]
+    [else
+     (raise-raw who 'shape #f
+                (format "a type ~a transaction has ~a fields, not ~a" type expected count))]))
+
+(define (read-field who name item)
+  (define kind (hash-ref field-kinds name))
+  (cond
+    [(eq? kind 'access-list) (read-access-list who item)]
+    [(list? item) (raise-raw who 'shape name (format "~a is a list, not a byte string" name))]
+    [(eq? kind 'data) (bytes->immutable-bytes item)]
+    [(eq? kind 'to) (read-to who item)]
+    [(and (positive? (bytes-length item)) (zero? (bytes-ref item 0)))
+     (raise-raw who 'leading-zero name (format "in ~a" name))]
+    [else (read-scalar who name kind item)]))
+
+(define (v-chain-id legacy-v)
+  (and (>= legacy-v 35) (quotient (- legacy-v 35) 2)))
+
+(define (v-y-parity legacy-v)
+  (if (>= legacy-v 35) (remainder (- legacy-v 35) 2) (- legacy-v 27)))
+
+(define (legacy-v? legacy-v)
+  (or (= legacy-v 27)
+      (= legacy-v 28)
+      (and (>= legacy-v 35) (< (v-chain-id legacy-v) (expt 2 64)))))
+
+(define (curve-scalar? scalar)
+  (< 0 scalar secp256k1-order))
+
+(define (y-parity? parity)
+  (<= parity 1))
+
+(define scalar-rules
+  (hasheq 'u64 (list 8 values "~a is 2^64 or more")
+          'u256 (list 32 values "~a is 2^256 or more")
+          'v (list 9 legacy-v?
+                   "~a is not 27, 28, or 35 + 2 * chain-id + y-parity with chain-id below 2^64")
+          'y-parity (list 1 y-parity? "~a is not 0 or 1")
+          'curve-scalar (list 32 curve-scalar? "~a is zero or not less than the curve order")))
+
+(define (read-scalar who name kind item)
+  (match-define (list max-size valid? template) (hash-ref scalar-rules kind))
+  (define natural (and (<= (bytes-length item) max-size) (bytes->natural item)))
+  (if (and natural (valid? natural))
+      natural
+      (raise-raw who 'range name (format template name))))
+
+(define (read-to who item)
+  (match (bytes-length item)
+    [0 #f]
+    [20 (stored-address (bytes->hex item))]
+    [size (raise-raw who 'length 'to (format "to has ~a bytes, not 0 or 20" size))]))
+
+(define (access-entry? entry)
+  (match entry
+    [(list (? bytes?) (list (? bytes?) ...)) #t]
+    [_ #f]))
+
+(define (read-access-list who item)
+  (define misshapen
+    (and (list? item)
+         (for/first ([entry (in-list item)] [index (in-naturals)] #:unless (access-entry? entry))
+           index)))
+  (cond
+    [(bytes? item)
+     (raise-raw who 'shape 'access-list "access-list is a byte string, not a list")]
+    [misshapen
+     (raise-raw who 'shape 'access-list
+                (format "access-list entry ~a is not an address and a list of storage keys"
+                        misshapen))]
+    [else
+     (for/list ([entry (in-list item)] [index (in-naturals)])
+       (read-access-entry who index entry))]))
+
+(define (read-access-entry who index entry)
+  (match-define (list address keys) entry)
+  (define bad-key (for/first ([key (in-list keys)] #:unless (= (bytes-length key) 32)) key))
+  (cond
+    [(not (= (bytes-length address) 20))
+     (raise-raw who 'length 'access-list
+                (format "access-list entry ~a has an address of ~a bytes, not 20"
+                        index (bytes-length address)))]
+    [bad-key
+     (raise-raw who 'length 'access-list
+                (format "access-list entry ~a has a storage key of ~a bytes, not 32"
+                        index (bytes-length bad-key)))]
+    [else (cons (stored-address (bytes->hex address)) (map bytes->immutable-bytes keys))]))
