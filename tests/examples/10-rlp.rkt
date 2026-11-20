@@ -1,9 +1,9 @@
 #lang racket/base
 
 (module+ test
-  (require racket/port
-           (only-in racket/string string-join)
-           rackunit)
+  (require (only-in racket/string string-join)
+           rackunit
+           (only-in "../helpers/examples.rkt" example-output))
 
   (define expected
     '("nonce 0"
@@ -28,6 +28,5 @@
       "0xc2: short at byte 0"))
 
   (test-case "X1: main prints the CREATE preimages and addresses, and what each input decodes to"
-    (check-equal? (with-output-to-string
-                    (lambda () (dynamic-require '(submod web3/examples/10-rlp main) #f)))
+    (check-equal? (example-output "10-rlp")
                   (string-append (string-join expected "\n") "\n"))))

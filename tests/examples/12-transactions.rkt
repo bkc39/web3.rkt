@@ -1,10 +1,10 @@
 #lang racket/base
 
 (module+ test
-  (require racket/port
-           (only-in racket/string string-append* string-join)
+  (require (only-in racket/string string-append* string-join)
            rackunit
            (only-in web3/rpc hex-string->bytes)
+           (only-in "../helpers/examples.rkt" example-output)
            (only-in "../helpers/secrets.rkt" check-no-leak))
 
   (define key
@@ -37,9 +37,7 @@
       "  sender 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
       "truncated: short at byte 1"))
 
-  (define output
-    (with-output-to-string
-      (lambda () (dynamic-require '(submod web3/examples/12-transactions main) #f))))
+  (define output (example-output "12-transactions"))
 
   (test-case "X1: main prints three signed transactions, parsed back, and a refused truncation"
     (check-equal? output (string-append (string-join expected "\n") "\n")))

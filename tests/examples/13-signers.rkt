@@ -1,11 +1,11 @@
 #lang racket/base
 
 (module+ test
-  (require racket/port
-           (only-in racket/string string-join)
+  (require (only-in racket/string string-join)
            rackunit
            (only-in web3 current-anvil-path)
            (only-in web3/rpc hex-string->bytes)
+           (only-in "../helpers/examples.rkt" example-output)
            (only-in "../helpers/secrets.rkt" check-no-leak))
 
   (define key
@@ -24,9 +24,7 @@
     [(not (current-anvil-path))
      (displayln "skipping example 13: anvil not found")]
     [else
-     (define output
-       (with-output-to-string
-         (lambda () (dynamic-require '(submod web3/examples/13-signers main) #f))))
+     (define output (example-output "13-signers"))
 
      (test-case "X1: both signers' signatures verify, and they sign the same transaction"
        (check-equal? output (string-append (string-join expected "\n") "\n")))

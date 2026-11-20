@@ -1,11 +1,11 @@
 #lang racket/base
 
 (module+ test
-  (require racket/port
-           (only-in racket/string string-join)
+  (require (only-in racket/string string-join)
            rackunit
            (only-in web3 current-anvil-path)
            (only-in web3/rpc hex-string->bytes)
+           (only-in "../helpers/examples.rkt" example-output)
            (only-in "../helpers/secrets.rkt" check-no-leak))
 
   (define key
@@ -21,9 +21,7 @@
     [(not (current-anvil-path))
      (displayln "skipping example 14: anvil not found")]
     [else
-     (define output
-       (with-output-to-string
-         (lambda () (dynamic-require '(submod web3/examples/14-sending main) #f))))
+     (define output (example-output "14-sending"))
 
      (test-case "X1: a key the node does not hold deploys, sends and transfers"
        (check-equal? output (string-append (string-join expected "\n") "\n")))
