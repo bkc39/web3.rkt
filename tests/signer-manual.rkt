@@ -21,17 +21,6 @@
        [(recover-message-address sig "hello") (value "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")]
        [(message-signed-by? sig "hello" (signer-address signer)) (value #t)]
        [(message-signed-by? sig "hello!" (signer-address signer)) (value #f)])
-      ([(signed-transaction-hash
-         (signer-sign-transaction
-          signer
-          (eip1559-transaction #:chain-id 31337
-                               #:nonce 0
-                               #:max-priority-fee-per-gas (gwei->wei 2)
-                               #:max-fee-per-gas (gwei->wei 30)
-                               #:gas-limit 21000
-                               #:to "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
-                               #:value (ether->wei "1.5"))))
-        (value "0x6e6196f107bb02ceffd0db99a2c3be3053f8d1917061e67f88c7843aa77833e2")])
       ([(equal? (hash-message "héllo") (hash-message (string->bytes/utf-8 "héllo"))) (value #t)]
        [(equal? (hash-message "0xdeadbeef") (hash-message (bytes #xde #xad #xbe #xef)))
         (value #f)])
@@ -56,13 +45,7 @@
        [node-account (prints "#<node-signer 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266>")]
        [(signer-sign-digest node-account (hash-message "hello"))
         (raises "signer-sign-digest: not supported: the signer signs no digests")])
-      ([(struct vault (key)
-          #:methods gen:signer
-          [(define (signer-address v) (secret-key->address (vault-key v)))
-           (define (signer-sign-digest v digest) (sign-digest (vault-key v) digest))])
-        (void)]
-       [(equal? (signer-sign-message (vault key) "hello") (sign-message key "hello")) (value #t)]
-       [(struct liar (key)
+      ([(struct liar (key)
           #:methods gen:signer
           [(define (signer-address l) "0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
            (define (signer-sign-digest l digest) (sign-digest (liar-key l) digest))])

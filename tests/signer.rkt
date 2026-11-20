@@ -15,7 +15,8 @@
            (only-in "helpers/secrets.rkt" check-no-leak marker marker-hex marker-integer)
            "helpers/transactions.rkt"
            "modules.rkt"
-           (only-in "util.rkt" anvil-alice anvil-bob check-blames-here seeded))
+           (only-in "util.rkt"
+                    anvil-alice anvil-bob check-blames-here raised raised-or-value seeded))
 
   (match-define (list key0 key1 _ ...) (map hex-string->secret-key anvil-keys))
   (define lowercase-alice (string-downcase anvil-alice))
@@ -24,15 +25,6 @@
 
   (define (raw-hex stx)
     (bytes->hex-string (signed-transaction->bytes stx)))
-
-  (define (raised thunk)
-    (with-handlers ([(lambda (_) #t) values])
-      (thunk)
-      #f))
-
-  (define (raised-or-value thunk)
-    (with-handlers ([exn:fail? values])
-      (thunk)))
 
   (test-case "G1: addresses, printed forms and predicates"
     (define local (local-signer key0))
@@ -93,9 +85,19 @@
     [(define (signer-address signer) (call! signer 'address))
      (define (signer-sign-transaction signer tx) (call! signer 'transaction tx))])
 
+  (struct full-signer recording ()
+    #:transparent
+    #:methods gen:signer
+    [(define (signer-address signer) (call! signer 'address))
+     (define (signer-sign-digest signer digest) (call! signer 'digest digest))
+     (define (signer-sign-message signer message) (call! signer 'message message))
+     (define (signer-sign-transaction signer tx) (call! signer 'transaction tx))])
+
   (define kinds
     (hasheq 'address-only address-only 'digest digest-signer 'message message-signer
-            'transaction transaction-signer))
+            'transaction transaction-signer 'full full-signer))
+
+  (define evil-digest (hash-message "evil"))
 
   (define rpc-failure
     (with-handlers ([exn:fail:web3:rpc? values])
@@ -108,24 +110,26 @@
             '65-bytes (hasheq 'digest (lambda (_) (make-bytes 65 1)))
             'unsigned (hasheq 'transaction values)
             'high-s (hasheq 'digest (lambda (digest) (other-s (sign-digest key0 digest))))
-            'failing (hasheq 'digest (lambda (_) (raise rpc-failure)))))
+            'failing (hasheq 'digest (lambda (_) (raise rpc-failure)))
+            'mutating (hasheq 'digest (lambda (digest)
+                                        (bytes-copy! digest 0 evil-digest)
+                                        (sign-digest key0 digest))
+                              'message (lambda (message)
+                                         (bytes-fill! message (char->integer #\x))
+                                         (sign-message key0 message)))))
 
   (define (custom kind address behaviour)
     ((hash-ref kinds kind) marker address (hash-ref behaviours behaviour) (box '())))
 
-  (define operations
-    `((address ,signer-address) (digest ,(lambda (signer) (signer-sign-digest signer digest-hello)))
-      (message ,(lambda (signer) (signer-sign-message signer "hello")))
-      (transaction ,(lambda (signer) (signer-sign-transaction signer example-eip1559)))))
+  (define (run-on operation signer digest message)
+    (match operation
+      ['address (signer-address signer)]
+      ['digest (signer-sign-digest signer digest)]
+      ['message (signer-sign-message signer message)]
+      ['transaction (signer-sign-transaction signer example-eip1559)]))
 
   (define (run operation signer)
-    (match-define (list _ call) (assq operation operations))
-    (call signer))
-
-  (define (exn-outcome e)
-    (match e
-      [(? exn:fail:web3:signer?) (list 'signer (exn:fail:web3:signer-reason e) (exn-message e))]
-      [_ (list 'other e)]))
+    (run-on operation signer digest-hello "hello"))
 
   (define custom-refusals
     `((address-only ,anvil-alice honest digest
@@ -166,6 +170,9 @@
       (digest ,anvil-alice high-s transaction
               "signer-sign-transaction: high s: s is more than half the curve order (EIP-2)")))
 
+  (define preferences
+    '((digest (digest address)) (message (message address)) (transaction (transaction address))))
+
   (define (custom-refusal row)
     (match-define (list kind address behaviour operation _) row)
     (define signer (custom kind address behaviour))
@@ -204,7 +211,82 @@
       (raised (lambda () (run operation signer)))
       (check-equal? (unbox (recording-calls signer)) '() (format "~a" operation)))
     (check-eq? (raised (lambda () (run 'digest (custom 'digest anvil-alice 'failing))))
-               rpc-failure))
+               rpc-failure)
+    (for ([row (in-list preferences)])
+      (match-define (list operation expected) row)
+      (define signer (custom 'full anvil-alice 'honest))
+      (run operation signer)
+      (check-equal? (unbox (recording-calls signer)) expected (format "~a" operation))))
+
+  (define mutations
+    '((digest digest) (digest message) (digest transaction) (message message)))
+
+  (test-case "G14: a method that changes what it is given signs nothing the caller asked for"
+    (for ([row (in-list mutations)])
+      (match-define (list kind operation) row)
+      (define digest (bytes-copy digest-hello))
+      (define message (bytes-copy #"hello"))
+      (define e
+        (raised (lambda () (run-on operation (custom kind anvil-alice 'mutating) digest message))))
+      (define name (format "~s" row))
+      (check-pred exn:fail:web3:signer? e name)
+      (when (exn:fail:web3:signer? e)
+        (check-eq? (exn:fail:web3:signer-reason e) 'wrong-signer name))
+      (check-equal? digest digest-hello name)
+      (check-equal? message #"hello" name)))
+
+  (test-case "G15: a method receives a mutable copy of the caller's bytes"
+    (for* ([row (in-list '((digest digest) (message message)))]
+           [given (in-list (list (bytes-copy #"hello") #"hello"))])
+      (match-define (list kind operation) row)
+      (define seen (box #f))
+      (define honest (hash-ref (hash-ref behaviours 'honest) kind))
+      (define signer
+        ((hash-ref kinds kind) marker anvil-alice
+                               (hasheq kind (lambda (bs) (set-box! seen bs) (honest bs)))
+                               (box '())))
+      (define digest (if (immutable? given) (hash-message given) (bytes-copy digest-hello)))
+      (run-on operation signer digest given)
+      (define passed (if (eq? operation 'digest) digest given))
+      (define name (format "~s ~s" row given))
+      (check-equal? (unbox seen) passed name)
+      (check-false (eq? (unbox seen) passed) name)
+      (check-false (immutable? (unbox seen)) name)))
+
+  (test-case "G16: nothing a transaction method receives can be changed"
+    (for ([tx (in-list example-transactions)])
+      (check-true (immutable? (transaction-data tx)))
+      (check-true (immutable? (transaction-to tx)))
+      (for ([entry (in-list (if (legacy-transaction? tx) '() (transaction-access-list tx)))])
+        (match-define (cons address keys) entry)
+        (check-true (immutable? address))
+        (for ([key (in-list keys)])
+          (check-true (immutable? key))))))
+
+  (struct fickle (answers)
+    #:methods gen:signer
+    [(define (signer-address signer)
+       (match-define (cons answer more) (unbox (fickle-answers signer)))
+       (set-box! (fickle-answers signer) more)
+       answer)
+     (define (signer-sign-digest signer digest) (sign-digest key0 digest))
+     (define (signer-sign-transaction signer tx) (sign-transaction key0 tx))])
+
+  (define fickle-rows
+    `(((,anvil-alice ,anvil-bob) ok) ((,anvil-bob ,anvil-alice) wrong-signer)))
+
+  (test-case "G17: the address is read once per operation, and checked as read"
+    (for* ([row (in-list fickle-rows)]
+           [operation (in-list '(digest message transaction))])
+      (match-define (list answers expected) row)
+      (define signer (fickle (box answers)))
+      (define outcome
+        (match (raised (lambda () (run operation signer)))
+          [#f 'ok]
+          [(? exn:fail:web3:signer? e) (exn:fail:web3:signer-reason e)]
+          [e e]))
+      (check-equal? outcome expected (format "~s ~a" row operation))
+      (check-equal? (unbox (fickle-answers signer)) (rest answers))))
 
   (test-case "G10: no refusal shows the signer"
     (for ([row (in-list custom-refusals)])
@@ -447,7 +529,18 @@
     (check-equal? (sort (exported-names 'web3/signer) symbol<?) (sort signer-names symbol<?))
     (define ev (make-base-eval))
     (check-not-exn (lambda () (ev '(require web3))))
-    (check-not-exn (lambda () (ev '(require web3 libsecp256k1)))))
+    (check-not-exn (lambda () (ev '(require web3 libsecp256k1))))
+    (define signer-only (make-base-eval '(require web3/signer web3/account)))
+    (check-equal?
+     (signer-only
+      `(let ()
+         (struct vault (key)
+           #:methods gen:signer
+           [(define (signer-address v) (secret-key->address (vault-key v)))
+            (define (signer-sign-digest v digest) (sign-digest (vault-key v) digest))])
+         (define key (hex-string->secret-key ,(first anvil-keys)))
+         (equal? (signer-sign-message (vault key) "hello") (sign-message key "hello"))))
+     #t))
 
   (test-case "P1: eth-sign sends the address and data, and checks the answer"
     (define provider (mock-provider (hash "eth_sign" "0xab")))

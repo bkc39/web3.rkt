@@ -28,7 +28,7 @@ node.  `(show expr)` prints an expression and its value.
 | `10-rlp.rkt` | encoding and decoding RLP, scalars, the RLP behind CREATE addresses, refusing non-canonical input |
 | `11-units.rkt` | wei, gwei and ether amounts from decimal strings and back, a token's decimals, refused amounts |
 | `12-transactions.rkt` | legacy, EIP-2930 and EIP-1559 transactions signed offline, their raw bytes, hashes and recovered senders, a refused truncation |
-| `13-signers.rkt` | a local key and a node account as signers of the same EIP-191 message and transaction, recovering and verifying the signer, a node signer refusing a digest |
+| `13-signers.rkt` | a local key and a node account as signers: each one's EIP-191 signature verifies, and both sign the same transaction |
 
 09, 10, 11 and 12 are programs: `racket examples/NN-name.rkt` runs its `main` and needs no node.
 13 is a program that starts its own anvil.

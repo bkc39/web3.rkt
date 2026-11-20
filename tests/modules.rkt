@@ -47,7 +47,8 @@
     [_ #f]))
 
 (define (collection name)
-  (car (regexp-split #rx"/" name)))
+  (match (regexp-split #rx"/" name)
+    [(cons head _) head]))
 
 (define (exported-names module)
   (module-declared? module #t)

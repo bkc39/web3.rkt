@@ -22,8 +22,7 @@
 
   (define (random-byte-messages count)
     (for/list ([_ (in-range count)])
-      (define message (random-message prng))
-      (if (bytes? message) message (string->bytes/utf-8 message))))
+      (message-bytes (random-message prng))))
 
   (define (cast-sign key . arguments)
     (apply run-cast "wallet" "sign" "--private-key" (key-hex key) arguments))

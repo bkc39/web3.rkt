@@ -1,51 +1,44 @@
 #lang racket/base
 
 (require racket/contract/base
-         racket/generic
-         (only-in racket/match match match*)
+         (only-in racket/match match-define)
          (only-in "abi/type.rkt" abi-value?)
          "account.rkt"
-         (only-in (submod "account.rkt" private) bytes->signature/who sign-digest/who)
+         (only-in (submod "account.rkt" private)
+                  bytes->signature/who
+                  message->bytes
+                  sign-digest/who)
          (only-in "address.rkt" address->checksum-string checksum-address?)
          (only-in "eth.rkt" eth-sign eth-sign-transaction)
          "private/exn.rkt"
          (only-in "private/hex.rkt" bytes->hex hex->bytes hex-data-string?)
          (only-in "private/opaque.rkt"
                   address/c describe-kind digest/c message/c opaque-> opaque/c secret-key/c)
+         "private/signer.rkt"
+         "private/who.rkt"
          (only-in "rpc.rkt" current-provider provider?)
          "transaction.rkt"
          (only-in (submod "transaction.rkt" internal)
                   bytes->signed-transaction/who transaction/c transaction-difference))
 
-(define-generics signer
-  (signer-address signer)
-  (signer-sign-digest signer digest)
-  (signer-sign-message signer message)
-  (signer-sign-transaction signer tx)
-  #:requires [signer-address]
-  #:defined-predicate signer-implements?)
-
-(define any-signer/c (opaque/c 'signer? "a signer" signer?))
+(define signer/c (opaque/c 'signer? "a signer" signer?))
 (define provider/c (or/c #f provider?))
 
 (provide gen:signer
          (struct-out exn:fail:web3:signer)
          (contract-out
           [signer? (opaque-> any/c boolean?)]
-          [rename checked-address signer-address (opaque-> any-signer/c checksum-address?)]
-          [rename checked-sign-digest signer-sign-digest
-                  (opaque-> any-signer/c digest/c signature?)]
-          [rename checked-sign-message signer-sign-message
-                  (opaque-> any-signer/c message/c signature?)]
-          [rename checked-sign-transaction signer-sign-transaction
-                  (opaque-> any-signer/c transaction/c signed-transaction?)]
+          [signer-address (opaque-> signer/c checksum-address?)]
+          [signer-sign-digest (opaque-> signer/c digest/c signature?)]
+          [signer-sign-message (opaque-> signer/c message/c signature?)]
+          [signer-sign-transaction (opaque-> signer/c transaction/c signed-transaction?)]
           [local-signer (opaque-> secret-key/c local-signer?)]
           [local-signer? (opaque-> any/c boolean?)]
           [node-signer (opaque-> address/c [#:provider provider/c] node-signer?)]
           [node-signer? (opaque-> any/c boolean?)]))
 
 (module* internal #f
-  (provide (rename-out [any-signer/c signer/c])
+  (provide signer/c
            signer-reason/c
            signer-address/who
            signer-sign-transaction/who))
@@ -75,9 +68,7 @@
   #:property prop:custom-write
   (lambda (signer port _mode) (write-signer 'local-signer (local-signer-address signer) port))
   #:methods gen:signer
-  [(define (signer-address signer) (local-signer-address signer))
-   (define (signer-sign-digest signer digest)
-     (local-sign-digest 'signer-sign-digest signer digest))])
+  [(define (signer-address signer) (local-signer-address signer))])
 
 (struct node-signer (address provider)
   #:constructor-name new-node-signer
@@ -85,11 +76,7 @@
   #:property prop:custom-write
   (lambda (signer port _mode) (write-signer 'node-signer (node-signer-address signer) port))
   #:methods gen:signer
-  [(define (signer-address signer) (node-signer-address signer))
-   (define (signer-sign-message signer message)
-     (node-sign-message 'signer-sign-message signer message))
-   (define (signer-sign-transaction signer tx)
-     (node-sign-transaction 'signer-sign-transaction signer tx))])
+  [(define (signer-address signer) (node-signer-address signer))])
 
 (define (local-signer key)
   (new-local-signer key (secret-key->address key)))
@@ -120,96 +107,84 @@
       (raise-signer who 'malformed "the node returned ~a, not a raw transaction"
                     (describe-kind answer))))
 
-(define generic-methods
-  (hasheq 'signer-sign-digest signer-sign-digest
-          'signer-sign-message signer-sign-message
-          'signer-sign-transaction signer-sign-transaction))
+(define methods
+  `((signer-sign-digest ,generic-signer-sign-digest ,local-signer? ,local-sign-digest)
+    (signer-sign-message ,generic-signer-sign-message ,node-signer? ,node-sign-message)
+    (signer-sign-transaction ,generic-signer-sign-transaction ,node-signer?
+                             ,node-sign-transaction)))
 
-(define (call-method who method signer argument)
-  (match* (signer method)
-    [((? local-signer?) 'signer-sign-digest) (local-sign-digest who signer argument)]
-    [((? node-signer?) 'signer-sign-message) (node-sign-message who signer argument)]
-    [((? node-signer?) 'signer-sign-transaction) (node-sign-transaction who signer argument)]
-    [(_ _) ((hash-ref generic-methods method) signer argument)]))
+(define (find-method who signer name)
+  (match-define (list _ generic built-in? built-in) (assq name methods))
+  (cond
+    [(built-in? signer) (lambda (target value) (built-in who target value))]
+    [(signer-implements? signer name) generic]
+    [else #f]))
 
-(define (signer-address/who who signer)
-  (define address (signer-address signer))
+(define/who (signer-address who signer)
+  (define address (generic-signer-address signer))
   (if (abi-value? 'address address)
       (address->checksum-string address)
       (raise-signer who 'malformed "the signer's address is ~a, not an address"
                     (describe-kind address))))
 
 (define (check-signature who sig digest address)
-  (define recovered (and (signature? sig) (signature-low-s? sig) (recover-address sig digest)))
   (cond
     [(not (signature? sig))
      (raise-signer who 'malformed "the signer returned ~a, not a signature" (describe-kind sig))]
     [(not (signature-low-s? sig))
      (raise-signer who 'high-s "s is more than half the curve order (EIP-2)")]
-    [(not recovered) (raise-signer who 'wrong-signer "the signature recovers no address")]
-    [(not (equal? recovered address))
-     (raise-signer who 'wrong-signer "the signature recovers ~a, not the signer's address ~a"
-                   recovered address)]
-    [else sig]))
+    [(equal? (recover-address sig digest) address) sig]
+    [(recover-address sig digest)
+     => (lambda (recovered)
+          (raise-signer who 'wrong-signer "the signature recovers ~a, not the signer's address ~a"
+                        recovered address))]
+    [else (raise-signer who 'wrong-signer "the signature recovers no address")]))
 
 (define (check-signed-transaction who stx tx address)
-  (define difference
-    (and (signed-transaction? stx)
-         (transaction-difference tx (signed-transaction-transaction stx))))
   (cond
     [(not (signed-transaction? stx))
      (raise-signer who 'malformed "the signer returned ~a, not a signed transaction"
                    (describe-kind stx))]
-    [difference
-     (raise-signer who 'wrong-transaction "the signed transaction differs in ~a" difference)]
+    [(transaction-difference tx (signed-transaction-transaction stx))
+     => (lambda (difference)
+          (raise-signer who 'wrong-transaction "the signed transaction differs in ~a" difference))]
     [(not (equal? (signed-transaction-sender stx) address))
      (raise-signer who 'wrong-signer "the transaction's sender is ~a, not the signer's address ~a"
                    (signed-transaction-sender stx) address)]
     [else stx]))
 
-(define (first-method signer methods)
-  (for/first ([method (in-list methods)] #:when (signer-implements? signer method))
-    method))
+(define (signed-digest who signer sign argument digest address)
+  (check-signature who (sign signer (bytes-copy argument)) digest address))
 
-(define (signed-digest who signer method argument digest address)
-  (check-signature who (call-method who method signer argument) digest address))
+(define/who (signer-sign-digest who signer digest)
+  (define expected (bytes->immutable-bytes digest))
+  (define by-digest (find-method who signer 'signer-sign-digest))
+  (if by-digest
+      (signed-digest who signer by-digest expected expected (signer-address/who who signer))
+      (raise-signer who 'unsupported "the signer signs no digests")))
 
-(define (signer-sign-digest/who who signer digest)
-  (define method (first-method signer '(signer-sign-digest)))
-  (define address (and method (signer-address/who who signer)))
-  (match method
-    [#f (raise-signer who 'unsupported "the signer signs no digests")]
-    [_ (signed-digest who signer method digest digest address)]))
+(define/who (signer-sign-message who signer message)
+  (define body (bytes->immutable-bytes (message->bytes message)))
+  (define digest (bytes->immutable-bytes (hash-message body)))
+  (define by-message (find-method who signer 'signer-sign-message))
+  (define by-digest (find-method who signer 'signer-sign-digest))
+  (cond
+    [by-message (signed-digest who signer by-message body digest (signer-address/who who signer))]
+    [by-digest (signed-digest who signer by-digest digest digest (signer-address/who who signer))]
+    [else (raise-signer who 'unsupported "the signer signs neither messages nor digests")]))
 
-(define (signer-sign-message/who who signer message)
-  (define body (if (bytes? message) message (string->bytes/utf-8 message)))
-  (define digest (hash-message body))
-  (define method (first-method signer '(signer-sign-message signer-sign-digest)))
-  (define address (and method (signer-address/who who signer)))
-  (match method
-    [#f (raise-signer who 'unsupported "the signer signs neither messages nor digests")]
-    ['signer-sign-message (signed-digest who signer method body digest address)]
-    ['signer-sign-digest (signed-digest who signer method digest digest address)]))
+(define (signed-transaction-by-digest who signer by-digest tx)
+  (define digest (bytes->immutable-bytes (transaction-signing-hash tx)))
+  (define address (signer-address/who who signer))
+  (define sig (signed-digest who signer by-digest digest digest address))
+  (check-signed-transaction who (signed-transaction tx sig) tx address))
 
-(define (signer-sign-transaction/who who signer tx)
-  (define digest (transaction-signing-hash tx))
-  (define method (first-method signer '(signer-sign-transaction signer-sign-digest)))
-  (define address (and method (signer-address/who who signer)))
-  (match method
-    [#f (raise-signer who 'unsupported "the signer signs neither transactions nor digests")]
-    ['signer-sign-transaction
-     (check-signed-transaction who (call-method who method signer tx) tx address)]
-    ['signer-sign-digest
-     (signed-transaction tx (signed-digest who signer method digest digest address))]))
-
-(define (checked-address signer)
-  (signer-address/who 'signer-address signer))
-
-(define (checked-sign-digest signer digest)
-  (signer-sign-digest/who 'signer-sign-digest signer digest))
-
-(define (checked-sign-message signer message)
-  (signer-sign-message/who 'signer-sign-message signer message))
-
-(define (checked-sign-transaction signer tx)
-  (signer-sign-transaction/who 'signer-sign-transaction signer tx))
+(define/who (signer-sign-transaction who signer tx)
+  (define by-transaction (find-method who signer 'signer-sign-transaction))
+  (define by-digest (find-method who signer 'signer-sign-digest))
+  (cond
+    [by-transaction
+     (define address (signer-address/who who signer))
+     (check-signed-transaction who (by-transaction signer tx) tx address)]
+    [by-digest (signed-transaction-by-digest who signer by-digest tx)]
+    [else (raise-signer who 'unsupported "the signer signs neither transactions nor digests")]))

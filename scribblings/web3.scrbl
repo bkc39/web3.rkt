@@ -4,7 +4,6 @@
                     racket/base
                     racket/contract
                     racket/generic
-                    (only-in racket/list first)
                     web3
                     web3/abi
                     web3/account
@@ -245,28 +244,12 @@ signed as its UTF-8 bytes.
           (message-signed-by? sig "hello" (signer-address signer))
           (message-signed-by? sig "hello!" (signer-address signer))]
 
-A signer signs transactions too.
-
-@examples[#:eval signer-eval
-          (signed-transaction-hash
-           (signer-sign-transaction
-            signer
-            (eip1559-transaction #:chain-id 31337
-                                 #:nonce 0
-                                 #:max-priority-fee-per-gas (gwei->wei 2)
-                                 #:max-fee-per-gas (gwei->wei 30)
-                                 #:gas-limit 21000
-                                 #:to "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
-                                 #:value (ether->wei "1.5"))))]
+A signer signs transactions too, with @racket[signer-sign-transaction].
 
 @racket[node-signer] signs with an account the node holds, through @tt{eth_sign} and
 @tt{eth_signTransaction}.  What it returns is checked as for any signer: a signature that does
 not recover its address, or a transaction other than the one asked for, raises
 @racket[exn:fail:web3:signer].
-
-@racketblock[
-(with-anvil ()
-  (equal? (signer-sign-message (node-signer (first (eth-accounts))) "hello") sig))]
 
 See @filepath{examples/13-signers.rkt}.
 
@@ -776,8 +759,7 @@ when @racket[r] or @racket[s] is zero or not less than @racket[secp256k1-order].
 
 @subsection[#:tag "account-messages"]{Messages}
 
-@defproc[(hash-message [message (or/c bytes? string?)])
-         (and/c bytes? (property/c bytes-length (=/c 32)))]{
+@defproc[(hash-message [message (or/c bytes? string?)]) digest/c]{
 The @hyperlink["https://eips.ethereum.org/EIPS/eip-191"]{EIP-191} digest of @racket[message]
 as a personal message (version @racket[#x45]): the Keccak-256 hash of the byte @racket[#x19],
 @racket["Ethereum Signed Message:\n"], the length of @racket[message] in bytes written in decimal,
@@ -1050,8 +1032,7 @@ without a chain id, by nothing.
             (legacy-transaction #:chain-id #f #:nonce 9 #:gas-price (gwei->wei 20)
                                 #:gas-limit 21000 #:to #f)))]}
 
-@defproc[(transaction-signing-hash [tx transaction?])
-         (and/c bytes? (property/c bytes-length (=/c 32)))]{
+@defproc[(transaction-signing-hash [tx transaction?]) digest/c]{
 The Keccak-256 hash of @racket[(transaction->bytes tx)], the digest a signer signs.
 
 @examples[#:eval transaction-eval
@@ -1121,7 +1102,8 @@ transaction's.}
 
 @defproc[(transaction->jsexpr [tx transaction?] [#:from from (abi-value/c 'address)]) hash?]{
 @racket[tx] as the transaction object nodes take for @tt{eth_signTransaction} and
-@tt{eth_sendTransaction}, sent from @racket[from].  Every field is given: @racket['type],
+@tt{eth_sendTransaction}, sent from @racket[from]: a @racket[jsexpr?] whose numbers are hex
+strings.  Every field is given: @racket['type],
 @racket['nonce], @racket['gas], the fee fields of its type, @racket['value], @racket['data],
 @racket['chainId] and, for types 1 and 2, @racket['accessList].  @racket['to] is left out for a
 contract creation, and @racket['chainId] for a legacy transaction without one.
@@ -1143,9 +1125,7 @@ Whether @racket[v] is an instance of a structure implementing @racket[gen:signer
 @defproc[(signer-address [signer signer?]) checksum-address?]{
 The address @racket[signer] signs for.}
 
-@defproc[(signer-sign-digest [signer signer?]
-                             [digest (and/c bytes? (property/c bytes-length (=/c 32)))])
-         signature?]{
+@defproc[(signer-sign-digest [signer signer?] [digest digest/c]) signature?]{
 @racket[digest] signed as given.  Raises @racket[exn:fail:web3:signer] for a signer that signs no
 digests, such as a node signer.}
 
@@ -1191,14 +1171,10 @@ Whether @racket[v] is a signer made by @racket[node-signer].}
 A generic interface.  An implementation defines @racket[signer-address] and at least one of
 @racket[signer-sign-digest], @racket[signer-sign-message] and @racket[signer-sign-transaction];
 messages and transactions are signed through @racket[signer-sign-digest] when their own method is
-not defined.  A message reaches @racket[signer-sign-message] as bytes.
+not defined.  A method receives a fresh mutable copy of the digest or of the message's bytes;
+changing it changes neither the caller's bytes nor what the result is checked against.
 
 @examples[#:eval signer-eval
-          (struct vault (key)
-            #:methods gen:signer
-            [(define (signer-address v) (secret-key->address (vault-key v)))
-             (define (signer-sign-digest v digest) (sign-digest (vault-key v) digest))])
-          (equal? (signer-sign-message (vault key) "hello") (sign-message key "hello"))
           (struct liar (key)
             #:methods gen:signer
             [(define (signer-address l) "0x70997970C51812dc3A010C7d01b50e0d17dc79C8")

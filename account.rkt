@@ -71,6 +71,7 @@
 
 (module* private #f
   (provide bytes->signature/who
+           message->bytes
            recoverable->signature
            sign-digest/who))
 

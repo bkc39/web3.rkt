@@ -11,9 +11,10 @@
            (only-in (submod web3/transaction internal) transaction-difference)
            (only-in web3/units ether->wei gwei->wei)
            (only-in "abi-gen.rkt" random-address)
+           (only-in "helpers/secrets.rkt" check-no-leak marker-hex)
            "helpers/transactions.rkt"
            "modules.rkt"
-           (only-in "util.rkt" anvil-alice anvil-bob check-blames-here pick seeded))
+           (only-in "util.rkt" anvil-alice anvil-bob check-blames-here pick raised seeded))
 
   (define eip-155
     (legacy-transaction #:chain-id 1 #:nonce 9 #:gas-price (gwei->wei 20) #:gas-limit 21000
@@ -116,9 +117,11 @@
     (check-blames-here (transaction->jsexpr 'tx #:from anvil-alice))
     (check-blames-here (transaction->jsexpr example-eip1559 #:from "0x12"))
     (check-blames-here (transaction->jsexpr example-eip1559 #:from (make-bytes 20 1)))
-    (check-exn exn:fail:contract? (lambda () (transaction->jsexpr example-eip1559)))
-    (check-exn exn:fail:contract:arity?
-               (lambda () (transaction->jsexpr example-eip1559 #:from anvil-alice 1))))
+    (check-no-leak
+     (exn-message (raised (lambda () (transaction->jsexpr example-eip1559 #:from marker-hex)))))
+    (check-blames-here (transaction->jsexpr example-eip1559))
+    (check-blames-here (transaction->jsexpr example-eip1559 #:from anvil-alice 1))
+    (check-blames-here (transaction->jsexpr example-eip1559 #:from anvil-alice #:to anvil-bob)))
 
   (test-case "J4: web3/transaction still needs no network or JSON modules"
     (define names (filter values (map module-name (import-closure 'web3/transaction))))

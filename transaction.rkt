@@ -17,7 +17,7 @@
          (only-in "address.rkt" address->checksum-string checksum-address?)
          "private/exn.rkt"
          (only-in "private/hex.rkt" bytes->hex bytes->natural hex->bytes natural->hex)
-         (only-in "private/opaque.rkt" opaque-> opaque/c secret-key/c)
+         (only-in "private/opaque.rkt" address/c opaque-> opaque/c secret-key/c)
          "private/who.rkt"
          (only-in "rlp.rkt" natural->rlp-scalar rlp-encode)
          (only-in (submod "rlp.rkt" internal) rlp-decode/who))
@@ -89,7 +89,7 @@
           [signed-transaction-hash (-> signed-transaction? transaction-hash/c)]
           [signed-transaction->bytes (-> signed-transaction? bytes?)]
           [bytes->signed-transaction (-> bytes? signed-transaction?)]
-          [transaction->jsexpr (-> transaction? #:from (abi-value/c 'address) hash?)]))
+          [transaction->jsexpr (opaque-> transaction/c #:from address/c hash?)]))
 
 (module* internal #f
   (provide bytes->signed-transaction/who
@@ -142,10 +142,10 @@
 (define (stored-fields type)
   (if (zero? type) (append (unsigned-fields type) '(chain-id)) (unsigned-fields type)))
 
-(define json-keys
-  (hasheq 'chain-id 'chainId 'nonce 'nonce 'gas-price 'gasPrice
-          'max-priority-fee-per-gas 'maxPriorityFeePerGas 'max-fee-per-gas 'maxFeePerGas
-          'gas-limit 'gas 'to 'to 'value 'value 'data 'data 'access-list 'accessList))
+(define (json-key name)
+  (match (regexp-split #rx"-" (symbol->string name))
+    ['("gas" "limit") 'gas]
+    [(cons head tail) (string->symbol (apply string-append head (map string-titlecase tail)))]))
 
 (define (equal+hash-by key)
   (list (lambda (this other _) (equal? (key this) (key other)))
@@ -339,7 +339,7 @@
             ([name (in-list (stored-fields type))])
     (define value (transaction-field tx name))
     (if value
-        (hash-set json (hash-ref json-keys name) (field->json (hash-ref field-kinds name) value))
+        (hash-set json (json-key name) (field->json (hash-ref field-kinds name) value))
         json)))
 
 (define (field->json kind value)
