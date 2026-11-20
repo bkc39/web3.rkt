@@ -32,6 +32,7 @@
     [`(blames ,who)
      (check-pred exn:fail:contract:blame? result name)
      (when (exn:fail? result)
-       (check-regexp-match (pregexp (format "^~a: contract violation" (regexp-quote (format "~a" who))))
-                           (exn-message result)
-                           name))]))
+       (check-regexp-match
+        (pregexp (format "^~a: contract violation" (regexp-quote (symbol->string who))))
+        (exn-message result)
+        name))]))

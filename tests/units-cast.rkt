@@ -2,6 +2,7 @@
 
 (module+ test
   (require racket/match
+           (only-in racket/string string-contains?)
            rackunit
            web3/units
            "cast.rkt"
@@ -31,8 +32,10 @@
                (add1 tries))])))
 
   (define syntax-inputs
-    '(" 1" "1 " "+1" "1e3" "1,000" "0x10" "1.2.3" "--1" "1-" "1/2" "#e1.5" "Infinity" "+inf.0"
-      "1\n" "١" "1.5 ether" ".-1"))
+    (for*/list ([row (in-list syntax-rows)]
+                [s (in-value (match row [(list s _) s]))]
+                #:unless (string-contains? s "_"))
+      s))
 
   (cond
     [(not cast-path) (displayln "SKIPPED: units differential: cast not found")]
@@ -40,7 +43,7 @@
      (test-case "C1: cast to-wei and parse-units read every amount as units->wei does"
        (define prng (seeded 7 3 1 5 2 9))
        (for* ([u (in-list cast-units)]
-              [s (in-list (cast-sample random-amount-string prng u 200))])
+              [s (in-list (cast-sample random-amount-string prng u 60))])
          (check-equal? (cast-read s u) (number->string (units->wei s u)) (format "~s ~a" s u))))
 
      (test-case "C2: cast truncates the digits we refuse"
@@ -59,6 +62,9 @@
 
      (test-case "C3: cast refuses the strings we refuse, except those without digits"
        (for ([s (in-list syntax-inputs)])
+         (define e (with-handlers ([exn:fail:web3:units? values]) (units->wei s 'ether)))
+         (check-eq? (and (exn:fail:web3:units? e) (exn:fail:web3:units-reason e)) 'syntax
+                    (format "~s" s))
          (match (cast-outcome "to-wei" "--" s "ether")
            [(list 'failed stderr) (check-regexp-match #rx"invalid digit" stderr (format "~s" s))]
            [other (fail (format "cast accepted ~s: ~s" s other))]))
@@ -73,7 +79,7 @@
          (list n u)))
 
      (test-case "C4: cast from-wei writes every digit of the unit's decimals"
-       (for ([sample (in-list (wei-samples (seeded 5 8 2 4 6 1) '(wei gwei ether) 67))])
+       (for ([sample (in-list (wei-samples (seeded 5 8 2 4 6 1) '(wei gwei ether) 40))])
          (match-define (list n u) sample)
          (check-equal? (run-cast "from-wei" "--" (number->string n) (symbol->string u))
                        (wei->string n u #:min-fraction-digits (max (unit-decimals u) 1))

@@ -14,7 +14,7 @@
       "\"0.0000000000000000001\": ether->wei: too many decimals: ether has 18, but decimal 19 is 1"
       "\"\": ether->wei: not a decimal number: no digits"))
 
-  (test-case "X1: main prints amounts in wei and ether, a token amount, and three refusals"
+  (test-case "main prints amounts in wei and ether, a token amount, and three refusals"
     (check-equal? (with-output-to-string
                     (lambda () (dynamic-require '(submod web3/examples/11-units main) #f)))
                   (string-append (string-join expected "\n") "\n"))))

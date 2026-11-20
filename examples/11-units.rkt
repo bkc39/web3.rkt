@@ -16,4 +16,5 @@
   (printf "fee   ~a ether\n" (wei->string fee))
   (printf "total ~a ether\n" (wei->string (+ value fee)))
   (printf "token ~a\n" (wei->string (units->wei "1234.5" 6) 6 #:min-fraction-digits 2))
-  (for-each print-refusal '("1,5" "0.0000000000000000001" "")))
+  (for ([text (in-list '("1,5" "0.0000000000000000001" ""))])
+    (print-refusal text)))

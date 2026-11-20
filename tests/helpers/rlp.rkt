@@ -9,7 +9,8 @@
          (only-in web3/rlp exn:fail:web3:rlp-offset exn:fail:web3:rlp-reason exn:fail:web3:rlp?
                   rlp-decode)
          (only-in web3/rpc bytes->hex-string)
-         (only-in "../abi-gen.rkt" random-bytes))
+         (only-in "../abi-gen.rkt" random-bytes)
+         (only-in "../util.rkt" pick))
 
 (provide boundary-items
          check-decode-fault
@@ -58,8 +59,6 @@
     (when message
       (check-equal? (exn-message e) message name))))
 
-(define (pick prng xs)
-  (list-ref xs (random (length xs) prng)))
 
 (define edge-bytes '(#x00 #x01 #x7f #x80 #x81 #xff))
 

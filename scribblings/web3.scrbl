@@ -173,13 +173,6 @@ hold most decimal amounts exactly.
           (eval:error (ether->wei "0.0000000000000000001"))
           (eval:error (ether->wei 1.5))]
 
-A token counts in its own smallest unit, with the number of decimals its contract reports.
-@racket[units->wei] and @racket[wei->string] take that number in place of a unit's name.
-
-@examples[#:eval units-eval
-          (units->wei "1234.5" 6)
-          (wei->string 1234500000 6 #:min-fraction-digits 2)]
-
 See @filepath{examples/11-units.rkt}.
 
 @section{Providers and Calls}
@@ -765,10 +758,8 @@ whole number of wei.  Zeros past the unit's decimals are allowed.
 
 @examples[#:eval units-eval
           (units->wei "0.25" 'gwei)
-          (units->wei "-.5" 6)
           (units->wei "1.500000000" 6)
-          (eval:error (units->wei "1.0000005" 6))
-          (eval:error (units->wei "1,5" 6))]}
+          (eval:error (units->wei "1.0000005" 6))]}
 
 @deftogether[(@defproc[(ether->wei [amount (or/c string? (and/c rational? exact?))])
                        exact-integer?]
@@ -791,10 +782,8 @@ padded with zeros to at least @racket[min-digits] places after the point.  For e
 
 @examples[#:eval units-eval
           (wei->string 1500000000000000000)
-          (wei->string 30000000000 'gwei)
           (wei->string -1 'gwei)
-          (wei->string 1500000 6 #:min-fraction-digits 2)
-          (wei->string (ether->wei 1) #:min-fraction-digits 18)]}
+          (wei->string 1500000 6 #:min-fraction-digits 2)]}
 
 @defstruct*[(exn:fail:web3:units exn:fail:web3)
             ([index (or/c #f exact-nonnegative-integer?)]

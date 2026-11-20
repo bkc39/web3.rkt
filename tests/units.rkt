@@ -1,14 +1,16 @@
 #lang racket/base
 
 (module+ test
-  (require racket/match
+  (require (only-in racket/contract flat-contract-predicate)
+           racket/match
            rackunit
            (only-in web3/rpc exn:fail:web3?)
            web3/units
+           (only-in (submod web3/units internal) units-reason/c)
            "bounded.rkt"
            "helpers/units.rkt"
            "modules.rkt"
-           (only-in "util.rkt" check-blames-here seeded))
+           (only-in "util.rkt" check-blames-here pick seeded))
 
   (define (units-fault thunk)
     (with-handlers ([exn:fail:web3:units? values])
@@ -21,6 +23,8 @@
                        (list 'raised (exn:fail:web3:units-reason e) (exn:fail:web3:units-index e)
                              (exn-message e)))])
       (list 'ok (thunk))))
+
+  (define units-reason? (flat-contract-predicate units-reason/c))
 
   (define car-of (match-lambda [(cons x _) x]))
 
@@ -129,11 +133,6 @@
                     (normalized (outcome (lambda () (units->wei s 9))))
                     s)))
 
-  (define syntax-rows
-    '((" 1" 0) ("1 " 1) ("+1" 0) ("1e3" 1) ("1,000" 1) ("1_000" 1) ("0x10" 1) ("1.2.3" 3)
-      ("--1" 1) ("1-" 1) ("1/2" 1) ("#e1.5" 0) ("Infinity" 0) ("+inf.0" 0) ("1\n" 1)
-      ("١" 0) ("1.5 ether" 3) (".-1" 1)))
-
   (define no-digit-rows '(("" 0) ("." 1) ("-" 1) ("-." 2)))
 
   (define precision-rows
@@ -210,7 +209,7 @@
       (for*/list ([u (in-list units)]
                   [_ (in-range 500)])
         (define d (unit-decimals u))
-        (list (random-wei prng d) u (min 255 (list-ref (list 0 1 d (+ d 3)) (random 4 prng)))))))
+        (list (random-wei prng d) u (min 255 (pick prng (list 0 1 d (+ d 3))))))))
 
   (define (trailing-zeros n)
     (if (and (positive? n) (zero? (remainder n 10))) (add1 (trailing-zeros (quotient n 10))) 0))
@@ -308,7 +307,7 @@
               '("0.0000000000000000001,")
               (for/list ([_ (in-range 5000)]) (garbage-string prng))
               (for/list ([_ (in-range 2000)])
-                (random-amount-string prng (unit-decimals (list-ref units (random 14 prng))))))))
+                (random-amount-string prng (unit-decimals (pick prng units)))))))
 
   (test-case "B2, B3: any string reads as an integer or raises a units error with a short message"
     (for ([s (in-list fuzz-corpus)])
@@ -323,7 +322,7 @@
            (match o
              [(list 'ok n) (check-pred exact-integer? n name)]
              [(list 'raised reason index message)
-              (check-not-false (memq reason '(syntax precision)) name)
+              (check-true (units-reason? reason) name)
               (check-true (and (exact-integer? index) (<= index (string-length s))) name)
               (check-regexp-match
                #px"^(units|ether|gwei)->wei: (not a decimal number|too many decimals): "
@@ -355,10 +354,10 @@
       (check-equal? (and e (exn-message e)) message)))
 
   (test-case "H1: long inputs and outputs finish in bounded time and memory"
-    (define digits (make-string 100000 #\7))
+    (define digits (make-string 300000 #\7))
     (match (call-bounded (lambda () (ether->wei digits)))
       [(list 'ok n) (check-true (= n (* (string->number digits) (expt 10 18))))]
-      [other (fail (format "~.200e" other))])
+      [other (fail (format "~e" other))])
     (define tiny (string-append "0." (make-string 100000 #\0) "1"))
     (match (call-bounded (lambda () (units-fault (lambda () (ether->wei tiny)))))
       [(list 'ok (? exn:fail:web3:units? e))
@@ -368,7 +367,7 @@
     (match (call-bounded (lambda () (wei->string (- (expt 10 100000)) 255)))
       [(list 'ok s)
        (check-true (equal? s (string-append "-1" (make-string (- 100000 255) #\0))))]
-      [other (fail (format "~.200e" other))]))
+      [other (fail (format "~e" other))]))
 
   (test-case "E1: web3/units needs no network, JSON, hashing or signing modules"
     (define names (filter values (map module-name (import-closure 'web3/units))))

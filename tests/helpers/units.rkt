@@ -2,6 +2,7 @@
 
 (require (only-in racket/match match match-define)
          (only-in racket/string string-trim)
+         (only-in "../util.rkt" pick)
          (only-in "accounts.rkt" random-natural))
 
 (provide canonical
@@ -11,6 +12,7 @@
          random-amount-string
          random-imprecise-string
          random-wei
+         syntax-rows
          unit-decimals
          units)
 
@@ -20,6 +22,11 @@
 
 (define (unit-decimals u)
   (hash-ref unit-decimals-table u u))
+
+(define syntax-rows
+  '((" 1" 0) ("1 " 1) ("+1" 0) ("1e3" 1) ("1,000" 1) ("1_000" 1) ("0x10" 1) ("1.2.3" 3)
+    ("--1" 1) ("1-" 1) ("1/2" 1) ("#e1.5" 0) ("Infinity" 0) ("+inf.0" 0) ("1\n" 1)
+    ("١" 0) ("1.5 ether" 3) (".-1" 1)))
 
 (define amount-pattern #px"^(-?)([0-9]*)(?:\\.([0-9]*))?$")
 
@@ -60,20 +67,18 @@
                  (if (string=? int "") "0" int)
                  (if (string=? frac "") "" (string-append "." frac))))
 
-(define (pick prng xs)
-  (list-ref xs (random (length xs) prng)))
 
 (define (random-digits prng n)
   (build-string n (lambda (_) (integer->char (+ 48 (random 10 prng))))))
 
 (define (random-int-part prng fraction?)
-  (if (and fraction? (< (random 10 prng) 1))
+  (if (and fraction? (zero? (random 10 prng)))
       ""
       (string-append (make-string (random 4 prng) #\0)
                      (random-digits prng (add1 (random 40 prng))))))
 
 (define (random-sign prng)
-  (if (< (random 4 prng) 1) "-" ""))
+  (if (zero? (random 4 prng)) "-" ""))
 
 (define (random-amount-string prng d)
   (define point? (< (random 10 prng) 7))

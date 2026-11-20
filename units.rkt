@@ -3,8 +3,14 @@
 (require racket/contract/base
          "private/exn.rkt")
 
+(define unit-decimals-table
+  (hasheq 'wei 0 'gwei 9 'ether 18))
+
 (define amount/c (or/c string? (and/c rational? exact?)))
-(define unit/c (or/c 'wei 'gwei 'ether (integer-in 0 255)))
+(define unit/c
+  (apply or/c (append (sort (hash-keys unit-decimals-table) <
+                            #:key (lambda (name) (hash-ref unit-decimals-table name)))
+                      (list (integer-in 0 255)))))
 
 (provide (struct-out exn:fail:web3:units)
          (contract-out
@@ -15,9 +21,15 @@
                             (unit/c #:min-fraction-digits (integer-in 0 255))
                             string?)]))
 
+(module* internal #f
+  (provide units-reason/c))
+
 (define reason-phrases
   (hasheq 'syntax "not a decimal number"
           'precision "too many decimals"))
+
+(define units-reason/c
+  (flat-named-contract 'units-reason/c (apply or/c (hash-keys reason-phrases #t))))
 
 (define (raise-units-error who reason index detail)
   (raise (exn:fail:web3:units (format "~a: ~a: ~a" who (hash-ref reason-phrases reason) detail)
@@ -26,11 +38,7 @@
                               reason)))
 
 (define (unit-decimals unit)
-  (case unit
-    [(wei) 0]
-    [(gwei) 9]
-    [(ether) 18]
-    [else unit]))
+  (hash-ref unit-decimals-table unit unit))
 
 (define (unit-name unit)
   (if (symbol? unit) unit "the unit"))
@@ -49,80 +57,85 @@
       (decimal->wei who amount unit)
       (rational->wei who amount unit)))
 
-(define (rational->wei who q unit)
-  (define n (* q (expt 10 (unit-decimals unit))))
-  (if (integer? n)
-      n
+(define (rational->wei who amount unit)
+  (define wei (* amount (expt 10 (unit-decimals unit))))
+  (if (integer? wei)
+      wei
       (raise-units-error who 'precision #f
                          (format "~a has ~a, but the amount needs more"
                                  (unit-name unit) (unit-decimals unit)))))
 
-(define (digit? c)
-  (char<=? #\0 c #\9))
+(define (digit? char)
+  (char<=? #\0 char #\9))
 
-(define (char-at s i)
-  (and (< i (string-length s)) (string-ref s i)))
+(define (char-at text index)
+  (and (< index (string-length text)) (string-ref text index)))
 
-(define (digits-end s start)
-  (let loop ([i start])
-    (define c (char-at s i))
-    (if (and c (digit? c)) (loop (add1 i)) i)))
+(define (digits-end text start)
+  (let loop ([index start])
+    (define char (char-at text index))
+    (if (and char (digit? char)) (loop (add1 index)) index)))
 
-(define (digits->natural s start end)
-  (if (= start end) 0 (string->number (substring s start end) 10)))
+(define (digits->natural text start end)
+  (if (= start end) 0 (string->number (substring text start end) 10)))
 
-(define (decimal->wei who s unit)
-  (define d (unit-decimals unit))
-  (define minus? (eqv? (char-at s 0) #\-))
-  (define int-start (if minus? 1 0))
-  (define int-end (digits-end s int-start))
-  (define point? (eqv? (char-at s int-end) #\.))
-  (define frac-start (if point? (add1 int-end) int-end))
-  (define frac-end (digits-end s frac-start))
-  (define unexpected (and (< frac-end (string-length s)) frac-end))
-  (define kept (min (- frac-end frac-start) d))
-  (define excess (for/first ([i (in-range (+ frac-start kept) frac-end)]
-                             #:unless (char=? (string-ref s i) #\0))
-                   i))
+(define (nonzero-index text start end)
+  (for/first ([index (in-range start end)]
+              #:unless (char=? (string-ref text index) #\0))
+    index))
+
+(define (decimal-bounds text)
+  (define int-start (if (eqv? (char-at text 0) #\-) 1 0))
+  (define int-end (digits-end text int-start))
+  (define frac-start (if (eqv? (char-at text int-end) #\.) (add1 int-end) int-end))
+  (values int-start int-end frac-start (digits-end text frac-start)))
+
+(define (decimal->wei who text unit)
+  (define decimals (unit-decimals unit))
+  (define-values (int-start int-end frac-start frac-end) (decimal-bounds text))
+  (define kept (min (- frac-end frac-start) decimals))
+  (define excess (nonzero-index text (+ frac-start kept) frac-end))
   (cond
-    [unexpected
-     (raise-units-error who 'syntax unexpected
+    [(< frac-end (string-length text))
+     (raise-units-error who 'syntax frac-end
                         (format "unexpected ~s at index ~a"
-                                (substring s unexpected (add1 unexpected)) unexpected))]
+                                (substring text frac-end (add1 frac-end)) frac-end))]
     [(and (= int-start int-end) (= frac-start frac-end))
-     (raise-units-error who 'syntax (string-length s) "no digits")]
+     (raise-units-error who 'syntax (string-length text) "no digits")]
     [excess
      (raise-units-error who 'precision excess
                         (format "~a has ~a, but decimal ~a is ~a"
-                                (unit-name unit) d (- excess frac-start -1) (string-ref s excess)))]
+                                (unit-name unit) decimals (add1 (- excess frac-start))
+                                (string-ref text excess)))]
     [else
-     (define whole (digits->natural s int-start int-end))
-     (define part (digits->natural s frac-start (+ frac-start kept)))
-     (define m (+ (* whole (expt 10 d)) (* part (expt 10 (- d kept)))))
-     (if minus? (- m) m)]))
+     (define whole (digits->natural text int-start int-end))
+     (define part (digits->natural text frac-start (+ frac-start kept)))
+     (define wei (+ (* whole (expt 10 decimals)) (* part (expt 10 (- decimals kept)))))
+     (if (zero? int-start) wei (- wei))]))
 
-(define (wei->string n [unit 'ether] #:min-fraction-digits [k 0])
-  (define d (unit-decimals unit))
-  (define-values (whole part) (quotient/remainder (abs n) (expt 10 d)))
-  (define fraction (pad-right (fraction-digits part d) k))
-  (string-append (if (negative? n) "-" "")
+(define (wei->string amount [unit 'ether] #:min-fraction-digits [min-digits 0])
+  (define decimals (unit-decimals unit))
+  (define-values (whole part) (quotient/remainder (abs amount) (expt 10 decimals)))
+  (define fraction (pad-right (fraction-digits part decimals) min-digits))
+  (string-append (if (negative? amount) "-" "")
                  (number->string whole)
                  (if (string=? fraction "") "" (string-append "." fraction))))
 
-(define (fraction-digits part d)
+(define (fraction-digits part decimals)
   (if (zero? part)
       ""
       (let* ([digits (number->string part)]
-             [padded (string-append (make-string (- d (string-length digits)) #\0) digits)])
+             [padded (string-append (make-string (- decimals (string-length digits)) #\0)
+                                    digits)])
         (substring padded 0 (trimmed-end padded)))))
 
-(define (trimmed-end s)
-  (let loop ([end (string-length s)])
-    (if (and (positive? end) (char=? (string-ref s (sub1 end)) #\0))
+(define (trimmed-end text)
+  (let loop ([end (string-length text)])
+    (if (and (positive? end) (char=? (string-ref text (sub1 end)) #\0))
         (loop (sub1 end))
         end)))
 
-(define (pad-right s k)
-  (if (< (string-length s) k)
-      (string-append s (make-string (- k (string-length s)) #\0))
-      s))
+(define (pad-right text width)
+  (if (< (string-length text) width)
+      (string-append text (make-string (- width (string-length text)) #\0))
+      text))
