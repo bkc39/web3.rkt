@@ -66,7 +66,8 @@ the `racket-deps` hash in `flake.nix` (the build prints the new one).
   `tests/fixtures.rkt` fails when sources and artifacts disagree.
 - Every user-visible feature has an example.  A new example takes the next
   number, gets a row in `examples/README.md`, and is run by
-  `tests/examples.rkt`.
+  `tests/examples.rkt`, or, for a program with a `main` submodule, by its
+  own `tests/examples/NN-name.rkt`.
 - Errors a caller can meet are `exn:fail:web3` or a subtype, or
   libsecp256k1's `exn:fail:libsecp256k1:load`, which passes through
   unchanged.  No error shows a secret key or the text it was read from.

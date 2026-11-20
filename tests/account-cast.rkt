@@ -7,7 +7,8 @@
            rackunit
            (only-in libsecp256k1 secret-key->bytes)
            web3/account
-           (only-in web3/rpc bytes->hex-string)
+           (only-in web3/private/hex bytes->natural)
+           (only-in web3/rpc bytes->hex-string hex-string->bytes)
            "cast.rkt"
            "helpers/accounts.rkt")
 
@@ -34,12 +35,23 @@
          (check-equal? (secret-key->address k)
                        (run-cast "wallet" "address" "--private-key" (key-hex k)))))
 
-     (test-case "sign-digest agrees with cast wallet sign --no-hash"
-       (for ([c (in-list cases)])
+     (define (cast-sign k d)
+       (run-cast "wallet" "sign" "--no-hash" "--private-key" (key-hex k) (bytes->hex-string d)))
+
+     (test-case "sign-digest agrees with cast wallet sign --no-hash on digests below n"
+       (for ([c (in-list cases)]
+             #:when (< (bytes->natural (cdr c)) secp256k1-order))
          (match-define (cons k d) c)
-         (check-equal? (signature-hex (sign-digest k d))
-                       (run-cast "wallet" "sign" "--no-hash" "--private-key" (key-hex k)
-                                 (bytes->hex-string d)))))
+         (check-equal? (signature-hex (sign-digest k d)) (cast-sign k d))))
+
+     ;; libsecp256k1 derives the nonce from the digest reduced mod n (RFC 6979 3.2d); cast
+     ;; 1.8.4 signs digests of n or more with another nonce.
+     (test-case "on a digest of n or more, cast's signature and ours both recover the signer"
+       (for ([k (in-list edge-keys)])
+         (define d (make-bytes 32 255))
+         (define theirs (bytes->signature (hex-string->bytes (cast-sign k d))))
+         (check-not-equal? theirs (sign-digest k d))
+         (check-equal? (recover-address theirs d) (secret-key->address k))))
 
      (test-case "cast verifies what recover-address recovers, and refuses the flipped parity"
        (for ([c (in-list cases)])

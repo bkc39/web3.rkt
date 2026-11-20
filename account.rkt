@@ -1,16 +1,27 @@
 #lang racket/base
 
 (require racket/contract/base
+         (only-in keccak keccak256)
          (only-in libsecp256k1
                   digest/c
+                  ecdsa-recover
+                  ecdsa-recoverable-signature
+                  ecdsa-recoverable-signature-id
+                  ecdsa-sign-recoverable
+                  ecdsa-signature-r
+                  ecdsa-signature-s
                   generate-secret-key
+                  integer->secret-key
+                  public-key->bytes
                   public-key?
                   secp256k1-order
                   secret-key->public-key
                   secret-key/c
                   secret-key?)
-         (only-in "address.rkt" checksum-address?)
+         (only-in racket/match match-define)
+         (only-in "address.rkt" address->checksum-string checksum-address?)
          "private/exn.rkt"
+         (only-in "private/hex.rkt" bytes->hex bytes->natural)
          "private/opaque.rkt"
          "private/signature.rkt")
 
@@ -53,25 +64,54 @@
   (provide recoverable->signature))
 
 (define (hex-string->secret-key s)
-  (error 'unimplemented))
+  (define k (string->number (regexp-replace #rx"^0[xX]" s "") 16))
+  (unless (< 0 k secp256k1-order)
+    (raise (exn:fail:web3:key
+            (string-append "hex-string->secret-key: invalid secret key;\n"
+                           " the value is zero or not less than the curve order")
+            (current-continuation-marks))))
+  (integer->secret-key k))
 
 (define (secret-key->address key)
-  (error 'unimplemented))
+  (public-key->address (secret-key->public-key key)))
 
 (define (public-key->address key)
-  (error 'unimplemented))
+  (define point (subbytes (public-key->bytes key #:compressed? #f) 1))
+  (address->checksum-string (bytes->hex (subbytes (keccak256 point) 12))))
 
 (define (sign-digest key digest)
-  (error 'unimplemented))
+  (recoverable->signature 'sign-digest (ecdsa-sign-recoverable digest key)))
 
 (define (recoverable->signature who rsig)
-  (error 'unimplemented))
+  (define id (ecdsa-recoverable-signature-id rsig))
+  (unless (< id 2)
+    (raise-signature-error "~a: the signature's recovery id is ~a; Ethereum encodes only 0 and 1"
+                           who id))
+  (signature (ecdsa-signature-r rsig) (ecdsa-signature-s rsig) id))
 
 (define (recover-address sig digest)
-  (error 'unimplemented))
+  (match-define (signature r s y-parity) sig)
+  (define key (ecdsa-recover (ecdsa-recoverable-signature r s y-parity) digest))
+  (and key (public-key->address key)))
 
 (define (signature-low-s? sig)
-  (error 'unimplemented))
+  (<= (signature-s sig) (quotient secp256k1-order 2)))
+
+(define (scalar? n)
+  (< 0 n secp256k1-order))
 
 (define (bytes->signature bs)
-  (error 'unimplemented))
+  (define v (bytes-ref bs 64))
+  (define r (bytes->natural (subbytes bs 0 32)))
+  (define s (bytes->natural (subbytes bs 32 64)))
+  (define (invalid fmt . args)
+    (apply raise-signature-error (string-append "bytes->signature: invalid signature;\n " fmt)
+           args))
+  (cond
+    [(not (memv v '(0 1 27 28))) (invalid "v is ~a, not 0, 1, 27 or 28" v)]
+    [(not (scalar? r)) (invalid "r is zero or not less than the curve order")]
+    [(not (scalar? s)) (invalid "s is zero or not less than the curve order")]
+    [else (signature r s (if (>= v 27) (- v 27) v))]))
+
+(define (raise-signature-error fmt . args)
+  (raise (exn:fail:web3:signature (apply format fmt args) (current-continuation-marks))))

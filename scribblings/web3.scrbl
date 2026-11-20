@@ -90,6 +90,47 @@ reverts carry their payload in @racket[exn:fail:web3:rpc-data], which
 @racket[rpc-exn->revert] decodes.  A result that does not decode
 as documented raises @racket[exn:fail:web3].
 
+@section[#:tag "guide"]{Guide}
+
+@subsection[#:tag "guide-accounts"]{Accounts and Signatures}
+
+An account that signs locally is a secp256k1 secret key.  @racket[generate-secret-key] makes a
+new one; @racket[hex-string->secret-key] reads one written as 64 hexadecimal digits, the form
+wallets and @tt{anvil} print.  The account's address comes from the key.
+
+@examples[#:eval account-eval
+          (define key
+            (hex-string->secret-key
+             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"))
+          key
+          (secret-key->address key)]
+
+A secret key prints as @litchar{#<secret-key>}, and no error shows the text a key was read from.
+
+@examples[#:eval account-eval
+          (eval:error
+           (hex-string->secret-key
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80\n"))]
+
+@racket[sign-digest] signs a 32-byte digest, usually a Keccak-256 hash, and does not hash it
+again.  The same key and digest always give the same signature.  @racket[recover-address] gives
+the address that signed a digest; for another digest it gives another address.
+
+@examples[#:eval account-eval
+          (define digest (keccak256 #"hello"))
+          (define sig (sign-digest key digest))
+          (recover-address sig digest)
+          (equal? (recover-address sig (keccak256 #"hello!")) (secret-key->address key))]
+
+Nodes, wallets and contracts pass a signature as 65 bytes: @racket[r], @racket[s] and
+@italic{v}, which is 27 or 28.
+
+@examples[#:eval account-eval
+          (bytes->hex-string (signature->bytes sig))
+          (equal? (bytes->signature (signature->bytes sig)) sig)]
+
+See @filepath{examples/09-accounts.rkt}.
+
 @section{Providers and Calls}
 
 @defmodule[web3/rpc]

@@ -83,12 +83,16 @@
       (check-equal? (format mode key) "#<secret-key>" mode)))
 
   (test-case "exn:fail:web3:key carries nothing but its message"
+    (check-equal? (procedure-arity exn:fail:web3:key) 2)
+    (check-equal? (procedure-arity exn:fail:web3:signature) 2)
     (for ([s (in-list (list (make-string 64 #\0)
                             (bytes->hex-string (word secp256k1-order))))])
       (define e (raised (lambda () (hex-string->secret-key s))))
       (check-pred exn:fail:web3:key? e)
       (when e
-        (check-equal? (vector-length (struct->vector e)) 3))))
+        (check-equal? (struct->vector e)
+                      (vector 'struct:exn:fail:web3:key (exn-message e)
+                              (exn-continuation-marks e) '...)))))
 
   (test-case "signing with the marker key prints nothing"
     (define key (hex-string->secret-key marker-hex))

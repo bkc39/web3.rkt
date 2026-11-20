@@ -144,7 +144,8 @@
               mkdir -p "$PLTUSERHOME"
               stamp_key=$(${pkgs.coreutils}/bin/sha256sum info.rkt | cut -c1-12)
               deps_stamp="$PLTUSERHOME/.setup-$stamp_key-$(basename ${racket-deps})-$(basename ${keccak-rkt})"
-              deps_stamp="$deps_stamp-$(basename ${libsecp256k1-rkt})-$(basename ${libsecp256k1-native})"
+              deps_stamp="$deps_stamp-$(basename ${libsecp256k1-rkt})"
+              deps_stamp="$deps_stamp-$(basename ${libsecp256k1-native})"
               if [ ! -f "$deps_stamp" ]; then
                 echo "Setting up web3 in $PLTUSERHOME (deps changed or first run)"
                 rm -f "$PLTUSERHOME"/.setup-* 2>/dev/null || true
