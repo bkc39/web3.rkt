@@ -10,7 +10,9 @@
          (struct-out exn:fail:web3:abi)
          (struct-out exn:fail:web3:abi:type)
          (struct-out exn:fail:web3:abi:value)
-         (struct-out exn:fail:web3:abi:decode))
+         (struct-out exn:fail:web3:abi:decode)
+         (struct-out exn:fail:web3:key)
+         (struct-out exn:fail:web3:signature))
 
 (struct exn:fail:web3 exn:fail ())
 (struct exn:fail:web3:rpc exn:fail:web3 (method code rpc-message data))
@@ -20,3 +22,5 @@
 (struct exn:fail:web3:abi:type exn:fail:web3:abi (input position))
 (struct exn:fail:web3:abi:value exn:fail:web3:abi (type value path))
 (struct exn:fail:web3:abi:decode exn:fail:web3:abi (type offset reason))
+(struct exn:fail:web3:key exn:fail:web3 ())
+(struct exn:fail:web3:signature exn:fail:web3 ())

@@ -1,10 +1,12 @@
 #lang scribble/manual
 @require[@for-label[json
+                    libsecp256k1
                     racket/base
                     racket/contract
                     racket/generic
                     web3
                     web3/abi
+                    web3/account
                     web3/abi/description
                     web3/abi/event-type
                     web3/abi/type
@@ -22,6 +24,7 @@
 @(define abi-eval (make-base-eval '(require web3/abi web3/address web3/rpc)))
 @(define contract-eval (make-base-eval '(require web3)))
 @(define event-eval (make-base-eval '(require web3)))
+@(define account-eval (make-base-eval '(require web3 (only-in keccak keccak256))))
 
 @title{web3: Ethereum JSON-RPC for Racket}
 @author{bkc}
@@ -35,7 +38,8 @@ support for running local
 
 @racket[(require web3)] provides everything in @racketmodname[web3/rpc],
 @racketmodname[web3/eth], @racketmodname[web3/abi],
-@racketmodname[web3/address], @racketmodname[web3/contract],
+@racketmodname[web3/address], @racketmodname[web3/account],
+@racketmodname[web3/contract],
 @racketmodname[web3/event] and @racketmodname[web3/anvil].
 
 @racketblock[
@@ -483,6 +487,103 @@ Whether @racket[v] is an address string in its EIP-55 form.
 @examples[#:eval abi-eval
           (checksum-address? "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed")
           (checksum-address? "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed")]}
+
+@section[#:tag "accounts"]{Accounts and Signatures}
+
+@defmodule[web3/account]
+
+Secret keys, their addresses, and signatures of 32-byte digests, computed locally with
+@racketmodname[libsecp256k1].  Also provides @racket[secret-key?], @racket[generate-secret-key],
+@racket[secret-key->public-key], @racket[public-key?] and @racket[secp256k1-order] from
+@racketmodname[libsecp256k1], which reads keys from bytes and integers.  No procedure here shows
+an argument in an error.
+
+@subsection{Keys and Addresses}
+
+@defproc[(hex-string->secret-key [s (and/c string? #px"^(?:0[xX])?[0-9a-fA-F]{64}$")])
+         secret-key?]{
+Reads a secret key written as 64 hexadecimal digits, with or without @racket["0x"].
+Surrounding whitespace is not removed.  Raises @racket[exn:fail:web3:key] when the digits are
+zero or not less than @racket[secp256k1-order].
+
+@examples[#:eval account-eval
+          (secret-key->address
+           (hex-string->secret-key
+            "0000000000000000000000000000000000000000000000000000000000000001"))
+          (eval:error (hex-string->secret-key (make-string 64 #\0)))]}
+
+@defproc[(secret-key->address [key secret-key?]) checksum-address?]{
+The address of the account @racket[key] signs for, in its EIP-55 form.}
+
+@defproc[(public-key->address [key public-key?]) checksum-address?]{
+The address of the account whose public key is @racket[key]: the last 20 bytes of the
+Keccak-256 hash of the key's 64-byte uncompressed point.
+
+@examples[#:eval account-eval
+          (public-key->address (secret-key->public-key key))]}
+
+@subsection{Signatures}
+
+@defstruct*[signature ([r (integer-in 1 (sub1 secp256k1-order))]
+                       [s (integer-in 1 (sub1 secp256k1-order))]
+                       [y-parity (or/c 0 1)])
+            #:transparent]{
+An ECDSA signature as Ethereum uses it.  @racket[y-parity] is the parity of the @italic{y}
+coordinate of the curve point whose @italic{x} is @racket[r]; it picks out the signer.}
+
+@defproc[(sign-digest [key secret-key?]
+                      [digest (and/c bytes? (property/c bytes-length (=/c 32)))])
+         signature?]{
+Signs @racket[digest] as given, without hashing it.  The nonce is derived from the key and the
+digest (RFC 6979), so the same arguments always give the same signature, and @racket[s] is at
+most half of @racket[secp256k1-order].}
+
+@defproc[(recover-address [sig signature?]
+                          [digest (and/c bytes? (property/c bytes-length (=/c 32)))])
+         (or/c #f checksum-address?)]{
+The address whose key signed @racket[digest] to give @racket[sig], as the @tt{ecrecover}
+precompile computes it, or @racket[#f] when there is none.  Almost every signature recovers
+some address, so compare the result with the address expected.  A high @racket[s] is accepted,
+as by @tt{ecrecover}; see @racket[signature-low-s?].
+
+@examples[#:eval account-eval
+          (define high (signature (signature-r sig)
+                                  (- secp256k1-order (signature-s sig))
+                                  (- 1 (signature-y-parity sig))))
+          (signature-low-s? high)
+          (recover-address high digest)]}
+
+@defproc[(signature-low-s? [sig signature?]) boolean?]{
+Whether @racket[sig]'s @racket[s] is at most half of @racket[secp256k1-order].  Transactions
+require it (EIP-2).}
+
+@defproc[(signature-v [sig signature?]) (or/c 27 28)]{
+27 plus @racket[sig]'s y-parity: the @italic{v} of @tt{ecrecover} and of
+@racket[signature->bytes].}
+
+@defproc[(signature->bytes [sig signature?])
+         (and/c bytes? (property/c bytes-length (=/c 65)))]{
+@racket[r] and @racket[s] as 32 big-endian bytes each, then @racket[(signature-v sig)].}
+
+@defproc[(bytes->signature [bs (and/c bytes? (property/c bytes-length (=/c 65)))])
+         signature?]{
+Reads a signature written as by @racket[signature->bytes].  The last byte may also be the
+y-parity itself, 0 or 1.  Raises @racket[exn:fail:web3:signature] for any other last byte, or
+when @racket[r] or @racket[s] is zero or not less than @racket[secp256k1-order].
+
+@examples[#:eval account-eval
+          (define bs (signature->bytes sig))
+          (equal? (bytes->signature (bytes-append (subbytes bs 0 64) (bytes 0))) sig)
+          (eval:error (bytes->signature (bytes-append (subbytes bs 0 64) (bytes 37))))]}
+
+@subsection[#:tag "account-errors"]{Errors}
+
+@defstruct*[(exn:fail:web3:key exn:fail:web3) ()]{
+Raised for a secret key that is zero or not less than @racket[secp256k1-order].}
+
+@defstruct*[(exn:fail:web3:signature exn:fail:web3) ()]{
+Raised for bytes that do not encode a signature, and by @racket[sign-digest] for a signature
+whose recovery id Ethereum cannot encode.}
 
 @section{Contract ABI}
 

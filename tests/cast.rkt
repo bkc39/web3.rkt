@@ -14,6 +14,7 @@
 (provide cast-decode
          cast-encode
          cast-path
+         cast-succeeds?
          cast-version
          run-cast
          value->cast-argument
@@ -50,7 +51,7 @@
 
 ;; Arguments go as UTF-8 bytes: as strings they would be converted through
 ;; the locale, which in a build sandbox turns non-ASCII into "?".
-(define (run-cast . args)
+(define (call-cast args)
   (define-values (process out in err)
     (apply subprocess #f #f #f cast-path (map string->bytes/utf-8 args)))
   (close-output-port in)
@@ -59,9 +60,17 @@
   (subprocess-wait process)
   (close-input-port out)
   (close-input-port err)
-  (unless (zero? (subprocess-status process))
+  (values (subprocess-status process) stdout stderr))
+
+(define (run-cast . args)
+  (define-values (status stdout stderr) (call-cast args))
+  (unless (zero? status)
     (error 'cast "~a failed: ~a" (string-join args " ") (string-trim stderr)))
   (string-trim stdout))
+
+(define (cast-succeeds? . args)
+  (define-values (status _stdout _stderr) (call-cast args))
+  (zero? status))
 
 (define (cast-version)
   (match (regexp-match #px"Version: (\\S+)" (run-cast "--version"))

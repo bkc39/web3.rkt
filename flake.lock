@@ -16,6 +16,27 @@
         "type": "github"
       }
     },
+    "libsecp256k1-rkt": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1795126399,
+        "narHash": "sha256-aI7z0uTgS+giy1oTv8G+q5+Or3DebRW3nz9r2D7MfLk=",
+        "owner": "bkc39",
+        "repo": "rkt-libsecp256k1",
+        "rev": "3fc410c74b69ef61a2d3fb65185d27f3802c1685",
+        "type": "github"
+      },
+      "original": {
+        "owner": "bkc39",
+        "ref": "v0.1",
+        "repo": "rkt-libsecp256k1",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1791966044,
@@ -35,6 +56,7 @@
     "root": {
       "inputs": {
         "keccak-rkt": "keccak-rkt",
+        "libsecp256k1-rkt": "libsecp256k1-rkt",
         "nixpkgs": "nixpkgs"
       }
     }
