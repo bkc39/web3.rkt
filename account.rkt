@@ -19,7 +19,7 @@
                   secret-key->public-key
                   secret-key?)
          (only-in racket/match define-match-expander match-define)
-         (only-in "address.rkt" checksum-address?)
+         (only-in "address.rkt" address->checksum-string checksum-address?)
          (only-in (submod "address.rkt" private) digest->address)
          "private/exn.rkt"
          (only-in "private/hex.rkt" bytes->natural)
@@ -128,17 +128,25 @@
     [(not (scalar? s)) (invalid "s is zero or not less than the curve order")]
     [else (raw-signature r s (if (>= v 27) (- v 27) v))]))
 
+(define personal-message-prefix #"\x19Ethereum Signed Message:\n")
+
+(define (message->bytes message)
+  (if (bytes? message) message (string->bytes/utf-8 message)))
+
 (define (hash-message message)
-  (error 'unimplemented))
+  (define body (message->bytes message))
+  (keccak256 (bytes-append personal-message-prefix
+                           (string->bytes/utf-8 (number->string (bytes-length body)))
+                           body)))
 
 (define (sign-message key message)
-  (error 'unimplemented))
+  (sign-digest/who 'sign-message key (hash-message message)))
 
 (define (recover-message-address sig message)
-  (error 'unimplemented))
+  (recover-address sig (hash-message message)))
 
 (define (message-signed-by? sig message address)
-  (error 'unimplemented))
+  (equal? (recover-message-address sig message) (address->checksum-string address)))
 
 (define (raise-key-error fmt . args)
   (raise (exn:fail:web3:key (apply format fmt args) (current-continuation-marks))))

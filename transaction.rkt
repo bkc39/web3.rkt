@@ -16,7 +16,7 @@
          (only-in (submod "account.rkt" private) sign-digest/who)
          (only-in "address.rkt" address->checksum-string checksum-address?)
          "private/exn.rkt"
-         (only-in "private/hex.rkt" bytes->hex bytes->natural hex->bytes)
+         (only-in "private/hex.rkt" bytes->hex bytes->natural hex->bytes natural->hex)
          (only-in "private/opaque.rkt" opaque-> opaque/c secret-key/c)
          "private/who.rkt"
          (only-in "rlp.rkt" natural->rlp-scalar rlp-encode)
@@ -141,6 +141,11 @@
 
 (define (stored-fields type)
   (if (zero? type) (append (unsigned-fields type) '(chain-id)) (unsigned-fields type)))
+
+(define json-keys
+  (hasheq 'chain-id 'chainId 'nonce 'nonce 'gas-price 'gasPrice
+          'max-priority-fee-per-gas 'maxPriorityFeePerGas 'max-fee-per-gas 'maxFeePerGas
+          'gas-limit 'gas 'to 'to 'value 'value 'data 'data 'access-list 'accessList))
 
 (define (equal+hash-by key)
   (list (lambda (this other _) (equal? (key this) (key other)))
@@ -329,10 +334,32 @@
   (sealed-transaction tx sig sender (string->immutable-string (bytes->hex (keccak256 raw))) raw))
 
 (define (transaction->jsexpr tx #:from from)
-  (error 'unimplemented))
+  (define type (transaction-type tx))
+  (for/fold ([json (hasheq 'type (natural->hex type) 'from (address->checksum-string from))])
+            ([name (in-list (stored-fields type))])
+    (define value (transaction-field tx name))
+    (if value
+        (hash-set json (hash-ref json-keys name) (field->json (hash-ref field-kinds name) value))
+        json)))
+
+(define (field->json kind value)
+  (match kind
+    [(or 'u64 'u256) (natural->hex value)]
+    ['to value]
+    ['data (bytes->hex value)]
+    ['access-list (map access-entry->json value)]))
+
+(define (access-entry->json entry)
+  (match-define (cons address keys) entry)
+  (hasheq 'address address 'storageKeys (map bytes->hex keys)))
 
 (define (transaction-difference a b)
-  (error 'unimplemented))
+  (define type (transaction-type a))
+  (if (eqv? type (transaction-type b))
+      (for/first ([name (in-list (stored-fields type))]
+                  #:unless (equal? (transaction-field a name) (transaction-field b name)))
+        name)
+      'type))
 
 (define (signed-transaction->bytes stx)
   (bytes-copy (signed-transaction-raw stx)))

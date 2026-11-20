@@ -8,6 +8,7 @@
 
 (require json
          racket/contract
+         (only-in racket/match match)
          "eth/log.rkt"
          (only-in "private/node.rkt" receipt-status->boolean)
          "rpc.rkt")
@@ -65,7 +66,9 @@
 (define tx/c (and/c hash? jsexpr?))
 
 (define (signed-transaction-result result)
-  (error 'unimplemented))
+  (match result
+    [(? string?) result]
+    [(hash-table ('raw (? string? raw)) _ ...) raw]))
 
 (define-jsonrpc-endpoint web3_clientVersion (-> string?))
 (define-jsonrpc-endpoint web3_sha3 (-> hex-string? hex-string?))
