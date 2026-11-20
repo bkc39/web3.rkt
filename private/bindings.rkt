@@ -15,8 +15,8 @@
          (only-in "../eth.rkt" block-param/c)
          (only-in "../rpc.rkt" current-provider provider?)
          "binding-rules.rkt"
-         "exn.rkt"
-         "transaction.rkt")
+         "contract-call.rkt"
+         "exn.rkt")
 
 (provide contract-bindings-out
          define-contract)
