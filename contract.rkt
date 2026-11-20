@@ -15,6 +15,7 @@
          (only-in (submod "address.rkt" private) digest->address)
          (only-in "eth.rkt" block-param/c)
          "event.rkt"
+         (only-in "rlp.rkt" natural->rlp-scalar rlp-encode)
          "rpc.rkt"
          "private/abi-json.rkt"
          "private/bindings.rkt"
@@ -339,25 +340,9 @@
                  #:from from #:value value #:gas gas #:errors errors #:provider provider))
   address)
 
-(define (natural->minimal-bytes n)
-  (let loop ([n n] [acc '()])
-    (if (zero? n)
-        (apply bytes acc)
-        (loop (arithmetic-shift n -8) (cons (bitwise-and n 255) acc)))))
-
-(define (create-preimage sender nonce)
-  (define encoded-nonce
-    (cond
-      [(zero? nonce) (bytes #x80)]
-      [(< nonce 128) (bytes nonce)]
-      [else
-       (define bs (natural->minimal-bytes nonce))
-       (bytes-append (bytes (+ #x80 (bytes-length bs))) bs)]))
-  (define payload (bytes-append (bytes #x94) sender encoded-nonce))
-  (bytes-append (bytes (+ #xc0 (bytes-length payload))) payload))
-
 (define (create-address sender nonce)
-  (digest->address (keccak256 (create-preimage (hex-string->bytes sender) nonce))))
+  (digest->address
+   (keccak256 (rlp-encode (list (hex-string->bytes sender) (natural->rlp-scalar nonce))))))
 
 (define (create2-address deployer salt init-code)
   (define salt-bytes (if (bytes? salt) salt (word->bytes salt)))
