@@ -22,16 +22,17 @@
                        #:max-fee-per-gas (gwei->wei 30)
                        #:gas-limit 21000 #:to recipient #:value value))
 
-(define (print-signed tx)
-  (define raw (signed-transaction->bytes (sign-transaction key tx)))
+(define (signed-raw tx)
+  (signed-transaction->bytes (sign-transaction key tx)))
+
+(define (print-signed raw)
   (define parsed (bytes->signed-transaction raw))
-  (printf "type ~a\n" (transaction-type tx))
+  (printf "type ~a\n" (transaction-type (signed-transaction-transaction parsed)))
   (printf "  raw    ~a\n" (bytes->hex-string raw))
   (printf "  hash   ~a\n" (signed-transaction-hash parsed))
   (printf "  sender ~a\n" (signed-transaction-sender parsed)))
 
-(define (print-truncated tx)
-  (define raw (signed-transaction->bytes (sign-transaction key tx)))
+(define (print-truncated raw)
   (with-handlers ([exn:fail:web3:rlp?
                    (lambda (e)
                      (printf "truncated: ~a at byte ~a\n"
@@ -39,5 +40,5 @@
     (bytes->signed-transaction (subbytes raw 0 (sub1 (bytes-length raw))))))
 
 (module+ main
-  (for-each print-signed (list legacy eip2930 eip1559))
-  (print-truncated eip1559))
+  (for-each print-signed (map signed-raw (list legacy eip2930 eip1559)))
+  (print-truncated (signed-raw eip1559)))

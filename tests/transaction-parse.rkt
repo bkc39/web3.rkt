@@ -11,7 +11,8 @@
            web3/transaction
            (only-in (submod web3/transaction internal)
                     bytes->signed-transaction/who
-                    raw-transaction-reason/c)
+                    raw-transaction-reason/c
+                    wire-fields)
            (only-in "abi-gen.rkt" random-bytes)
            "bounded.rkt"
            (only-in "helpers/accounts.rkt" random-key)
@@ -35,19 +36,16 @@
   (define (base-fields base)
     (hash-ref wire-fields (hash-ref base-types base)))
 
-  (define (hex bs)
-    (bytes->hex-string bs))
-
   (define eip1559-raw (hash-ref base-raws 'eip1559))
   (define legacy-raw (hash-ref base-raws 'legacy))
   (define u64-limit (expt 2 64))
   (define u256-limit (expt 2 256))
-  (define address-19 (hex (make-bytes 19 1)))
-  (define address-21 (hex (make-bytes 21 1)))
-  (define key-31 (hex (make-bytes 31 1)))
-  (define key-33 (hex (make-bytes 33 1)))
-  (define key-32 (hex (make-bytes 32 1)))
-  (define bob (hex (make-bytes 20 #x70)))
+  (define address-19 (bytes->hex-string (make-bytes 19 1)))
+  (define address-21 (bytes->hex-string (make-bytes 21 1)))
+  (define key-31 (bytes->hex-string (make-bytes 31 1)))
+  (define key-33 (bytes->hex-string (make-bytes 33 1)))
+  (define key-32 (bytes->hex-string (make-bytes 32 1)))
+  (define bob (bytes->hex-string (make-bytes 20 #x70)))
 
   (define envelope-rows
     `((empty legacy (raw "0x") raw type #f
@@ -166,7 +164,7 @@
     (append
      (for*/list ([base (in-list base-names)]
                  [size (in-list '(1 19 21))])
-       `(to-length ,base (set to ,(hex (make-bytes size 1))) raw length to
+       `(to-length ,base (set to ,(bytes->hex-string (make-bytes size 1))) raw length to
                    ,(format "bytes->signed-transaction: wrong length: to has ~a bytes, not 0 or 20"
                             size)))
      (for*/list ([base (in-list '(eip2930 eip1559))]
@@ -179,8 +177,9 @@
                           ,(string-append "bytes->signed-transaction: wrong length: access-list "
                                           "entry 0 has a storage key of 31 bytes, not 32"))
                          (((,bob (,key-33))))))])
-       `(access-list-length ,base (set access-list ,(first row)) raw length access-list
-                            . ,(rest row)))))
+       (match-define (cons access-list expected) row)
+       `(access-list-length ,base (set access-list ,access-list) raw length access-list
+                            . ,expected))))
 
   (define high-s-message
     "bytes->signed-transaction: high s: s is more than half the curve order (EIP-2)")
@@ -195,14 +194,16 @@
                   "bytes->signed-transaction: no sender: the signature recovers no address")))
 
   (define (cut-hex raw)
-    (hex (subbytes raw 0 (sub1 (bytes-length raw)))))
+    (bytes->hex-string (subbytes raw 0 (sub1 (bytes-length raw)))))
 
   (define rlp-rows
     `((cut eip1559 (raw ,(cut-hex eip1559-raw)) rlp short 1
            ,(string-append "bytes->signed-transaction: input too short: "
                            "119 bytes needed, 118 bytes left\n  offset: 1"))
-      (appended eip1559 (raw ,(string-append (hex eip1559-raw) "00")) rlp trailing 120)
-      (appended legacy (raw ,(string-append (hex legacy-raw) "00")) rlp trailing 112)))
+      (appended eip1559 (raw ,(string-append (bytes->hex-string eip1559-raw) "00"))
+                rlp trailing 120)
+      (appended legacy (raw ,(string-append (bytes->hex-string legacy-raw) "00"))
+                rlp trailing 112)))
 
   (define order-rows
     '((zero-nonce-and-short-to eip1559 (seq (set nonce "0x00") (set to "0x01"))
@@ -273,7 +274,7 @@
 
   (test-case "P6: a high s is refused"
     (for-each check-row high-s-rows)
-    (check-equal? (hex (edit-raw eip1559-raw '(high-s)))
+    (check-equal? (bytes->hex-string (edit-raw eip1559-raw '(high-s)))
                   (string-append
                    "0x02f875827a698084773594008506fc23ac008252089470997970c51812dc3a010c7d01b50e0d"
                    "17dc79c88814d1120d7b16000080c080a0e4283c98410a9ee00d296ef6d31b47e6326541bf89e1"

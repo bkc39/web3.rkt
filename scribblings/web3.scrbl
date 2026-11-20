@@ -215,21 +215,6 @@ valid signed transaction, and recovers the sender.
           (transaction-value (signed-transaction-transaction parsed))
           (eval:error (bytes->signed-transaction (bytes 3)))]
 
-@racket[legacy-transaction] and @racket[eip2930-transaction] build the older kinds, which pay one
-gas price.  An EIP-2930 transaction also lists the accounts and storage slots it will touch.
-
-@examples[#:eval transaction-eval
-          (define slot-1 (bytes-append (make-bytes 31 0) (bytes 1)))
-          (signed-transaction-hash
-           (sign-transaction key
-                             (eip2930-transaction #:chain-id 31337
-                                                  #:nonce 0
-                                                  #:gas-price (gwei->wei 30)
-                                                  #:gas-limit 30000
-                                                  #:to recipient
-                                                  #:value (ether->wei "1.5")
-                                                  #:access-list (list (list recipient slot-1)))))]
-
 See @filepath{examples/12-transactions.rkt}.
 
 @section{Providers and Calls}
@@ -863,12 +848,17 @@ Addresses are returned in their EIP-55 form; the case of an address given is ign
 
 @subsection{Building Transactions}
 
-@defproc[(legacy-transaction [#:chain-id chain-id (or/c #f (integer-in 0 (sub1 (expt 2 64))))]
-                             [#:nonce nonce (integer-in 0 (sub1 (expt 2 64)))]
-                             [#:gas-price gas-price (integer-in 0 (sub1 (expt 2 256)))]
-                             [#:gas-limit gas-limit (integer-in 0 (sub1 (expt 2 64)))]
+@deftogether[(@defthing[uint64/c flat-contract?]
+              @defthing[uint256/c flat-contract?])]{
+Integers from 0 below 2@superscript{64} and below 2@superscript{256}: the ranges of a
+transaction's quantities.}
+
+@defproc[(legacy-transaction [#:chain-id chain-id (or/c #f uint64/c)]
+                             [#:nonce nonce uint64/c]
+                             [#:gas-price gas-price uint256/c]
+                             [#:gas-limit gas-limit uint64/c]
                              [#:to to (or/c #f (abi-value/c 'address))]
-                             [#:value value (integer-in 0 (sub1 (expt 2 256))) 0]
+                             [#:value value uint256/c 0]
                              [#:data data bytes? #""])
          legacy-transaction?]{
 A transaction of type 0.  @racket[to] is @racket[#f] for a contract creation.  @racket[chain-id]
@@ -884,26 +874,24 @@ is @racket[#f] for a transaction signed without replay protection, valid on ever
                                 #:value (ether->wei 1)))
           eip-155]}
 
-@defproc[(eip2930-transaction [#:chain-id chain-id (integer-in 0 (sub1 (expt 2 64)))]
-                              [#:nonce nonce (integer-in 0 (sub1 (expt 2 64)))]
-                              [#:gas-price gas-price (integer-in 0 (sub1 (expt 2 256)))]
-                              [#:gas-limit gas-limit (integer-in 0 (sub1 (expt 2 64)))]
+@defproc[(eip2930-transaction [#:chain-id chain-id uint64/c]
+                              [#:nonce nonce uint64/c]
+                              [#:gas-price gas-price uint256/c]
+                              [#:gas-limit gas-limit uint64/c]
                               [#:to to (or/c #f (abi-value/c 'address))]
-                              [#:value value (integer-in 0 (sub1 (expt 2 256))) 0]
+                              [#:value value uint256/c 0]
                               [#:data data bytes? #""]
                               [#:access-list access-list access-list/c '()])
          eip2930-transaction?]{
 A transaction of type 1, with an access list: the accounts and storage keys it will touch.}
 
-@defproc[(eip1559-transaction [#:chain-id chain-id (integer-in 0 (sub1 (expt 2 64)))]
-                              [#:nonce nonce (integer-in 0 (sub1 (expt 2 64)))]
-                              [#:max-priority-fee-per-gas max-priority-fee-per-gas
-                               (integer-in 0 (sub1 (expt 2 256)))]
-                              [#:max-fee-per-gas max-fee-per-gas
-                               (integer-in 0 (sub1 (expt 2 256)))]
-                              [#:gas-limit gas-limit (integer-in 0 (sub1 (expt 2 64)))]
+@defproc[(eip1559-transaction [#:chain-id chain-id uint64/c]
+                              [#:nonce nonce uint64/c]
+                              [#:max-priority-fee-per-gas max-priority-fee-per-gas uint256/c]
+                              [#:max-fee-per-gas max-fee-per-gas uint256/c]
+                              [#:gas-limit gas-limit uint64/c]
                               [#:to to (or/c #f (abi-value/c 'address))]
-                              [#:value value (integer-in 0 (sub1 (expt 2 256))) 0]
+                              [#:value value uint256/c 0]
                               [#:data data bytes? #""]
                               [#:access-list access-list access-list/c '()])
          eip1559-transaction?]{
@@ -918,7 +906,7 @@ the maximum.
 
 @defthing[access-list/c flat-contract?]{
 Lists whose elements are an address followed by 32-byte storage keys, such as
-@racket[(list (list "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" slot-1))].}
+@racket[(list (list "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" (make-bytes 32 0)))].}
 
 @deftogether[(@defproc[(transaction? [v any/c]) boolean?]
               @defproc[(legacy-transaction? [v any/c]) boolean?]
@@ -928,21 +916,17 @@ Whether @racket[v] is an unsigned transaction, or one of each kind.  A signed tr
 a @racket[transaction?].}
 
 @deftogether[(@defproc[(transaction-type [tx transaction?]) (or/c 0 1 2)]
-              @defproc[(transaction-chain-id [tx transaction?])
-                       (or/c #f (integer-in 0 (sub1 (expt 2 64))))]
-              @defproc[(transaction-nonce [tx transaction?]) (integer-in 0 (sub1 (expt 2 64)))]
+              @defproc[(transaction-chain-id [tx transaction?]) (or/c #f uint64/c)]
+              @defproc[(transaction-nonce [tx transaction?]) uint64/c]
               @defproc[(transaction-gas-price
                         [tx (or/c legacy-transaction? eip2930-transaction?)])
-                       (integer-in 0 (sub1 (expt 2 256)))]
+                       uint256/c]
               @defproc[(transaction-max-priority-fee-per-gas [tx eip1559-transaction?])
-                       (integer-in 0 (sub1 (expt 2 256)))]
-              @defproc[(transaction-max-fee-per-gas [tx eip1559-transaction?])
-                       (integer-in 0 (sub1 (expt 2 256)))]
-              @defproc[(transaction-gas-limit [tx transaction?])
-                       (integer-in 0 (sub1 (expt 2 64)))]
+                       uint256/c]
+              @defproc[(transaction-max-fee-per-gas [tx eip1559-transaction?]) uint256/c]
+              @defproc[(transaction-gas-limit [tx transaction?]) uint64/c]
               @defproc[(transaction-to [tx transaction?]) (or/c #f checksum-address?)]
-              @defproc[(transaction-value [tx transaction?])
-                       (integer-in 0 (sub1 (expt 2 256)))]
+              @defproc[(transaction-value [tx transaction?]) uint256/c]
               @defproc[(transaction-data [tx transaction?]) (and/c bytes? immutable?)]
               @defproc[(transaction-access-list
                         [tx (or/c eip2930-transaction? eip1559-transaction?)])
@@ -957,11 +941,16 @@ type 2, and @racket[transaction-access-list] to types 1 and 2.
 @subsection{Signing}
 
 @defproc[(transaction->bytes [tx transaction?]) bytes?]{
-The bytes a signature of @racket[tx] covers: the EIP-2718 type byte and the RLP of the fields, or,
-for type 0, the RLP of the fields followed by the chain id and two zeros (EIP-155).
+The bytes a signature of @racket[tx] covers: the EIP-2718 type byte and the RLP of the fields.
+Type 0 has no type byte, and its fields are followed by the chain id and two zeros (EIP-155), or,
+without a chain id, by nothing.
 
 @examples[#:eval transaction-eval
-          (bytes->hex-string (transaction->bytes eip-155))]}
+          (bytes->hex-string (transaction->bytes eip-155))
+          (bytes->hex-string
+           (transaction->bytes
+            (legacy-transaction #:chain-id #f #:nonce 9 #:gas-price (gwei->wei 20)
+                                #:gas-limit 21000 #:to #f)))]}
 
 @defproc[(transaction-signing-hash [tx transaction?])
          (and/c bytes? (property/c bytes-length (=/c 32)))]{
@@ -975,12 +964,11 @@ The Keccak-256 hash of @racket[(transaction->bytes tx)], the digest a signer sig
 same arguments always give the same bytes.  No error shows @racket[key].
 
 @examples[#:eval transaction-eval
-          (bytes->hex-string
-           (signed-transaction->bytes
-            (sign-transaction
-             (hex-string->secret-key
-              "0x4646464646464646464646464646464646464646464646464646464646464646")
-             eip-155)))]}
+          (define eip-155-key
+            (hex-string->secret-key
+             "0x4646464646464646464646464646464646464646464646464646464646464646"))
+          (define eip-155-signed (sign-transaction eip-155-key eip-155))
+          (signed-transaction-hash eip-155-signed)]}
 
 @defproc[(signed-transaction [tx transaction?] [sig signature?]) signed-transaction?]{
 @racket[tx] with a signature made elsewhere of @racket[(transaction-signing-hash tx)].  Raises
@@ -1010,32 +998,26 @@ The raw bytes nodes take, a fresh byte string.}
 @defproc[(bytes->signed-transaction [bs bytes?]) signed-transaction?]{
 The signed transaction @racket[bs] encodes.  @racket[bs] is untrusted: it must be exactly one
 canonical encoding of a type 0, 1 or 2 transaction whose fields are in range, whose @racket[s] is
-low (EIP-2), and whose signature recovers a sender.  Otherwise this raises
-@racket[exn:fail:web3:rlp] for bytes that are not canonical RLP, and
-@racket[exn:fail:web3:raw-transaction] for anything else.
+low (EIP-2), and whose signature recovers a sender.  The first byte is read first: one that is
+neither a type nor the start of an RLP list raises @racket[exn:fail:web3:raw-transaction] with
+reason @racket['type].  After it, RLP that is not canonical raises @racket[exn:fail:web3:rlp], and
+anything else @racket[exn:fail:web3:raw-transaction].
 
 @examples[#:eval transaction-eval
-          (define deployer
-            (bytes->signed-transaction
-             (hex-string->bytes
-              (string-append
-               "0xf8a58085174876e800830186a08080b853604580600e600039806000f350fe7fffffffffff"
-               "ffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035"
-               "828234f58015156039578182fd5b8082525050506014600cf31ba0222222222222222222222222"
-               "2222222222222222222222222222222222222222a0222222222222222222222222222222222222"
-               "2222222222222222222222222222"))))
-          (signed-transaction-sender deployer)
-          (transaction-chain-id (signed-transaction-transaction deployer))
-          (create-address (signed-transaction-sender deployer) 0)
-          (eval:error (bytes->signed-transaction (bytes)))]}
+          (define raw (signed-transaction->bytes eip-155-signed))
+          (signed-transaction-sender (bytes->signed-transaction raw))
+          (eval:error (bytes->signed-transaction (bytes)))
+          (eval:error (bytes->signed-transaction (bytes #xb8)))
+          (eval:error (bytes->signed-transaction (subbytes raw 0 100)))]}
 
 @defstruct*[(exn:fail:web3:raw-transaction exn:fail:web3)
             ([field (or/c #f 'chain-id 'nonce 'gas-price 'max-priority-fee-per-gas
                           'max-fee-per-gas 'gas-limit 'to 'value 'data 'access-list
                           'v 'y-parity 'r 's)]
              [reason (or/c 'type 'shape 'leading-zero 'range 'length 'high-s 'no-sender)])]{
-Raw bytes that are canonical RLP but not a valid signed transaction.  @racket[field] names the
-field at fault, or is @racket[#f] when the fault is the whole transaction's.}
+Raw bytes that are not a signed transaction, other than RLP that is not canonical.
+@racket[field] names the field at fault, or is @racket[#f] when the fault is the whole
+transaction's.}
 
 @section{Contract ABI}
 

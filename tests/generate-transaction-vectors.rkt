@@ -1,9 +1,5 @@
 #lang racket/base
 
-;; Regenerates tests/vectors/transaction.rktd from ethereum/tests with gh:
-;;
-;;   nix develop --command racket tests/generate-transaction-vectors.rkt
-
 (module+ main
   (require (only-in json string->jsexpr)
            racket/match

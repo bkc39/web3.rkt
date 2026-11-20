@@ -5,7 +5,7 @@
          racket/contract/base
          (only-in keccak keccak256)
          (only-in racket/list drop-right)
-         (only-in racket/match define-match-expander match match-define)
+         (only-in racket/match define-match-expander match match* match-define match-lambda)
          (only-in "abi/type.rkt" abi-value/c)
          (only-in "account.rkt"
                   recover-address
@@ -24,21 +24,20 @@
 
 (define uint64/c (flat-named-contract 'uint64/c (integer-in 0 (sub1 (expt 2 64)))))
 (define uint256/c (flat-named-contract 'uint256/c (integer-in 0 (sub1 (expt 2 256)))))
+(define bytes32/c
+  (flat-named-contract 'bytes32/c (lambda (v) (and (bytes? v) (= (bytes-length v) 32)))))
 (define to/c (or/c #f (abi-value/c 'address)))
-(define storage-key/c
-  (flat-named-contract 'storage-key/c (lambda (v) (and (bytes? v) (= (bytes-length v) 32)))))
 (define access-list/c
-  (flat-named-contract 'access-list/c
-                       (listof (cons/c (abi-value/c 'address) (listof storage-key/c)))))
+  (flat-named-contract 'access-list/c (listof (cons/c (abi-value/c 'address) (listof bytes32/c)))))
 (define transaction-hash/c
   (flat-named-contract 'transaction-hash/c
                        (lambda (v) (and (string? v) (regexp-match? #px"^0x[0-9a-f]{64}$" v)))))
-(define digest-bytes/c
-  (flat-named-contract 'digest-bytes/c (lambda (v) (and (bytes? v) (= (bytes-length v) 32)))))
 
 (provide (struct-out exn:fail:web3:raw-transaction)
          signed-transaction
          (contract-out
+          [uint64/c flat-contract?]
+          [uint256/c flat-contract?]
           [access-list/c flat-contract?]
           [transaction? (-> any/c boolean?)]
           [legacy-transaction? (-> any/c boolean?)]
@@ -81,7 +80,7 @@
           [transaction-access-list
            (-> (or/c eip2930-transaction? eip1559-transaction?) access-list/c)]
           [transaction->bytes (-> transaction? bytes?)]
-          [transaction-signing-hash (-> transaction? digest-bytes/c)]
+          [transaction-signing-hash (-> transaction? bytes32/c)]
           [sign-transaction (opaque-> secret-key/c transaction/c signed-transaction?)]
           [signed-transaction? (-> any/c boolean?)]
           [signed-transaction-transaction (-> signed-transaction? transaction?)]
@@ -94,9 +93,7 @@
 (module* internal #f
   (provide bytes->signed-transaction/who
            raw-transaction-reason/c
-           uint64/c
-           uint256/c
-           access-list/c))
+           wire-fields))
 
 (define raw-transaction-phrases
   (hasheq 'type "not a transaction"
@@ -139,97 +136,91 @@
 (define (unsigned-fields type)
   (drop-right (hash-ref wire-fields type) 3))
 
-(struct transaction (type chain-id nonce gas-price max-priority-fee-per-gas max-fee-per-gas
-                          gas-limit to value data access-list payload preimage)
+(define (stored-fields type)
+  (if (zero? type) (cons 'chain-id (unsigned-fields type)) (unsigned-fields type)))
+
+(define (equal+hash-by key)
+  (list (lambda (this other _) (equal? (key this) (key other)))
+        (lambda (this _) (equal-hash-code (key this)))
+        (lambda (this _) (equal-secondary-hash-code (key this)))))
+
+(struct transaction (type fields payload preimage)
   #:constructor-name unsigned-transaction
-  #:property prop:equal+hash
-  (list (lambda (this other _) (equal? (transaction-preimage this) (transaction-preimage other)))
-        (lambda (this _) (equal-hash-code (transaction-preimage this)))
-        (lambda (this _) (equal-secondary-hash-code (transaction-preimage this))))
+  #:property prop:equal+hash (equal+hash-by (lambda (tx) (transaction-preimage tx)))
   #:property prop:custom-write
   (lambda (tx port _)
-    (define chain-id (transaction-chain-id tx))
+    (define chain-id (transaction-field tx 'chain-id))
     (write-string (format "#<~a~a nonce ~a>"
                           (hash-ref kind-names (transaction-type tx))
                           (if chain-id (format " chain-id ~a" chain-id) "")
-                          (transaction-nonce tx))
+                          (transaction-field tx 'nonce))
                   port)))
 
 (struct signed-transaction (transaction signature sender hash raw)
   #:name signed-struct
   #:constructor-name sealed-transaction
-  #:property prop:equal+hash
-  (list (lambda (this other _)
-          (equal? (signed-transaction-raw this) (signed-transaction-raw other)))
-        (lambda (this _) (equal-hash-code (signed-transaction-raw this)))
-        (lambda (this _) (equal-secondary-hash-code (signed-transaction-raw this))))
+  #:property prop:equal+hash (equal+hash-by (lambda (stx) (signed-transaction-raw stx)))
   #:property prop:custom-write
   (lambda (stx port _)
     (write-string (format "#<signed-transaction ~a>" (signed-transaction-hash stx)) port)))
 
 (define transaction/c (opaque/c 'transaction? "a transaction" transaction?))
 
+(define (transaction-of-type? v type)
+  (and (transaction? v) (eqv? (transaction-type v) type)))
+
 (define (legacy-transaction? v)
-  (and (transaction? v) (eqv? (transaction-type v) 0)))
+  (transaction-of-type? v 0))
 
 (define (eip2930-transaction? v)
-  (and (transaction? v) (eqv? (transaction-type v) 1)))
+  (transaction-of-type? v 1))
 
 (define (eip1559-transaction? v)
-  (and (transaction? v) (eqv? (transaction-type v) 2)))
-
-(define-module-boundary-contract checked-signed-transaction attach-signature
-  (-> transaction? signature? signed-transaction?)
-  #:name-for-blame signed-transaction)
-
-(define-match-expander signed-transaction
-  (syntax-parser
-    [(_ tx sig) #'(signed-struct tx sig _ _ _)])
-  (syntax-parser
-    [_:id #'checked-signed-transaction]
-    [(_ . args) #'(checked-signed-transaction . args)]))
+  (transaction-of-type? v 2))
 
 (define (legacy-transaction #:chain-id chain-id #:nonce nonce #:gas-price gas-price
                             #:gas-limit gas-limit #:to to #:value [value 0] #:data [data #""])
   (build 0 (hasheq 'chain-id chain-id 'nonce nonce 'gas-price gas-price 'gas-limit gas-limit
-                   'to (stored-address to) 'value value 'data (bytes->immutable-bytes data))))
+                   'to to 'value value 'data data)))
 
 (define (eip2930-transaction #:chain-id chain-id #:nonce nonce #:gas-price gas-price
                              #:gas-limit gas-limit #:to to #:value [value 0] #:data [data #""]
                              #:access-list [access-list '()])
   (build 1 (hasheq 'chain-id chain-id 'nonce nonce 'gas-price gas-price 'gas-limit gas-limit
-                   'to (stored-address to) 'value value 'data (bytes->immutable-bytes data)
-                   'access-list (stored-access-list access-list))))
+                   'to to 'value value 'data data 'access-list access-list)))
 
 (define (eip1559-transaction #:chain-id chain-id #:nonce nonce
                              #:max-priority-fee-per-gas priority #:max-fee-per-gas max-fee
                              #:gas-limit gas-limit #:to to #:value [value 0] #:data [data #""]
                              #:access-list [access-list '()])
   (build 2 (hasheq 'chain-id chain-id 'nonce nonce 'max-priority-fee-per-gas priority
-                   'max-fee-per-gas max-fee 'gas-limit gas-limit 'to (stored-address to)
-                   'value value 'data (bytes->immutable-bytes data)
-                   'access-list (stored-access-list access-list))))
+                   'max-fee-per-gas max-fee 'gas-limit gas-limit 'to to 'value value 'data data
+                   'access-list access-list)))
+
+(define (build type given)
+  (define fields
+    (for/hasheq ([name (in-list (stored-fields type))])
+      (values name (normalise (hash-ref field-kinds name) (hash-ref given name)))))
+  (define payload
+    (for/list ([name (in-list (unsigned-fields type))])
+      (field->item (hash-ref field-kinds name) (hash-ref fields name))))
+  (unsigned-transaction type fields payload
+                        (bytes->immutable-bytes
+                         (encode-unsigned type (hash-ref fields 'chain-id) payload))))
+
+(define (normalise kind value)
+  (match kind
+    ['to (stored-address value)]
+    ['data (bytes->immutable-bytes value)]
+    ['access-list (map stored-access-entry value)]
+    [_ value]))
 
 (define (stored-address address)
   (and address (string->immutable-string (address->checksum-string address))))
 
-(define (stored-access-list access-list)
-  (for/list ([entry (in-list access-list)])
-    (match-define (cons address keys) entry)
-    (cons (stored-address address) (map bytes->immutable-bytes keys))))
-
-(define (build type fields)
-  (define (field name)
-    (hash-ref fields name #f))
-  (define payload
-    (for/list ([name (in-list (unsigned-fields type))])
-      (field->item (hash-ref field-kinds name) (field name))))
-  (unsigned-transaction type (field 'chain-id) (field 'nonce) (field 'gas-price)
-                        (field 'max-priority-fee-per-gas) (field 'max-fee-per-gas)
-                        (field 'gas-limit) (field 'to) (field 'value) (field 'data)
-                        (field 'access-list) payload
-                        (bytes->immutable-bytes
-                         (encode-unsigned type (field 'chain-id) payload))))
+(define (stored-access-entry entry)
+  (match-define (cons address keys) entry)
+  (cons (stored-address address) (map bytes->immutable-bytes keys)))
 
 (define (field->item kind value)
   (match kind
@@ -241,11 +232,47 @@
        (match-define (cons address keys) entry)
        (list (hex->bytes address) keys))]))
 
+(define (transaction-field tx name)
+  (hash-ref (transaction-fields tx) name))
+
+(define (transaction-chain-id tx)
+  (transaction-field tx 'chain-id))
+
+(define (transaction-nonce tx)
+  (transaction-field tx 'nonce))
+
+(define (transaction-gas-price tx)
+  (transaction-field tx 'gas-price))
+
+(define (transaction-max-priority-fee-per-gas tx)
+  (transaction-field tx 'max-priority-fee-per-gas))
+
+(define (transaction-max-fee-per-gas tx)
+  (transaction-field tx 'max-fee-per-gas))
+
+(define (transaction-gas-limit tx)
+  (transaction-field tx 'gas-limit))
+
+(define (transaction-to tx)
+  (transaction-field tx 'to))
+
+(define (transaction-value tx)
+  (transaction-field tx 'value))
+
+(define (transaction-data tx)
+  (transaction-field tx 'data))
+
+(define (transaction-access-list tx)
+  (transaction-field tx 'access-list))
+
+(define (envelope type items)
+  (define encoded (rlp-encode items))
+  (if (zero? type) encoded (bytes-append (bytes type) encoded)))
+
 (define (encode-unsigned type chain-id payload)
-  (cond
-    [(positive? type) (bytes-append (bytes type) (rlp-encode payload))]
-    [chain-id (rlp-encode (append payload (list (natural->rlp-scalar chain-id) #"" #"")))]
-    [else (rlp-encode payload)]))
+  (envelope type (if (and (zero? type) chain-id)
+                     (append payload (list (natural->rlp-scalar chain-id) #"" #""))
+                     payload)))
 
 (define (encode-signed tx sig)
   (match-define (signature r s y-parity) sig)
@@ -256,9 +283,7 @@
       [(positive? type) y-parity]
       [chain-id (+ 35 (* 2 chain-id) y-parity)]
       [else (+ 27 y-parity)]))
-  (define encoded
-    (rlp-encode (append (transaction-payload tx) (map natural->rlp-scalar (list v r s)))))
-  (if (positive? type) (bytes-append (bytes type) encoded) encoded))
+  (envelope type (append (transaction-payload tx) (map natural->rlp-scalar (list v r s)))))
 
 (define (transaction->bytes tx)
   (bytes-copy (transaction-preimage tx)))
@@ -271,8 +296,22 @@
   (attach-signature/digest 'sign-transaction tx (sign-digest/who 'sign-transaction key digest)
                            digest))
 
-(define (attach-signature tx sig)
-  (attach-signature/digest 'signed-transaction tx sig (transaction-signing-hash tx)))
+(define attach-signature
+  (procedure-rename
+   (lambda (tx sig)
+     (attach-signature/digest 'signed-transaction tx sig (transaction-signing-hash tx)))
+   'signed-transaction))
+
+(define-module-boundary-contract checked-signed-transaction attach-signature
+  (-> transaction? signature? signed-transaction?)
+  #:name-for-blame signed-transaction)
+
+(define-match-expander signed-transaction
+  (syntax-parser
+    [(_ tx sig) #'(signed-struct tx sig _ _ _)])
+  (syntax-parser
+    [_:id #'checked-signed-transaction]
+    [(_ . args) #'(checked-signed-transaction . args)]))
 
 (define (attach-signature/digest who tx sig digest)
   (define low-s? (signature-low-s? sig))
@@ -301,31 +340,16 @@
 
 (define/who (bytes->signed-transaction who bs)
   (define type (envelope-type who bs))
-  (define items (fields-of who type (rlp-decode/who who bs (if (zero? type) 0 1))))
-  (define fields
-    (for/fold ([fields #hasheq()])
-              ([name (in-list (hash-ref wire-fields type))]
-               [item (in-list items)])
-      (hash-set fields name (read-field who name item))))
-  (define (field name)
-    (hash-ref fields name #f))
-  (define legacy-v (field 'v))
-  (define chain-id (if legacy-v (v-chain-id legacy-v) (field 'chain-id)))
-  (define sig
-    (signature (field 'r) (field 's) (if legacy-v (v-y-parity legacy-v) (field 'y-parity))))
-  (define priority (field 'max-priority-fee-per-gas))
+  (define wire (read-fields who type (rlp-decode/who who bs (if (zero? type) 0 1))))
+  (define sig (wire->signature wire))
+  (define priority (hash-ref wire 'max-priority-fee-per-gas #f))
   (cond
-    [(and priority (> priority (field 'max-fee-per-gas)))
+    [(and priority (> priority (hash-ref wire 'max-fee-per-gas)))
      (raise-raw who 'range 'max-priority-fee-per-gas
                 "max-priority-fee-per-gas is more than max-fee-per-gas")]
     [(not (signature-low-s? sig))
      (raise-raw who 'high-s 's "s is more than half the curve order (EIP-2)")]
-    [else
-     (define tx (build type (hash-set fields 'chain-id chain-id)))
-     (define sender (recover-address sig (transaction-signing-hash tx)))
-     (unless sender
-       (raise-raw who 'no-sender #f "the signature recovers no address"))
-     (seal tx sig sender)]))
+    [else (seal-wire who type wire sig)]))
 
 (define (envelope-type who bs)
   (define first-byte (and (positive? (bytes-length bs)) (bytes-ref bs 0)))
@@ -339,29 +363,45 @@
                 (format "first byte 0x~a is neither a type nor a list"
                         (number->string first-byte 16)))]))
 
-(define (fields-of who type item)
+(define (read-fields who type decoded)
+  (for/hasheq ([name (in-list (hash-ref wire-fields type))]
+               [item (in-list (wire-items who type decoded))])
+    (values name (read-field who name item))))
+
+(define (wire-items who type decoded)
   (define expected (length (hash-ref wire-fields type)))
-  (define count (and (list? item) (length item)))
-  (cond
-    [(not count)
-     (raise-raw who 'shape #f (format "a type ~a transaction is a list, not a byte string" type))]
-    [(= count expected) item]
-    [(zero? type)
-     (raise-raw who 'shape #f (format "a legacy transaction has ~a fields, not ~a" expected count))]
-    [else
-     (raise-raw who 'shape #f
-                (format "a type ~a transaction has ~a fields, not ~a" type expected count))]))
+  (define described (if (zero? type) "a legacy transaction" (format "a type ~a transaction" type)))
+  (match decoded
+    [(? bytes?) (raise-raw who 'shape #f (format "~a is a list, not a byte string" described))]
+    [_ #:when (= (length decoded) expected) decoded]
+    [_ (raise-raw who 'shape #f
+                  (format "~a has ~a fields, not ~a" described expected (length decoded)))]))
 
 (define (read-field who name item)
-  (define kind (hash-ref field-kinds name))
-  (cond
-    [(eq? kind 'access-list) (read-access-list who item)]
-    [(list? item) (raise-raw who 'shape name (format "~a is a list, not a byte string" name))]
-    [(eq? kind 'data) (bytes->immutable-bytes item)]
-    [(eq? kind 'to) (read-to who item)]
-    [(and (positive? (bytes-length item)) (zero? (bytes-ref item 0)))
-     (raise-raw who 'leading-zero name (format "in ~a" name))]
-    [else (read-scalar who name kind item)]))
+  (match* ((hash-ref field-kinds name) item)
+    [('access-list _) (read-access-list who item)]
+    [(_ (? list?)) (raise-raw who 'shape name (format "~a is a list, not a byte string" name))]
+    [('data _) item]
+    [('to _) (read-to who item)]
+    [(_ (regexp #rx#"^\0")) (raise-raw who 'leading-zero name (format "in ~a" name))]
+    [(kind _) (read-scalar who name kind item)]))
+
+(define (wire->signature wire)
+  (match wire
+    [(hash-table ('v legacy-v) ('r r) ('s s) _ ...) (signature r s (v-y-parity legacy-v))]
+    [(hash-table ('y-parity y-parity) ('r r) ('s s) _ ...) (signature r s y-parity)]))
+
+(define (wire-chain-id wire)
+  (match wire
+    [(hash-table ('v legacy-v) _ ...) (v-chain-id legacy-v)]
+    [(hash-table ('chain-id chain-id) _ ...) chain-id]))
+
+(define (seal-wire who type wire sig)
+  (define tx (build type (hash-set wire 'chain-id (wire-chain-id wire))))
+  (define sender (recover-address sig (transaction-signing-hash tx)))
+  (if sender
+      (seal tx sig sender)
+      (raise-raw who 'no-sender #f "the signature recovers no address")))
 
 (define (v-chain-id legacy-v)
   (and (>= legacy-v 35) (quotient (- legacy-v 35) 2)))
@@ -381,8 +421,8 @@
   (<= parity 1))
 
 (define scalar-rules
-  (hasheq 'u64 (list 8 values "~a is 2^64 or more")
-          'u256 (list 32 values "~a is 2^256 or more")
+  (hasheq 'u64 (list 8 exact-nonnegative-integer? "~a is 2^64 or more")
+          'u256 (list 32 exact-nonnegative-integer? "~a is 2^256 or more")
           'v (list 9 legacy-v?
                    "~a is not 27, 28, or 35 + 2 * chain-id + y-parity with chain-id below 2^64")
           'y-parity (list 1 y-parity? "~a is not 0 or 1")
@@ -398,11 +438,11 @@
 (define (read-to who item)
   (match (bytes-length item)
     [0 #f]
-    [20 (stored-address (bytes->hex item))]
+    [20 (bytes->hex item)]
     [size (raise-raw who 'length 'to (format "to has ~a bytes, not 0 or 20" size))]))
 
-(define (access-entry? entry)
-  (match entry
+(define access-entry?
+  (match-lambda
     [(list (? bytes?) (list (? bytes?) ...)) #t]
     [_ #f]))
 
@@ -434,4 +474,4 @@
      (raise-raw who 'length 'access-list
                 (format "access-list entry ~a has a storage key of ~a bytes, not 32"
                         index (bytes-length bad-key)))]
-    [else (cons (stored-address (bytes->hex address)) (map bytes->immutable-bytes keys))]))
+    [else (cons (bytes->hex address) keys)]))

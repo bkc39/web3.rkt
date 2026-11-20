@@ -2,12 +2,14 @@
 
 (module+ test
   (require (only-in keccak keccak256)
+           (only-in racket/contract flat-contract-predicate)
            (only-in libsecp256k1 integer->secret-key)
            racket/list
            racket/match
            rackunit
            web3/account
            (only-in web3/address address->checksum-string)
+           (only-in web3/private/hex bytes->natural)
            (only-in web3/rlp rlp-decode)
            (only-in web3/rpc bytes->hex-string)
            web3/transaction
@@ -17,9 +19,6 @@
            "helpers/transactions.rkt"
            "modules.rkt"
            (only-in "util.rkt" anvil-bob check-blames-here seeded))
-
-  (define (hex bs)
-    (bytes->hex-string bs))
 
   (define eip-155
     (legacy-transaction #:chain-id 1 #:nonce 9 #:gas-price (gwei->wei 20) #:gas-limit 21000
@@ -31,13 +30,13 @@
 
   (test-case "L1: the EIP-155 text's example"
     (define stx (sign-transaction eip-155-key eip-155))
-    (check-equal? (hex (transaction->bytes eip-155))
+    (check-equal? (bytes->hex-string (transaction->bytes eip-155))
                   (string-append
                    "0xec098504a817c800825208943535353535353535353535353535353535353535"
                    "880de0b6b3a764000080018080"))
-    (check-equal? (hex (transaction-signing-hash eip-155))
+    (check-equal? (bytes->hex-string (transaction-signing-hash eip-155))
                   "0xdaf5a779ae972f972197303d7b574746c7ef83eadac0f2791ad23db92e4c8e53")
-    (check-equal? (hex (signed-transaction->bytes stx))
+    (check-equal? (bytes->hex-string (signed-transaction->bytes stx))
                   (string-append
                    "0xf86c098504a817c800825208943535353535353535353535353535353535353535"
                    "880de0b6b3a76400008025a028ef61340bd939bc2195fe537567866003e1a15d3c"
@@ -71,10 +70,10 @@
   (test-case "L2: unsigned encodings that cast mktx --raw-unsigned printed"
     (for ([row (in-list pinned-unsigned)])
       (match-define (list kind fields chunks) row)
-      (check-equal? (hex (transaction->bytes (transaction-of kind fields)))
+      (check-equal? (bytes->hex-string (transaction->bytes (transaction-of kind fields)))
                     (apply string-append chunks)
                     (format "~s" row)))
-    (check-equal? (hex (transaction-signing-hash (third example-transactions)))
+    (check-equal? (bytes->hex-string (transaction-signing-hash example-eip1559))
                   "0x71332aa4ec0c857500caebcfd8864ac4dbfcd623ea1244c72b294e798959f48d"))
 
   (define pinned-signed
@@ -98,7 +97,8 @@
           [row (in-list pinned-signed)])
       (match-define (list chunks hash) row)
       (define stx (sign-transaction example-key tx))
-      (check-equal? (hex (signed-transaction->bytes stx)) (apply string-append chunks))
+      (check-equal? (bytes->hex-string (signed-transaction->bytes stx))
+                    (apply string-append chunks))
       (check-equal? (signed-transaction-hash stx) hash)))
 
   (define model-cases
@@ -124,11 +124,11 @@
       (check-equal? (transaction->bytes tx) unsigned name)
       (check-equal? (transaction-signing-hash tx) (keccak256 unsigned) name)
       (check-equal? (signed-transaction->bytes stx) raw name)
-      (check-equal? (signed-transaction-hash stx) (hex (keccak256 raw)) name)))
+      (check-equal? (signed-transaction-hash stx) (bytes->hex-string (keccak256 raw)) name)))
 
   (define (legacy-v raw)
     (match (rlp-decode raw)
-      [(list _ ... v _ _) (for/fold ([n 0]) ([b (in-bytes v)]) (+ (* n 256) b))]))
+      [(list _ ... v _ _) (bytes->natural v)]))
 
   (test-case "L5: v and the first byte of raw bytes"
     (for ([chain-id (in-list (list #f 0 1 31337 (sub1 (expt 2 64))))])
@@ -164,7 +164,8 @@
     (transaction-of (transaction-kind tx) (transaction-fields tx)))
 
   (test-case "R3: values are equal exactly when their bytes are"
-    (define sample (append edge-transactions (take (map car model-cases) 40)))
+    (define sample
+      (append edge-transactions (take (map signed-transaction-transaction model-signed) 40)))
     (for* ([a (in-list sample)]
            [b (in-list sample)])
       (check-equal? (equal? a b) (equal? (transaction->bytes a) (transaction->bytes b))))
@@ -235,10 +236,10 @@
         #f)))
 
   (test-case "R6: signed-transaction is a pattern, and no struct type is exported"
-    (define stx (sign-transaction example-key (third example-transactions)))
+    (define stx (sign-transaction example-key example-eip1559))
     (match stx
       [(signed-transaction tx sig)
-       (check-equal? tx (third example-transactions))
+       (check-equal? tx example-eip1559)
        (check-equal? sig (signed-transaction-signature stx))])
     (for ([form (in-list '((struct-copy signed-transaction #f)
                            (struct forged signed-transaction ())
@@ -307,7 +308,7 @@
       #f))
 
   (test-case "S5: a high s or a signature with no sender is refused"
-    (define tx (third example-transactions))
+    (define tx example-eip1559)
     (define sig (signed-transaction-signature (sign-transaction example-key tx)))
     (check-equal? (signature-message (lambda () (signed-transaction tx (other-s sig))))
                   "signed-transaction: s is more than half the curve order (EIP-2)")
@@ -412,6 +413,28 @@
       (check-exn (keyword-error? kind '#:gas)
                  (lambda () (construct kind (hasheq '#:gas 1))))))
 
+  (test-case "B6: uint64/c and uint256/c accept the naturals below 2^64 and 2^256"
+    (for ([row (in-list `((,uint64/c 64) (,uint256/c 256)))])
+      (match-define (list range/c bits) row)
+      (define accepts? (flat-contract-predicate range/c))
+      (for ([v (in-list (list 0 1 (sub1 (expt 2 bits))))])
+        (check-true (accepts? v) (format "~a ~a" bits v)))
+      (for ([v (in-list (list -1 (expt 2 bits) 1/2 1.0 "1" #f))])
+        (check-false (accepts? v) (format "~a ~s" bits v)))))
+
+  (test-case "B7: procedures and their arity errors carry their public names"
+    (define names
+      '(signed-transaction sign-transaction legacy-transaction eip2930-transaction
+                           eip1559-transaction bytes->signed-transaction))
+    (parameterize ([current-namespace (make-base-namespace)])
+      (namespace-require 'web3/transaction)
+      (for ([name (in-list names)])
+        (define procedure (eval name))
+        (check-equal? (object-name procedure) name)
+        (check-exn (regexp (string-append "^" (regexp-quote (symbol->string name)) ": "))
+                   (lambda () (eval `(,name 1 2 3 4 5 6 7)))
+                   (symbol->string name)))))
+
   (define accessors
     (list transaction-type transaction-chain-id transaction-nonce transaction-gas-price
           transaction-max-priority-fee-per-gas transaction-max-fee-per-gas
@@ -419,22 +442,21 @@
           transaction-access-list transaction->bytes transaction-signing-hash))
 
   (test-case "B3: accessors blame callers that give another kind"
-    (define legacy (first example-transactions))
-    (define eip1559 (third example-transactions))
-    (define stx (sign-transaction example-key eip1559))
-    (check-blames-here (transaction-gas-price eip1559))
-    (check-blames-here (transaction-max-fee-per-gas legacy))
-    (check-blames-here (transaction-max-priority-fee-per-gas legacy))
-    (check-blames-here (transaction-access-list legacy))
+    (define stx (sign-transaction example-key example-eip1559))
+    (check-blames-here (transaction-gas-price example-eip1559))
+    (check-blames-here (transaction-max-fee-per-gas example-legacy))
+    (check-blames-here (transaction-max-priority-fee-per-gas example-legacy))
+    (check-blames-here (transaction-access-list example-legacy))
     (for ([accessor (in-list accessors)])
       (check-blames-here (accessor stx))
       (check-blames-here (accessor 'tx)))
-    (check-blames-here (signed-transaction-sender eip1559))
+    (check-blames-here (signed-transaction-sender example-eip1559))
     (check-blames-here (signed-transaction-hash 'tx))
-    (check-blames-here (signed-transaction->bytes eip1559))
+    (check-blames-here (signed-transaction->bytes example-eip1559))
     (check-blames-here (bytes->signed-transaction "0x02"))
     (check-exn exn:fail:contract:arity? (lambda () (transaction-nonce)))
-    (check-exn exn:fail:contract:arity? (lambda () (transaction-nonce legacy legacy)))
+    (check-exn exn:fail:contract:arity?
+               (lambda () (transaction-nonce example-legacy example-legacy)))
     (check-exn exn:fail:contract:arity? (lambda () (signed-transaction-hash stx stx))))
 
   (define marker-key (integer->secret-key marker-integer))
@@ -445,7 +467,7 @@
       #f))
 
   (test-case "B4: sign-transaction blames its caller and never shows the key"
-    (define tx (third example-transactions))
+    (define tx example-eip1559)
     (check-blames-here (sign-transaction marker-key 'tx))
     (check-blames-here (sign-transaction tx marker-key))
     (check-blames-here (sign-transaction marker-key))
@@ -469,9 +491,10 @@
     (check-equal? (transaction-data tx) (bytes 1 2 3))
     (check-equal? (transaction-access-list tx) (list (list anvil-bob (make-bytes 32 7))))
     (check-true (immutable? (transaction-data tx)))
-    (for* ([entry (in-list (transaction-access-list tx))]
-           [k (in-list (cdr entry))])
-      (check-true (immutable? k)))
+    (for ([entry (in-list (transaction-access-list tx))])
+      (match-define (cons _ keys) entry)
+      (for ([k (in-list keys)])
+        (check-true (immutable? k))))
     (define stx (sign-transaction example-key tx))
     (define raw (signed-transaction->bytes stx))
     (bytes-fill! raw 0)
@@ -492,9 +515,11 @@
     (module-declared? module #t)
     (define-values (variables syntax) (module->exports module))
     (for*/list ([phase+names (in-list (append variables syntax))]
-                #:when (eqv? (car phase+names) 0)
-                [name (in-list (cdr phase+names))])
-      (car name)))
+                [name (in-list (match phase+names
+                                 [(cons 0 names) names]
+                                 [_ '()]))])
+      (match name
+        [(cons symbol _) symbol])))
 
   (test-case "D2: web3 provides every name web3/transaction does"
     (define all (exported-names 'web3))
@@ -506,4 +531,11 @@
 
   (test-case "D3: the contract-call module has its new name"
     (check-true (file-exists? (collection-file-path "contract-call.rkt" "web3" "private")))
-    (check-false (file-exists? (collection-file-path "transaction.rkt" "web3" "private")))))
+    (check-false (file-exists? (collection-file-path "transaction.rkt" "web3" "private"))))
+
+  (test-case "D4: web3 and web3/transaction's internal submodule can be required together"
+    (check-not-exn
+     (lambda ()
+       (parameterize ([current-namespace (make-base-namespace)])
+         (expand '(module both racket/base
+                    (require web3 (submod web3/transaction internal)))))))))

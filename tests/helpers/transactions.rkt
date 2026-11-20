@@ -7,7 +7,9 @@
          (only-in web3/rlp natural->rlp-scalar rlp-decode rlp-encode)
          (only-in web3/rpc bytes->hex-string hex-string->bytes)
          web3/transaction
+         (only-in (submod web3/transaction internal) wire-fields)
          (only-in web3/units ether->wei gwei->wei)
+         (only-in web3/private/hex bytes->natural)
          (only-in "../abi-gen.rkt" random-address random-bytes)
          (only-in "../util.rkt" anvil-bob pick zero-address)
          (only-in "accounts.rkt" anvil-keys random-natural))
@@ -16,7 +18,9 @@
          bases
          edge-transactions
          edit-raw
+         example-eip1559
          example-key
+         example-legacy
          example-transactions
          high-s-twin
          hex-chunks
@@ -25,15 +29,17 @@
          nick-raw
          no-point-r
          random-transaction
+         slot-1
          transaction-fields
          transaction-kind
-         transaction-of
-         wire-fields)
+         transaction-of)
 
 (define (hex-chunks . chunks)
   (hex-string->bytes (string-append "0x" (string-join chunks ""))))
 
-(define example-key (hex-string->secret-key (first anvil-keys)))
+(define example-key
+  (match anvil-keys
+    [(cons key-hex _) (hex-string->secret-key key-hex)]))
 
 (define slot-1 (bytes-append (make-bytes 31 0) (bytes 1)))
 
@@ -47,6 +53,8 @@
                              #:max-priority-fee-per-gas (gwei->wei 2)
                              #:max-fee-per-gas (gwei->wei 30)
                              #:gas-limit 21000 #:to anvil-bob #:value (ether->wei "1.5"))))
+
+(match-define (list example-legacy _ example-eip1559) example-transactions)
 
 (define nick-raw
   (hex-chunks "f8a58085174876e800830186a08080b853604580600e600039806000f350fe7fffffffffff"
@@ -62,20 +70,16 @@
             (signed-transaction->bytes (sign-transaction example-key tx)))
           (list nick-raw)))
 
-(define wire-fields
-  (hasheqv 0 '(nonce gas-price gas-limit to value data v r s)
-           1 '(chain-id nonce gas-price gas-limit to value data access-list y-parity r s)
-           2 '(chain-id nonce max-priority-fee-per-gas max-fee-per-gas gas-limit to value data
-                        access-list y-parity r s)))
-
 (define (model-fields tx)
   (define to (match (transaction-to tx) [#f #""] [address (hex-string->bytes address)]))
   (define tail
     (list to (natural->rlp-scalar (transaction-value tx)) (transaction-data tx)))
-  (define (access-list)
-    (for/list ([entry (in-list (transaction-access-list tx))])
-      (match-define (cons address keys) entry)
-      (list (hex-string->bytes address) keys)))
+  (define access-list
+    (match (transaction-type tx)
+      [0 '()]
+      [_ (for/list ([entry (in-list (transaction-access-list tx))])
+           (match-define (cons address keys) entry)
+           (list (hex-string->bytes address) keys))]))
   (define (scalars . ns)
     (map natural->rlp-scalar ns))
   (match (transaction-type tx)
@@ -85,12 +89,12 @@
     [1 (append (scalars (transaction-chain-id tx) (transaction-nonce tx)
                         (transaction-gas-price tx) (transaction-gas-limit tx))
                tail
-               (list (access-list)))]
+               (list access-list))]
     [2 (append (scalars (transaction-chain-id tx) (transaction-nonce tx)
                         (transaction-max-priority-fee-per-gas tx)
                         (transaction-max-fee-per-gas tx) (transaction-gas-limit tx))
                tail
-               (list (access-list)))]))
+               (list access-list))]))
 
 (define (model-unsigned tx)
   (define chain-id (transaction-chain-id tx))
@@ -145,21 +149,23 @@
 (define (random-access-list prng)
   (for/fold ([entries '()] #:result (reverse entries))
             ([_ (in-range (random 4 prng))])
+    (define reused (and (pair? entries) (zero? (random 3 prng)) (pick prng entries)))
     (define address
-      (if (and (pair? entries) (zero? (random 3 prng)))
-          (first (pick prng entries))
-          (random-address prng)))
+      (match reused
+        [(cons used _) used]
+        [#f (random-address prng)]))
     (cons (cons address (for/list ([_ (in-range (random 4 prng))]) (random-bytes prng 32)))
           entries)))
 
 (define (random-transaction prng kind #:fee-bytes [fee-bytes 32])
-  (define fees (sort (list (random-u256 prng fee-bytes) (random-u256 prng fee-bytes)) <))
+  (match-define (list priority max-fee)
+    (sort (list (random-u256 prng fee-bytes) (random-u256 prng fee-bytes)) <))
   (transaction-of kind
                   (hasheq 'chain-id (random-chain-id prng)
                           'nonce (random-u64 prng)
                           'gas-price (random-u256 prng fee-bytes)
-                          'max-priority-fee-per-gas (first fees)
-                          'max-fee-per-gas (second fees)
+                          'max-priority-fee-per-gas priority
+                          'max-fee-per-gas max-fee
                           'gas-limit (random-u64 prng)
                           'to (random-to prng)
                           'value (random-u256 prng)
@@ -170,30 +176,46 @@
   (hasheq 'chain-id 1 'nonce 0 'gas-price 0 'max-priority-fee-per-gas 0 'max-fee-per-gas 0
           'gas-limit 21000 'to anvil-bob 'value 0 'data #"" 'access-list '()))
 
-(define (transaction-of kind fields)
-  (define (field name)
-    (hash-ref fields name (lambda () (hash-ref defaults name))))
-  (match kind
-    ['pre-155
-     (legacy-transaction #:chain-id #f #:nonce (field 'nonce) #:gas-price (field 'gas-price)
-                         #:gas-limit (field 'gas-limit) #:to (field 'to)
-                         #:value (field 'value) #:data (field 'data))]
-    ['legacy
-     (legacy-transaction #:chain-id (field 'chain-id) #:nonce (field 'nonce)
-                         #:gas-price (field 'gas-price) #:gas-limit (field 'gas-limit)
-                         #:to (field 'to) #:value (field 'value) #:data (field 'data))]
-    ['eip2930
-     (eip2930-transaction #:chain-id (field 'chain-id) #:nonce (field 'nonce)
-                          #:gas-price (field 'gas-price) #:gas-limit (field 'gas-limit)
-                          #:to (field 'to) #:value (field 'value) #:data (field 'data)
-                          #:access-list (field 'access-list))]
-    ['eip1559
-     (eip1559-transaction #:chain-id (field 'chain-id) #:nonce (field 'nonce)
-                          #:max-priority-fee-per-gas (field 'max-priority-fee-per-gas)
-                          #:max-fee-per-gas (field 'max-fee-per-gas)
-                          #:gas-limit (field 'gas-limit) #:to (field 'to)
-                          #:value (field 'value) #:data (field 'data)
-                          #:access-list (field 'access-list))]))
+(define kind-fields
+  '((pre-155 0 (chain-id #f) nonce gas-price gas-limit to value data)
+    (legacy 0 chain-id nonce gas-price gas-limit to value data)
+    (eip2930 1 chain-id nonce gas-price gas-limit to value data access-list)
+    (eip1559 2 chain-id nonce max-priority-fee-per-gas max-fee-per-gas gas-limit to value data
+             access-list)))
+
+(define constructors
+  (hasheqv 0 legacy-transaction 1 eip2930-transaction 2 eip1559-transaction))
+
+(define accessors
+  (hasheq 'chain-id transaction-chain-id
+          'nonce transaction-nonce
+          'gas-price transaction-gas-price
+          'max-priority-fee-per-gas transaction-max-priority-fee-per-gas
+          'max-fee-per-gas transaction-max-fee-per-gas
+          'gas-limit transaction-gas-limit
+          'to transaction-to
+          'value transaction-value
+          'data transaction-data
+          'access-list transaction-access-list))
+
+(define (field-name field)
+  (match field
+    [(list name _) name]
+    [name name]))
+
+(define (transaction-of kind given)
+  (match-define (list _ type fields ...) (assq kind kind-fields))
+  (define arguments
+    (for/hash ([field (in-list fields)])
+      (match field
+        [(list name fixed) (values (string->keyword (symbol->string name)) fixed)]
+        [name (values (string->keyword (symbol->string name))
+                      (hash-ref given name (lambda () (hash-ref defaults name))))])))
+  (define keywords (sort (hash-keys arguments) keyword<?))
+  (keyword-apply (hash-ref constructors type)
+                 keywords
+                 (for/list ([keyword (in-list keywords)]) (hash-ref arguments keyword))
+                 '()))
 
 (define (transaction-kind tx)
   (match (transaction-type tx)
@@ -202,22 +224,9 @@
     [2 'eip1559]))
 
 (define (transaction-fields tx)
-  (define common
-    (hasheq 'chain-id (transaction-chain-id tx)
-            'nonce (transaction-nonce tx)
-            'gas-limit (transaction-gas-limit tx)
-            'to (transaction-to tx)
-            'value (transaction-value tx)
-            'data (transaction-data tx)))
-  (match (transaction-type tx)
-    [0 (hash-set common 'gas-price (transaction-gas-price tx))]
-    [1 (hash-set* common
-                  'gas-price (transaction-gas-price tx)
-                  'access-list (transaction-access-list tx))]
-    [2 (hash-set* common
-                  'max-priority-fee-per-gas (transaction-max-priority-fee-per-gas tx)
-                  'max-fee-per-gas (transaction-max-fee-per-gas tx)
-                  'access-list (transaction-access-list tx))]))
+  (match-define (list _ _ fields ...) (assq (transaction-kind tx) kind-fields))
+  (for/hasheq ([name (in-list (map field-name fields))])
+    (values name ((hash-ref accessors name) tx))))
 
 (define edge-rows
   `((pre-155) (legacy) (eip2930) (eip1559)
@@ -294,7 +303,7 @@
 
 (define (high-s-twin raw)
   (define-values (type items) (decode-raw raw))
-  (match-define (list v r s) (map scalar-value (take-right items 3)))
+  (match-define (list v r s) (map bytes->natural (take-right items 3)))
   (define flipped-v
     (cond
       [(positive? type) (- 1 v)]
@@ -304,10 +313,6 @@
   (encode-raw type (append (drop-right items 3)
                            (map natural->rlp-scalar
                                 (list flipped-v r (- secp256k1-order s))))))
-
-(define (scalar-value bs)
-  (for/fold ([n 0]) ([b (in-bytes bs)])
-    (+ (* n 256) b)))
 
 (define field-prime (- (expt 2 256) (expt 2 32) 977))
 

@@ -7,38 +7,89 @@
            racket/runtime-path
            (only-in racket/string string-split)
            rackunit
-           (only-in web3/rlp exn:fail:web3:rlp?)
+           (only-in web3/rlp exn:fail:web3:rlp-offset exn:fail:web3:rlp-reason exn:fail:web3:rlp?)
            (only-in web3/rpc hex-string->bytes)
            web3/transaction)
 
   (define-runtime-path vectors-path "vectors/transaction.rktd")
+  (define-runtime-path outcomes-path "vectors/transaction-outcomes.rktd")
 
   (define-values (header rows)
     (match (call-with-input-file vectors-path (lambda (in) (port->list read in)))
       [(cons header rows) (values header rows)]))
+
+  (define pinned-entries
+    (append* (for/list ([group (in-list (call-with-input-file outcomes-path read))])
+               (match-define (cons outcome names) group)
+               (for/list ([name (in-list names)])
+                 (cons name outcome)))))
+
+  (define pinned (make-immutable-hasheq pinned-entries))
+
+  (define (row-name row)
+    (match row
+      [(list _ file _ _ _) (string->symbol (regexp-replace #rx"[.]json$" file ""))]))
 
   (define manifest
     '(("ttEIP1559" 9) ("ttEIP2930" 7) ("ttSignature" 34) ("ttVValue" 28) ("ttRSValue" 29)
       ("ttWrongRLP" 59) ("ttNonce" 10) ("ttGasLimit" 10) ("ttGasPrice" 4) ("ttValue" 3)
       ("ttAddress" 4) ("ttData" 7)))
 
-  (test-case "V0: the vectors are ethereum/tests at ff69b74, one test per file"
+  (test-case "V0: the vectors are ethereum/tests at ff69b74, one test per file, each pinned once"
     (match header
       [`(source (repo "ethereum/tests") (commit ,commit) (path "TransactionTests")
                 (licence ,licence) (generated-by ,_))
        (check-equal? commit "ff69b74f2eb44fbe1bf09627f06ebf69cc72ea67")
        (check-regexp-match #rx"^MIT" licence)])
-    (check-equal? (length rows) (apply + (map second manifest)))
+    (check-equal? (length rows)
+                  (for/sum ([entry (in-list manifest)])
+                    (match entry
+                      [(list _ count) count])))
     (for ([entry (in-list manifest)])
       (match-define (list directory count) entry)
-      (check-equal? (length (remove-duplicates
-                             (for/list ([row (in-list rows)]
-                                        #:when (equal? (first row) directory))
-                               (second row))))
+      (check-equal? (for/sum ([row (in-list rows)])
+                      (match row
+                        [(list (== directory) _ _ _ _) 1]
+                        [_ 0]))
                     count
-                    directory)))
+                    directory))
+    (define names (map row-name rows))
+    (check-equal? (check-duplicates names) #f)
+    (check-equal? (hash-count pinned) (length pinned-entries) "a vector pinned twice")
+    (check-equal? (remove* names (hash-keys pinned)) '() "pinned, but no such vector")
+    (check-equal? (remove* (hash-keys pinned) names) '() "vectors with no pinned outcome"))
 
-  (define outcomes
+  (define (outcome-of bs)
+    (with-handlers ([exn:fail:web3:rlp?
+                     (lambda (e)
+                       `(rlp ,(exn:fail:web3:rlp-reason e) ,(exn:fail:web3:rlp-offset e)))]
+                    [exn:fail:web3:raw-transaction?
+                     (lambda (e)
+                       `(raw ,(exn:fail:web3:raw-transaction-reason e)
+                             ,(exn:fail:web3:raw-transaction-field e)))])
+      (define stx (bytes->signed-transaction bs))
+      (check-equal? (signed-transaction->bytes stx) bs)
+      `(accepted ,(transaction-chain-id (signed-transaction-transaction stx)))))
+
+  (test-case "V1: every transaction upstream accepts parses to its sender and hash"
+    (for ([row (in-list rows)])
+      (match row
+        [(list _ _ _ hex (list 'sender sender 'hash hash))
+         (define stx (bytes->signed-transaction (hex-string->bytes hex)))
+         (define name (symbol->string (row-name row)))
+         (check-equal? (signed-transaction->bytes stx) (hex-string->bytes hex) name)
+         (check-equal? (string-downcase (signed-transaction-sender stx)) sender name)
+         (check-equal? (signed-transaction-hash stx) hash name)]
+        [_ (void)])))
+
+  (test-case "V2: every vector parses to its pinned outcome"
+    (for ([row (in-list rows)])
+      (match-define (list _ _ _ hex _) row)
+      (define name (row-name row))
+      (check-equal? (outcome-of (hex-string->bytes hex)) (hash-ref pinned name #f)
+                    (symbol->string name))))
+
+  (define kinds
     '((INTRINSIC_GAS_TOO_LOW accepted)
       (GASLIMIT_PRICE_PRODUCT_OVERFLOW accepted)
       (NONCE_TOO_BIG accepted)
@@ -83,56 +134,30 @@
       (INVALID_SIGNATURE_VRS (raw (range high-s) any))
       (EC_RECOVERY_FAIL (raw (no-sender) (#f)))))
 
-  (define (parse bs)
-    (with-handlers ([exn:fail:web3:rlp? values]
-                    [exn:fail:web3:raw-transaction? values])
-      (bytes->signed-transaction bs)))
+  (define (agrees? kind outcome)
+    (match* (kind outcome)
+      [('accepted `(accepted ,_)) #t]
+      [('other-chain `(accepted ,chain-id)) (not (memv chain-id '(#f 1)))]
+      [('other-chain `(raw ,_ ,_)) #t]
+      [('rlp-or-type `(rlp ,_ ,_)) #t]
+      [('rlp-or-type _) (agrees? '(raw (type) any) outcome)]
+      [(`(rlp-or ,_) `(rlp ,_ ,_)) #t]
+      [(`(rlp-or ,raw-kind) _) (agrees? raw-kind outcome)]
+      [(`(raw ,reasons any) `(raw ,reason ,_)) (and (memq reason reasons) #t)]
+      [(`(raw ,reasons ,fields) `(raw ,reason ,field))
+       (and (memq reason reasons) (memq field fields) #t)]
+      [(_ _) #f]))
 
-  (define (check-accepted result bs name)
-    (check-pred signed-transaction? result name)
-    (when (signed-transaction? result)
-      (check-equal? (signed-transaction->bytes result) bs name)))
-
-  (define (expected-outcome kind outcome result bs name)
-    (match* (outcome result)
-      [('accepted _) (check-accepted result bs name)]
-      [('other-chain (? signed-transaction?))
-       (check-accepted result bs name)
-       (check-false (memv (transaction-chain-id (signed-transaction-transaction result)) '(#f 1))
-                    name)]
-      [('other-chain _) (check-pred exn:fail:web3:raw-transaction? result name)]
-      [('rlp-or-type (? exn:fail:web3:rlp?)) (void)]
-      [('rlp-or-type _) (expected-outcome kind '(raw (type) any) result bs name)]
-      [(`(rlp-or ,_) (? exn:fail:web3:rlp?)) (void)]
-      [(`(rlp-or ,raw-outcome) _) (expected-outcome kind raw-outcome result bs name)]
-      [(`(raw ,reasons ,fields) _)
-       (check-pred exn:fail:web3:raw-transaction? result name)
-       (when (exn:fail:web3:raw-transaction? result)
-         (check-not-false (memq (exn:fail:web3:raw-transaction-reason result) reasons) name)
-         (unless (eq? fields 'any)
-           (check-not-false (memq (exn:fail:web3:raw-transaction-field result) fields) name)))]))
-
-  (test-case "V1: every transaction upstream accepts parses to its sender and hash"
+  (test-case "V3: every pinned refusal is upstream's reason or a node's"
     (for ([row (in-list rows)])
       (match row
-        [(list directory file test hex (list 'sender sender 'hash hash))
-         (define bs (hex-string->bytes hex))
-         (define result (parse bs))
-         (define name (format "~a/~a ~a" directory file test))
-         (check-accepted result bs name)
-         (when (signed-transaction? result)
-           (check-equal? (string-downcase (signed-transaction-sender result)) sender name)
-           (check-equal? (signed-transaction-hash result) hash name))]
-        [_ (void)])))
-
-  (test-case "V2: every transaction upstream refuses is refused for the same reason or a node's"
-    (for ([row (in-list rows)])
-      (match row
-        [(list directory file test hex (list 'exception text))
-         (define kind (string->symbol (first (string-split text "|"))))
-         (define name (format "~a/~a ~a: ~a" directory file test kind))
-         (define bs (hex-string->bytes hex))
-         (match (assq kind outcomes)
-           [(list _ outcome) (expected-outcome kind outcome (parse bs) bs name)]
+        [(list _ _ _ _ (list 'exception text))
+         (match-define (cons kind-text _) (string-split text "|"))
+         (define kind (string->symbol kind-text))
+         (define name (row-name row))
+         (match (assq kind kinds)
+           [(list _ allowed)
+            (check-true (agrees? allowed (hash-ref pinned name))
+                        (format "~a: ~a" name kind))]
            [#f (fail (format "~a: no outcome for ~a" name kind))])]
         [_ (void)]))))

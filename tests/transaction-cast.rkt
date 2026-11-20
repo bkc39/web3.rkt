@@ -134,10 +134,11 @@
          (check-decoded stx (decoded (signed-transaction->bytes stx)))))
 
      (test-case "C4: where cast and web3/transaction differ"
-       (define twin (edit-raw (third bases) '(high-s)))
+       (match-define (list _ _ eip1559-raw _) bases)
+       (define twin (edit-raw eip1559-raw '(high-s)))
        (check-equal? (hash-ref (decoded twin) 'signer) "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266")
        (check-exn exn:fail:web3:raw-transaction? (lambda () (bytes->signed-transaction twin)))
-       (define tx (third example-transactions))
+       (define tx example-eip1559)
        (define arguments (mktx-arguments tx "--private-key" (key-hex example-key)))
        (define priority-above-max
          (list-set arguments
@@ -148,6 +149,6 @@
          [other (fail (format "cast accepted ~s" other))])
        (define wide-fee (transaction-of 'eip1559 (hasheq 'max-fee-per-gas (expt 2 128))))
        (check-pred signed-transaction? (sign-transaction example-key wide-fee))
-       (check-equal? (first (apply cast-outcome
-                                   (mktx-arguments wide-fee "--private-key" (key-hex example-key))))
-                     'failed))]))
+       (check-match (apply cast-outcome
+                           (mktx-arguments wide-fee "--private-key" (key-hex example-key)))
+                    (list 'failed _)))]))
