@@ -46,6 +46,7 @@
 
   (define (cast-phrase stderr)
     (match (regexp-match #px"\n- ([^\n]+)" stderr)
+      [(list _ "unexpected length") "trailing bytes"]
       [(list _ phrase) phrase]
       [#f stderr]))
 
@@ -68,7 +69,7 @@
                        (bytes->hex-string (rlp-encode x))
                        (item->cast-argument x))))
 
-     (test-case "C2: rlp-decode agrees with cast from-rlp, which ignores trailing bytes"
+     (test-case "C2: rlp-decode agrees with cast from-rlp, which ignores or refuses trailing bytes"
        (define prng (seeded 2 9 8 4 2 7))
        (define corpus
          (append (for/list ([(_ v) (in-hash (rlp-vectors "invalidRLPTest.json"))])

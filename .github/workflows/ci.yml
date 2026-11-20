@@ -29,6 +29,8 @@ jobs:
           variant: CS
           version: ${{ matrix.racket-version }}
       - uses: foundry-rs/foundry-toolchain@v1.9.1
+        with:
+          version: v1.8.4
       # A full setup, as for users: keccak builds its C library and
       # libsecp256k1 stages its prebuilt one, both in their pre-install
       # steps, which `raco setup --pkgs web3` alone would skip.
