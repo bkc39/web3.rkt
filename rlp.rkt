@@ -1,7 +1,6 @@
 #lang racket/base
 
 (require racket/contract/base
-         (only-in racket/match match)
          "private/exn.rkt"
          (only-in "private/hex.rkt" bytes->hex bytes->natural natural->bytes)
          "private/who.rkt")
@@ -19,18 +18,19 @@
            rlp-scalar->natural/who
            rlp-reason/c))
 
-(define rlp-reason/c (or/c 'short 'single-byte 'size 'leading-zero 'trailing 'list))
+(define reason-phrases
+  (hasheq 'short "input too short"
+          'single-byte "non-canonical single byte"
+          'size "non-canonical size"
+          'leading-zero "leading zero"
+          'trailing "trailing bytes"
+          'list "unexpected list"))
 
-(define phrases
-  #hasheq((short . "input too short")
-          (single-byte . "non-canonical single byte")
-          (size . "non-canonical size")
-          (leading-zero . "leading zero")
-          (trailing . "trailing bytes")
-          (list . "unexpected list")))
+(define rlp-reason/c
+  (flat-named-contract 'rlp-reason/c (apply or/c (hash-keys reason-phrases #t))))
 
 (define (raise-rlp-error who reason offset detail)
-  (raise (exn:fail:web3:rlp (format "~a: ~a: ~a~a" who (hash-ref phrases reason) detail
+  (raise (exn:fail:web3:rlp (format "~a: ~a: ~a~a" who (hash-ref reason-phrases reason) detail
                                     (if offset (format "\n  offset: ~a" offset) ""))
                             (current-continuation-marks)
                             offset
@@ -40,33 +40,25 @@
   (format "~a byte~a" n (if (= n 1) "" "s")))
 
 (define (rlp-item? v)
-  (or (bytes? v) (rlp-list? v)))
-
-(define (rlp-list? v)
-  (match v
-    ['() #t]
-    [(cons x rest) (and (rlp-item? x) (rlp-list? rest))]
-    [_ #f]))
+  (or (bytes? v) (and (list? v) (andmap rlp-item? v))))
 
 (define (natural->rlp-scalar n)
   (natural->bytes n (quotient (+ (integer-length n) 7) 8)))
 
 (define (rlp-encode item)
-  (define-values (pieces size) (encode-onto item '()))
-  (define out (make-bytes size))
-  (for/fold ([at 0]) ([piece (in-list pieces)])
-    (bytes-copy! out at piece)
-    (+ at (bytes-length piece)))
-  out)
+  (define-values (pieces _) (encode-onto item '()))
+  (define out (open-output-bytes))
+  (for ([piece (in-list pieces)])
+    (write-bytes piece out))
+  (get-output-bytes out))
 
-;; The pieces of item's encoding consed in order onto rest, and their total size.
 (define (encode-onto item rest)
-  (match item
-    [(? bytes?)
-     #:when (and (= (bytes-length item) 1) (< (bytes-ref item 0) #x80))
-     (values (cons item rest) 1)]
-    [(? bytes?) (with-header #x80 (cons item rest) (bytes-length item))]
-    [_
+  (cond
+    [(bytes? item)
+     (if (and (= (bytes-length item) 1) (< (bytes-ref item 0) #x80))
+         (values (cons item rest) 1)
+         (with-header #x80 (cons item rest) (bytes-length item)))]
+    [else
      (define-values (pieces payload)
        (for/fold ([pieces rest] [payload 0]) ([x (in-list (reverse item))])
          (define-values (more size) (encode-onto x pieces))
@@ -88,55 +80,62 @@
     (raise-rlp-error who 'trailing next (format "~a after the item" (byte-count (- end next)))))
   item)
 
-(define (decode-item who bs i e)
-  (define-values (nested? start length) (read-header who bs i e))
-  (define end (+ start length))
-  (values (if nested? (decode-children who bs start end) (subbytes bs start end)) end))
+(define (decode-item who bs start end)
+  (define-values (nested? payload-start payload-end) (read-header who bs start end))
+  (values (if nested?
+              (decode-children who bs payload-start payload-end)
+              (subbytes bs payload-start payload-end))
+          payload-end))
 
 (define (decode-children who bs start end)
-  (let loop ([i start] [items '()])
+  (let loop ([start start] [items '()])
     (cond
-      [(= i end) (reverse items)]
+      [(= start end) (reverse items)]
       [else
-       (define-values (item next) (decode-item who bs i end))
+       (define-values (item next) (decode-item who bs start end))
        (loop next (cons item items))])))
 
-;; Returns only once the payload is known to end by e: nothing is read or allocated for a claimed
-;; length before that.
-(define (read-header who bs i e)
-  (define (fault reason detail)
-    (raise-rlp-error who reason i detail))
-  (define (short needed)
-    (fault 'short (format "~a needed, ~a left" (byte-count needed) (byte-count (- e i)))))
-  (define (payload nested? start length)
-    (if (> (+ start length) e)
-        (short (- (+ start length) i))
-        (values nested? start length)))
-  (define (long nested? k)
-    (define start (+ i 1 k))
-    (define length (and (<= start e) (bytes->natural bs (add1 i) start)))
-    (cond
-      [(not length) (short (add1 k))]
-      [(zero? (bytes-ref bs (add1 i))) (fault 'leading-zero "in the length of the item")]
-      [(< length 56) (fault 'size (format "a length of ~a takes the short form" length))]
-      [else (payload nested? start length)]))
-  (define p (and (< i e) (bytes-ref bs i)))
-  (define single (and p (= p #x81) (< (add1 i) e) (bytes-ref bs (add1 i))))
+;; Returns only once the payload is known to fit before end: nothing is read or allocated for a
+;; claimed size before that.
+(define (read-header who bs start end)
+  (define prefix (and (< start end) (bytes-ref bs start)))
+  (define single (and prefix (= prefix #x81) (< (add1 start) end) (bytes-ref bs (add1 start))))
   (cond
-    [(not p) (short 1)]
-    [(< p #x80) (values #f i 1)]
+    [(not prefix) (raise-short who start end 1)]
+    [(< prefix #x80) (values #f start (add1 start))]
     [(and single (< single #x80))
-     (fault 'single-byte (format "~a is its own encoding" (bytes->hex (bytes single))))]
-    [(<= p #xb7) (payload #f (add1 i) (- p #x80))]
-    [(<= p #xbf) (long #f (- p #xb7))]
-    [(<= p #xf7) (payload #t (add1 i) (- p #xc0))]
-    [else (long #t (- p #xf7))]))
+     (raise-rlp-error who 'single-byte start
+                      (format "~a is its own encoding" (bytes->hex (bytes single))))]
+    [(<= prefix #xb7) (payload who start end #f (add1 start) (- prefix #x80))]
+    [(<= prefix #xbf) (long-payload who bs start end #f (- prefix #xb7))]
+    [(<= prefix #xf7) (payload who start end #t (add1 start) (- prefix #xc0))]
+    [else (long-payload who bs start end #t (- prefix #xf7))]))
+
+(define (raise-short who start end needed)
+  (raise-rlp-error who 'short start
+                   (format "~a needed, ~a left" (byte-count needed) (byte-count (- end start)))))
+
+(define (payload who start end nested? payload-start size)
+  (define payload-end (+ payload-start size))
+  (if (> payload-end end)
+      (raise-short who start end (- payload-end start))
+      (values nested? payload-start payload-end)))
+
+(define (long-payload who bs start end nested? size-length)
+  (define payload-start (+ start 1 size-length))
+  (define size (and (<= payload-start end) (bytes->natural bs (add1 start) payload-start)))
+  (cond
+    [(not size) (raise-short who start end (add1 size-length))]
+    [(zero? (bytes-ref bs (add1 start)))
+     (raise-rlp-error who 'leading-zero start "in the length of the item")]
+    [(< size 56)
+     (raise-rlp-error who 'size start (format "a length of ~a takes the short form" size))]
+    [else (payload who start end nested? payload-start size)]))
 
 (define/who (rlp-scalar->natural who item)
-  (match item
-    [(? bytes?)
-     #:when (and (positive? (bytes-length item)) (zero? (bytes-ref item 0)))
+  (cond
+    [(not (bytes? item)) (raise-rlp-error who 'list #f "a scalar is a byte string")]
+    [(and (positive? (bytes-length item)) (zero? (bytes-ref item 0)))
      (raise-rlp-error who 'leading-zero #f
                       (format "a scalar of ~a starts with 0x00" (byte-count (bytes-length item))))]
-    [(? bytes?) (bytes->natural item)]
-    [_ (raise-rlp-error who 'list #f "a scalar is a byte string")]))
+    [else (bytes->natural item)]))

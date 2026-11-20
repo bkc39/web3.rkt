@@ -5,6 +5,7 @@
            racket/list
            racket/match
            rackunit
+           (only-in racket/shared shared)
            (only-in keccak keccak256)
            (only-in web3/address address->checksum-string)
            (only-in web3/contract create-address)
@@ -111,7 +112,8 @@
       (check-true (rlp-item? v) (format "~s" v)))
     (for ([v (in-list (list "a" 'a 5 1.0 (vector #"") (cons #"" #"") '(((1))) (box #"")
                             '(#"" . #"") (list #"" "a")))])
-      (check-false (rlp-item? v) (format "~s" v))))
+      (check-false (rlp-item? v) (format "~s" v)))
+    (check-equal? (call-bounded (lambda () (rlp-item? (shared ([a (cons #"" a)]) a)))) '(ok #f)))
 
   (test-case "§2.5: the messages"
     (for ([row (in-list
@@ -263,6 +265,14 @@
         (check-equal? (exn:fail:web3:rlp-reason e) 'list)
         (check-false (exn:fail:web3:rlp-offset e))))
     (check-equal? (rlp-scalar->natural #"") 0))
+
+  (test-case "N4: scalars read in time near-linear in their size"
+    (check-equal? (call-bounded (lambda () (rlp-scalar->natural (make-bytes 200000 #xff))))
+                  (list 'ok (sub1 (expt 2 1600000)))))
+
+  (test-case "N4: scalars write in time near-linear in their size"
+    (check-equal? (call-bounded (lambda () (natural->rlp-scalar (sub1 (expt 2 1600000)))))
+                  (list 'ok (make-bytes 200000 #xff))))
 
   (test-case "B1: arguments outside the contracts blame the caller"
     (check-blames-here (rlp-encode "cat"))

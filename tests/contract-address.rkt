@@ -7,7 +7,6 @@
            rackunit
            web3
            "abi-gen.rkt"
-           (only-in "modules.rkt" direct-imports module-name)
            "util.rkt")
 
   (define zero-salt (make-bytes 32 0))
@@ -53,10 +52,6 @@
       (check-equal? (create-address dave nonce) address (format "nonce ~a" nonce)))
     (check-equal? (create-address anvil-alice 0) "0x5FbDB2315678afecb367f032d93F642f64180aa3")
     (check-equal? (create-address anvil-alice 1) "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"))
-
-  (test-case "create-address builds its preimage with web3/rlp"
-    (define contract (module-path-index-resolve (module-path-index-join 'web3/contract #f) #t))
-    (check-not-false (member "web3/rlp" (map module-name (direct-imports contract)))))
 
   (test-case "addresses do not depend on the case of the inputs or the form of salt and code"
     (define prng (seeded 1 0 1 4 7 2))

@@ -129,7 +129,7 @@ See @filepath{examples/09-accounts.rkt}.
 
 Transactions, and the addresses of contracts created by @tt{CREATE}, are hashed and sent as RLP:
 an item is a byte string or a list of items.  @racket[rlp-encode] writes an item and
-@racket[rlp-decode] reads one back.
+@racket[rlp-decode] reads one back, accepting only its one encoding.
 
 @examples[#:eval rlp-eval
           (bytes->hex-string (rlp-encode (list #"cat" #"dog")))
@@ -139,8 +139,7 @@ RLP has no integers.  A number is written as a scalar, its big-endian bytes with
 zeros, so zero is the empty byte string.
 
 @examples[#:eval rlp-eval
-          (bytes->hex-string (rlp-encode (list (natural->rlp-scalar 0) (natural->rlp-scalar 1024))))
-          (map rlp-scalar->natural (rlp-decode (hex-string->bytes "0xc480820400")))]
+          (bytes->hex-string (rlp-encode (list (natural->rlp-scalar 0) (natural->rlp-scalar 1024))))]
 
 A contract's address is the last 20 bytes of the Keccak-256 hash of the list of its creator's
 address and nonce, which is what @racket[create-address] computes.
@@ -150,13 +149,6 @@ address and nonce, which is what @racket[create-address] computes.
           (define preimage (rlp-encode (list (hex-string->bytes sender) (natural->rlp-scalar 1))))
           (address->checksum-string (bytes->hex-string (subbytes (keccak256 preimage) 12)))
           (create-address sender 1)]
-
-Each item has exactly one encoding, and @racket[rlp-decode] accepts nothing else: not a byte
-written with a longer prefix than it needs, nor bytes after the item.
-
-@examples[#:eval rlp-eval
-          (eval:error (rlp-decode (bytes #x81 #x05)))
-          (eval:error (rlp-decode (bytes #xc0 #x00)))]
 
 See @filepath{examples/10-rlp.rkt}.
 

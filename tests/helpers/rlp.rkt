@@ -103,8 +103,6 @@
 (define (splice bs at removed inserted)
   (bytes-append (subbytes bs 0 at) inserted (subbytes bs (+ at removed))))
 
-;; One mutation of bs of each kind that applies to it: flip a byte, delete one, insert one,
-;; truncate, append 1-8 bytes, replace the first byte with a random prefix.
 (define (mutations prng bs)
   (define n (bytes-length bs))
   (define (somewhere) (random n prng))

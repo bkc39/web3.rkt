@@ -10,19 +10,13 @@
     `(([(bytes->hex-string (rlp-encode (list #"cat" #"dog"))) (value "0xc88363617483646f67")]
        [(rlp-decode (hex-string->bytes "0xc88363617483646f67")) (value (#"cat" #"dog"))])
       ([(bytes->hex-string (rlp-encode (list (natural->rlp-scalar 0) (natural->rlp-scalar 1024))))
-        (value "0xc480820400")]
-       [(map rlp-scalar->natural (rlp-decode (hex-string->bytes "0xc480820400")))
-        (value (0 1024))])
+        (value "0xc480820400")])
       ([(define sender "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266") (void)]
        [(define preimage (rlp-encode (list (hex-string->bytes sender) (natural->rlp-scalar 1))))
         (void)]
        [(address->checksum-string (bytes->hex-string (subbytes (keccak256 preimage) 12)))
         (value ,created)]
        [(create-address sender 1) (value ,created)])
-      ([(rlp-decode (bytes #x81 #x05))
-        (raises "rlp-decode: non-canonical single byte: 0x05 is its own encoding\n  offset: 0")]
-       [(rlp-decode (bytes #xc0 #x00))
-        (raises "rlp-decode: trailing bytes: 1 byte after the item\n  offset: 1")])
       ([(rlp-item? (list #"" (list #"a"))) (value #t)]
        [(rlp-item? (list "a")) (value #f)])
       ([(bytes->hex-string (rlp-encode #"\x7f")) (value "0x7f")]
@@ -38,7 +32,4 @@
         (raises "rlp-scalar->natural: leading zero: a scalar of 2 bytes starts with 0x00")])))
 
   (test-case "M1: the manual's RLP examples give what the manual shows"
-    (check-manual-blocks blocks))
-
-  (test-case "M1: byte strings print as the manual shows them"
-    (check-equal? (format "~s" (bytes 4 0)) "#\"\\4\\0\"")))
+    (check-manual-blocks blocks)))

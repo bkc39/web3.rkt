@@ -13,14 +13,6 @@
            "helpers/rlp.rkt"
            (only-in "util.rkt" seeded))
 
-  (define phrases
-    #hasheq((short . "input too short")
-            (single-byte . "non-canonical single byte")
-            (size . "non-canonical size")
-            (leading-zero . "leading zero")
-            (trailing . "trailing bytes")
-            (list . "unexpected list")))
-
   (define (sample prng n make)
     (for/list ([_ (in-range n)]) (make prng)))
 
@@ -57,6 +49,11 @@
       [(list _ phrase) phrase]
       [#f stderr]))
 
+  (define (fault-phrase fault)
+    (match (regexp-match #px"^rlp-[a-z>-]+: ([^:]+):" (exn-message fault))
+      [(list _ phrase) phrase]
+      [#f (exn-message fault)]))
+
   (cond
     [(not cast-path) (displayln "SKIPPED: rlp differential: cast not found")]
     [else
@@ -90,8 +87,7 @@
            [(list 'failed stderr)
             (check-pred exn:fail:web3:rlp? fault name)
             (when fault
-              (check-equal? (hash-ref phrases (exn:fail:web3:rlp-reason fault)) (cast-phrase stderr)
-                            name))]
+              (check-equal? (fault-phrase fault) (cast-phrase stderr) name))]
            [(list 'ok output)
             #:when (not fault)
             (check-equal? (item->cast-output (rlp-decode bs)) output name)]
@@ -110,11 +106,11 @@
        (for ([row (in-list '((#"\0" leading-zero) (#"\0\1" leading-zero)
                              (() list) ((#"") list)))])
          (match-define (list item reason) row)
-         (match (cast-outcome "from-rlp" "--as-int" (bytes->hex-string (rlp-encode item)))
-           [(list 'failed stderr)
-            (check-regexp-match (regexp-quote (hash-ref phrases reason)) stderr)]
-           [other (fail (format "cast accepted ~s: ~s" item other))])
          (define fault (rlp-fault (lambda () (rlp-scalar->natural item))))
          (check-pred exn:fail:web3:rlp? fault)
          (when fault
-           (check-eq? (exn:fail:web3:rlp-reason fault) reason))))]))
+           (check-eq? (exn:fail:web3:rlp-reason fault) reason)
+           (match (cast-outcome "from-rlp" "--as-int" (bytes->hex-string (rlp-encode item)))
+             [(list 'failed stderr)
+              (check-regexp-match (regexp-quote (fault-phrase fault)) stderr)]
+             [other (fail (format "cast accepted ~s: ~s" item other))]))))]))

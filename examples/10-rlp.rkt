@@ -7,9 +7,6 @@
 (define (contract-address-preimage sender nonce)
   (rlp-encode (list (hex-string->bytes sender) (natural->rlp-scalar nonce))))
 
-(define (preimage->address preimage)
-  (address->checksum-string (bytes->hex-string (subbytes (keccak256 preimage) 12))))
-
 (define (describe-item item)
   (match item
     [(? bytes?) (bytes->hex-string item)]
@@ -19,9 +16,11 @@
   (for ([nonce (in-list nonces)])
     (define preimage (contract-address-preimage sender nonce))
     (printf "nonce ~a\n" nonce)
-    (printf "  rlp:     ~a\n" (bytes->hex-string preimage))
-    (printf "  decoded: ~s\n" (describe-item (rlp-decode preimage)))
-    (printf "  address: ~a\n" (preimage->address preimage))))
+    (define hashed (subbytes (keccak256 preimage) 12))
+    (printf "  rlp:            ~a\n" (bytes->hex-string preimage))
+    (printf "  decoded:        ~s\n" (describe-item (rlp-decode preimage)))
+    (printf "  keccak address: ~a\n" (address->checksum-string (bytes->hex-string hashed)))
+    (printf "  create-address: ~a\n" (create-address sender nonce))))
 
 (define (print-decoded hexes)
   (for ([hex (in-list hexes)])
