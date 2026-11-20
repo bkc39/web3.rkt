@@ -1,6 +1,7 @@
 #lang racket/base
 
-(require racket/match
+(require (only-in racket/contract exn:fail:contract:blame?)
+         racket/match
          rackunit
          (only-in scribble/example make-base-eval))
 
@@ -27,4 +28,10 @@
     [`(raises ,message)
      (check-pred exn:fail? result name)
      (when (exn:fail? result)
-       (check-equal? (exn-message result) message name))]))
+       (check-equal? (exn-message result) message name))]
+    [`(blames ,who)
+     (check-pred exn:fail:contract:blame? result name)
+     (when (exn:fail? result)
+       (check-regexp-match (pregexp (format "^~a: contract violation" (regexp-quote (format "~a" who))))
+                           (exn-message result)
+                           name))]))

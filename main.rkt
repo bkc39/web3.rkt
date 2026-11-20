@@ -11,6 +11,8 @@
 ;;   web3/address         EIP-55 checksums
 ;;   web3/account         secret keys, addresses, signing digests, recovering signers
 ;;   web3/rlp             Recursive Length Prefix: encoding, strict decoding, scalars
+;;   web3/units           amounts in wei, gwei, ether or a token's decimals, from and to
+;;                        decimal strings
 ;;   web3/contract        deploying, calling and sending; contract instances; define-contract;
 ;;                        CREATE and CREATE2 addresses
 ;;   web3/event           event logs: filters, get-logs, receipt-logs
@@ -28,7 +30,8 @@
          "eth.rkt"
          "event.rkt"
          "rlp.rkt"
-         "rpc.rkt")
+         "rpc.rkt"
+         "units.rkt")
 
 (provide (all-from-out "abi.rkt"
                        "account.rkt"
@@ -38,4 +41,5 @@
                        "eth.rkt"
                        "event.rkt"
                        "rlp.rkt"
-                       "rpc.rkt"))
+                       "rpc.rkt"
+                       "units.rkt"))
