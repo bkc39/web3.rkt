@@ -20,9 +20,13 @@
          (only-in racket/dict in-dict)
          (only-in racket/string string-join string-trim)
          syntax/parse/define
+         (only-in "../abi/type.rkt" abi-value?)
          (only-in "signature.rkt" signature?))
 
-(provide describe-kind
+(provide address/c
+         describe-kind
+         digest/c
+         message/c
          opaque->
          (rename-out [opaque-contract opaque/c])
          secret-key/c)
@@ -65,6 +69,13 @@
                                 (opaque-contract-expected c) (describe-kind v))))))))
 
 (define secret-key/c (opaque-contract 'secret-key? "a secret key" secret-key?))
+(define digest/c
+  (opaque-contract 'digest/c "a 32-byte digest"
+                   (lambda (v) (and (bytes? v) (= (bytes-length v) 32)))))
+(define message/c
+  (opaque-contract 'message/c "a byte string or a string" (lambda (v) (or (bytes? v) (string? v)))))
+(define address/c
+  (opaque-contract 'address/c "an address" (lambda (v) (abi-value? 'address v))))
 
 (define (opaque v)
   (if (opaque-contract? v)

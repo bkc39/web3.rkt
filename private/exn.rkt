@@ -15,6 +15,7 @@
          (struct-out exn:fail:web3:raw-transaction)
          (struct-out exn:fail:web3:rlp)
          (struct-out exn:fail:web3:signature)
+         (struct-out exn:fail:web3:signer)
          (struct-out exn:fail:web3:units))
 
 (struct exn:fail:web3 exn:fail ())
@@ -29,4 +30,5 @@
 (struct exn:fail:web3:rlp exn:fail:web3 (offset reason))
 (struct exn:fail:web3:raw-transaction exn:fail:web3 (field reason))
 (struct exn:fail:web3:signature exn:fail:web3 ())
+(struct exn:fail:web3:signer exn:fail:web3 (reason))
 (struct exn:fail:web3:units exn:fail:web3 (index reason))

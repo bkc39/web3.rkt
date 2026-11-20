@@ -316,7 +316,7 @@
 
 (define/contract (number->hex-string n)
   (-> exact-nonnegative-integer? string?)
-  (string-append "0x" (number->string n 16)))
+  (natural->hex n))
 
 (define/contract (bytes->hex-string bs)
   (-> bytes? string?)

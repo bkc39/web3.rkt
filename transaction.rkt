@@ -88,11 +88,14 @@
           [signed-transaction-sender (-> signed-transaction? checksum-address?)]
           [signed-transaction-hash (-> signed-transaction? transaction-hash/c)]
           [signed-transaction->bytes (-> signed-transaction? bytes?)]
-          [bytes->signed-transaction (-> bytes? signed-transaction?)]))
+          [bytes->signed-transaction (-> bytes? signed-transaction?)]
+          [transaction->jsexpr (-> transaction? #:from (abi-value/c 'address) hash?)]))
 
 (module* internal #f
   (provide bytes->signed-transaction/who
            raw-transaction-reason/c
+           transaction/c
+           transaction-difference
            wire-fields))
 
 (define raw-transaction-phrases
@@ -137,7 +140,7 @@
   (drop-right (hash-ref wire-fields type) 3))
 
 (define (stored-fields type)
-  (if (zero? type) (cons 'chain-id (unsigned-fields type)) (unsigned-fields type)))
+  (if (zero? type) (append (unsigned-fields type) '(chain-id)) (unsigned-fields type)))
 
 (define (equal+hash-by key)
   (list (lambda (this other _) (equal? (key this) (key other)))
@@ -324,6 +327,12 @@
 (define (seal tx sig sender)
   (define raw (bytes->immutable-bytes (encode-signed tx sig)))
   (sealed-transaction tx sig sender (string->immutable-string (bytes->hex (keccak256 raw))) raw))
+
+(define (transaction->jsexpr tx #:from from)
+  (error 'unimplemented))
+
+(define (transaction-difference a b)
+  (error 'unimplemented))
 
 (define (signed-transaction->bytes stx)
   (bytes-copy (signed-transaction-raw stx)))

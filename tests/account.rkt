@@ -215,7 +215,7 @@
     (check-equal? (hex-of (signature-s high))
                   "0xac97fb6e80ef38f3a2f32848cf4aa6255bf6ca14d7c4a95e6c840637e01b02ec")
     (check-equal? (signature-v high) 28)
-    (check-equal? (recover-address high digest-empty) (car anvil-addresses)))
+    (check-equal? (recover-address high digest-empty) anvil-alice))
 
   (define whitespace '(" " "\t" "\n" "\r\n"))
 
@@ -239,7 +239,7 @@
                   [digits (in-list (list anvil-0-digits (string-upcase anvil-0-digits)))])
         (string-append prefix digits)))
     (for ([s (in-list forms)])
-      (check-equal? (secret-key->address (hex-string->secret-key s)) (car anvil-addresses) s)))
+      (check-equal? (secret-key->address (hex-string->secret-key s)) anvil-alice s)))
 
   (test-case "key text of the wrong shape is the caller's contract violation"
     (for ([s (in-list refused-key-texts)])
@@ -287,6 +287,8 @@
   (define bad-digests (list (make-bytes 31 1) (make-bytes 33 1) (bytes->hex-string digest-empty)))
   (define bad-signatures
     (list (make-bytes 64 1) (make-bytes 65 27) 5 (ecdsa-recoverable-signature 5 6 0)))
+  (define bad-messages (list 5 'm (list #"m") good-key))
+  (define bad-addresses (list "0x12" (make-bytes 20 1) 5 (substring anvil-alice 2)))
 
   (define surface
     (list (list hex-string->secret-key (list anvil-0)
@@ -300,7 +302,13 @@
           (list signature-v (list good-signature) (list bad-signatures))
           (list signature->bytes (list good-signature) (list bad-signatures))
           (list bytes->signature (list (signature->bytes good-signature))
-                (list (list (make-bytes 64 1) (make-bytes 66 27) 5 anvil-0)))))
+                (list (list (make-bytes 64 1) (make-bytes 66 27) 5 anvil-0)))
+          (list hash-message (list "m") (list bad-messages))
+          (list sign-message (list good-key "m") (list bad-keys bad-messages))
+          (list recover-message-address (list good-signature "m")
+                (list bad-signatures bad-messages))
+          (list message-signed-by? (list good-signature "m" anvil-alice)
+                (list bad-signatures bad-messages bad-addresses))))
 
   (test-case "an argument of the wrong kind is the caller's contract violation"
     (for ([entry (in-list surface)])

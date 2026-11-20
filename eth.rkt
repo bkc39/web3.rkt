@@ -40,6 +40,8 @@
          eth-estimate-gas
          eth-send-transaction
          eth-send-raw-transaction
+         eth-sign
+         eth-sign-transaction
          eth-get-transaction-by-hash
          eth-get-transaction-receipt
          eth-get-logs
@@ -61,6 +63,9 @@
   (if (eq? r 'null) 0 (hex-string->number r)))
 
 (define tx/c (and/c hash? jsexpr?))
+
+(define (signed-transaction-result result)
+  (error 'unimplemented))
 
 (define-jsonrpc-endpoint web3_clientVersion (-> string?))
 (define-jsonrpc-endpoint web3_sha3 (-> hex-string? hex-string?))
@@ -112,6 +117,9 @@
   #:result-transform hex-string->number)
 (define-jsonrpc-endpoint eth_sendTransaction (-> tx/c hex-string?))
 (define-jsonrpc-endpoint eth_sendRawTransaction (-> hex-string? hex-string?))
+(define-jsonrpc-endpoint eth_sign (-> string? hex-string? hex-string?))
+(define-jsonrpc-endpoint eth_signTransaction (-> tx/c hex-string?)
+  #:result-transform signed-transaction-result)
 (define-jsonrpc-endpoint eth_getTransactionByHash (-> hex-string? (or/c 'null hash?)))
 (define-jsonrpc-endpoint eth_getTransactionReceipt (-> hex-string? (or/c 'null hash?)))
 (define-jsonrpc-endpoint eth_getLogs (-> (and/c hash? jsexpr?) list?))
