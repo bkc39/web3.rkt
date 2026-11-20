@@ -157,14 +157,161 @@
 
 ;;;; filling
 
+(define (given order kw)
+  (hash-ref order kw #f))
+
+(define (given-types order)
+  (filter (match-lambda [(cons kw _) (given order kw)]) field-types))
+
+(define (first-disjoint rows)
+  (match rows
+    ['() #f]
+    [(cons (cons kw types) more)
+     (or (for/first ([(other other-types) (in-dict more)]
+                     #:unless (for/or ([type (in-list types)]) (memv type other-types)))
+           (list kw other))
+         (first-disjoint more))]))
+
+(define (check-fields who order rows)
+  (define type (given order '#:type))
+  (define excluded
+    (and type (for/first ([(kw types) (in-dict rows)] #:unless (memv type types)) kw)))
+  (define priority (given order '#:max-priority-fee-per-gas))
+  (define max-fee (given order '#:max-fee-per-gas))
+  (cond
+    [excluded (raise-conflict who "#:type ~a takes no ~a" type excluded)]
+    [(first-disjoint rows)
+     => (match-lambda
+          [(list kw other)
+           (raise-conflict who "~a and ~a are for different transaction types" kw other)])]
+    [(and priority max-fee (> priority max-fee))
+     (raise-conflict who "#:max-priority-fee-per-gas is more than #:max-fee-per-gas")]
+    [else (void)]))
+
+(define (candidate-types rows)
+  (for/fold ([types '(0 1 2)]) ([(_kw allowed) (in-dict rows)])
+    (filter (lambda (type) (memv type allowed)) types)))
+
+(define (decided-type type candidates)
+  (cond
+    [type type]
+    [(equal? candidates '(2)) 2]
+    [(memv 2 candidates) #f]
+    [else (apply min candidates)]))
+
+(define (node-natural who what v bits)
+  (define n (node-quantity->number who what v))
+  (if (< n (expt 2 bits)) n (raise-node-malformed who what v)))
+
+(define (ask who what bits provider method . params)
+  (node-natural who what (rpc-call method params #:provider provider) bits))
+
+(define (node-chain-id who order provider)
+  (define chain-id (ask who "chain id" 64 provider "eth_chainId"))
+  (define wanted (given order '#:chain-id))
+  (cond
+    [(or (not wanted) (= wanted chain-id)) chain-id]
+    [else (raise-fill who 'chain-id "#:chain-id is ~a, but the node's chain is ~a"
+                      wanted chain-id)]))
+
+(define (latest-base-fee who provider)
+  (match (rpc-call "eth_getBlockByNumber" (list "latest" #f) #:provider provider)
+    [(? hash? block)
+     (match (hash-ref block 'baseFeePerGas 'null)
+       ['null #f]
+       [raw (cons (node-quantity->number who "base fee" raw) raw)])]
+    [block (raise-node-malformed who "latest block" block)]))
+
+(define (fee-cap who base-fee priority)
+  (match base-fee
+    [(cons base raw)
+     (define cap (+ (* 2 base) priority))
+     (if (< cap (expt 2 256)) cap (raise-node-malformed who "base fee" raw))]))
+
+(define (eip1559-fees who order base-fee provider)
+  (define priority
+    (or (given order '#:max-priority-fee-per-gas)
+        (ask who "priority fee" 256 provider "eth_maxPriorityFeePerGas")))
+  (define cap (or (given order '#:max-fee-per-gas) (fee-cap who base-fee priority)))
+  (cond
+    [(< cap priority)
+     (raise-fill who 'fee-cap "#:max-fee-per-gas is ~a wei, below the node's priority fee of ~a wei"
+                 cap priority)]
+    [else (values priority cap)]))
+
+(define (gas-price who order provider)
+  (or (given order '#:gas-price) (ask who "gas price" 256 provider "eth_gasPrice")))
+
 (define (fill who from to order)
-  (error 'unimplemented))
+  (define errors (given order '#:errors))
+  (define provider (given order '#:provider))
+  (define value (given order '#:value))
+  (define data (given order '#:data))
+  (define access-list (given order '#:access-list))
+  (check-error-signatures/who who errors)
+  (define rows (given-types order))
+  (check-fields who order rows)
+  (define address (sender-address who from))
+  (define candidates (candidate-types rows))
+  (define type (decided-type (given order '#:type) candidates))
+  (define chain-id (node-chain-id who order provider))
+  (define call
+    (call-object #:from address #:to (and to (address->checksum-string to)) #:data data
+                 #:value value #:gas #f #:access-list access-list))
+  (define gas-limit
+    (or (given order '#:gas-limit) (estimate-gas who call errors provider #:limit (expt 2 64))))
+  (define nonce
+    (or (given order '#:nonce)
+        (ask who "transaction count" 64 provider "eth_getTransactionCount" address "pending")))
+  (define block? (or (not type) (and (= type 2) (not (given order '#:max-fee-per-gas)))))
+  (define base-fee (and block? (latest-base-fee who provider)))
+  (define final-type (or type (if base-fee 2 (apply min (remv 2 candidates)))))
+  (define tx
+    (match final-type
+      [2 #:when (and block? (not base-fee))
+         (raise-fill who 'no-base-fee
+                     (string-append "the latest block has no base fee, so a type 2 transaction "
+                                    "needs #:max-fee-per-gas"))]
+      [2
+       (define-values (priority cap) (eip1559-fees who order base-fee provider))
+       (eip1559-transaction #:chain-id chain-id #:nonce nonce #:max-priority-fee-per-gas priority
+                            #:max-fee-per-gas cap #:gas-limit gas-limit #:to to #:value value
+                            #:data data #:access-list (or access-list '()))]
+      [1
+       (eip2930-transaction #:chain-id chain-id #:nonce nonce
+                            #:gas-price (gas-price who order provider) #:gas-limit gas-limit
+                            #:to to #:value value #:data data
+                            #:access-list (or access-list '()))]
+      [0
+       (legacy-transaction #:chain-id chain-id #:nonce nonce
+                           #:gas-price (gas-price who order provider) #:gas-limit gas-limit
+                           #:to to #:value value #:data data)]))
+  (values tx call))
 
 (define (send-raw who signer to order)
-  (error 'unimplemented))
+  (define-values (tx call) (fill who signer to order))
+  (define provider (given order '#:provider))
+  (define stx
+    (parameterize ([current-provider provider])
+      (signer-sign-transaction/who who signer tx)))
+  (define tx-hash (signed-transaction-hash stx))
+  (define raw (bytes->hex-string (signed-transaction->bytes stx)))
+  (define answer
+    (call-raising-reverts (given order '#:errors)
+                          (lambda ()
+                            (rpc-call "eth_sendRawTransaction" (list raw) #:provider provider))))
+  (cond
+    [(and (string? answer) (string=? (string-downcase answer) tx-hash))
+     (values tx-hash (hash-set call 'gas (number->hex-string (transaction-gas-limit tx))))]
+    [else
+     (raise (exn:fail:web3 (format "~a: sent transaction ~a, but the node answered ~e"
+                                   who tx-hash answer)
+                           (current-continuation-marks)))]))
 
 (define (send-raw/receipt who signer to order)
-  (error 'unimplemented))
+  (define-values (tx-hash call) (send-raw who signer to order))
+  (values tx-hash
+          (settle who tx-hash call (given order '#:errors) (given order '#:provider))))
 
 (define-syntax-parse-rule (define/filling (name:id who:id from:id to:id order:id)
                             body:expr ...+)
@@ -198,10 +345,19 @@
 
 ;;;; contract paths
 
+(define (check-width who kw v bits)
+  (when (>= v (expt 2 bits))
+    (raise-conflict who "~a is more than a transaction's ~a bits hold" kw bits)))
+
 (define (submit who sender #:to to #:data data #:value value #:gas gas #:errors errors
                 #:provider provider)
   (cond
-    [(signer? sender) (error 'unimplemented)]
+    [(signer? sender)
+     (check-width who '#:value value 256)
+     (check-width who '#:gas (or gas 0) 64)
+     (send-raw/receipt who sender to
+                       (hasheq '#:value value '#:data data '#:gas-limit gas '#:errors errors
+                               '#:provider provider))]
     [else
      (define tx (call-object #:to to #:from sender #:data data #:value value #:gas gas))
      (define tx+gas
