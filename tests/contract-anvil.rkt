@@ -108,7 +108,11 @@
                                                                           anvil-bob 1
                                                                           #:from anvil-bob
                                                                           #:errors '("Unauthorized(address)")))))
-                         (format "Unauthorized(~a)" anvil-bob)))
+                         (format "Unauthorized(~a)" anvil-bob))
+           (define unnamed
+             (raised (lambda () (contract-call token "transfer(address,uint256)(bool)" anvil-alice 1
+                                               #:from anvil-carol))))
+           (check-equal? (revert-string unnamed) "unknown error 0xcf479181 with 64 bytes of data"))
 
          (test-case "#:value pays a payable function"
            (contract-send token "deposit(string)" "first" #:value 1000)

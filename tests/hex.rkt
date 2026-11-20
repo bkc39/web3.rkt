@@ -5,7 +5,11 @@
            (only-in racket/match match-define)
            rackunit
            (only-in web3/private/hex bytes->natural natural->bytes)
-           (only-in web3/rpc hex-string->number number->hex-string)
+           (only-in web3/rpc
+                    bytes->hex-string
+                    hex-string->bytes
+                    hex-string->number
+                    number->hex-string)
            (only-in "abi-gen.rkt" random-bytes)
            (only-in "helpers/accounts.rkt" random-natural)
            (only-in "util.rkt" check-blames-here seeded))
@@ -74,4 +78,12 @@
                                     (expt 2 256))
                               (for/list ([_ (in-range 200)])
                                 (modulo (random-natural prng 38) (expt 2 300)))))])
-      (check-equal? (hex-string->number (number->hex-string n)) n (number->string n)))))
+      (check-equal? (hex-string->number (number->hex-string n)) n (number->string n))))
+
+  (test-case "X4: bytes are written as two lowercase digits each, and read back with or without 0x"
+    (for ([row (in-list '((#"" "0x") (#"\336\255\276\357" "0xdeadbeef") (#"\0\1" "0x0001")))])
+      (match-define (list bs s) row)
+      (check-equal? (bytes->hex-string bs) s s)
+      (check-equal? (hex-string->bytes s) bs s)
+      (check-equal? (hex-string->bytes (substring s 2)) bs s))
+    (check-equal? (hex-string->bytes "0xDEADbeef") #"\336\255\276\357")))
