@@ -75,7 +75,7 @@
             pname = "web3";
             inherit version;
             src = pkgs.lib.cleanSource ./.;
-            nativeBuildInputs = [ pkgs.racket pkgs.foundry ] ++ solcFor pkgs;
+            nativeBuildInputs = [ pkgs.racket pkgs.foundry pkgs.cacert ] ++ solcFor pkgs;
             buildPhase = ''
               runHook preBuild
               export HOME=$TMPDIR/home

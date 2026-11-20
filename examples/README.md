@@ -29,7 +29,7 @@ node.  `(show expr)` prints an expression and its value.
 | `11-units.rkt` | wei, gwei and ether amounts from decimal strings and back, a token's decimals, refused amounts |
 | `12-transactions.rkt` | legacy, EIP-2930 and EIP-1559 transactions signed offline, their raw bytes, hashes and recovered senders, a refused truncation |
 | `13-signers.rkt` | a local key and a node account as signers: each one's EIP-191 signature verifies, and both sign the same transaction |
-| `14-sending.rkt` | a local key on a node that holds none: deploying, sending to and calling a contract through define-contract with the key as current-account, the node refusing the same send from the address, filling and sending an ether transfer, the sender recovered from the node's raw bytes |
+| `14-sending.rkt` | a key the node does not hold: a contract deploy and send, an ether transfer |
 
 09, 10, 11 and 12 are programs: `racket examples/NN-name.rkt` runs its `main` and needs no node.
 13 and 14 are programs that start their own anvil.

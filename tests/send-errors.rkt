@@ -189,6 +189,53 @@
       (for ([methods (list lie-methods offline-methods unsupported-methods)])
         (check-false (member "eth_sendRawTransaction" methods)))))
 
+  (test-case "F23: a signer whose address changes after the fill sends nothing"
+    (for ([procedure (in-list senders)])
+      (define who (symbol->string (object-name procedure)))
+      (define-values (e methods) (run procedure (filling) '() #:signer (flipper)))
+      (check-pred exn:fail:web3:signer? e who)
+      (when (exn:fail:web3:signer? e)
+        (check-eq? (exn:fail:web3:signer-reason e) 'wrong-signer who)
+        (check-equal? (exn-message e)
+                      (format (string-append "~a: wrong signer: the transaction's sender is ~a, "
+                                             "not the address it was filled for ~a")
+                              who anvil-bob anvil-alice)
+                      who)
+        (check-no-leak (exn-message e)))
+      (check-false (member "eth_sendRawTransaction" methods) who)))
+
+  (test-case "F24: a revert at the raw send is decoded with #:errors"
+    (for ([procedure (in-list senders)])
+      (define-values (e _methods)
+        (run procedure (filling #:raw (reverting "eth_sendRawTransaction"))
+             `(#:errors (,insufficient-balance))))
+      (check-pred exn:fail:web3:rpc:revert? e)
+      (when (exn:fail:web3:rpc:revert? e)
+        (check-equal? (abi-revert-arguments (exn:fail:web3:rpc:revert-revert e)) '(0 5000)))))
+
+  (define huge (string-append "0x" (make-string 10000000 #\f)))
+
+  (define huge-rows
+    `(((#:chain-id ,huge) "chain id")
+      ((#:estimate ,huge) "gas estimate")
+      ((#:count ,huge) "transaction count")
+      ((#:block ,(hasheq 'baseFeePerGas huge)) "base fee")
+      ((#:priority ,huge) "priority fee")
+      ((#:block ,legacy-block #:gas-price ,huge) "gas price")))
+
+  (test-case "F25: a 10 MB quantity is refused as malformed at once"
+    (define start (current-inexact-milliseconds))
+    (for ([row (in-list huge-rows)])
+      (match-define (list overrides what) row)
+      (define-values (e _methods) (run fill-transaction (call-with-fields filling overrides) '()))
+      (check-true (plain-web3? e) what)
+      (when (exn? e)
+        (check-regexp-match (format "^fill-transaction: malformed ~a from the node: \"0xfff" what)
+                            (exn-message e))
+        (check-true (< (string-length (exn-message e)) 400) what)))
+    (define elapsed (- (current-inexact-milliseconds) start))
+    (check-true (< elapsed 1000.0) (format "~a ms" elapsed)))
+
   (test-case "F15: a node signer signs at the send's provider"
     (define-values (filled _fill-methods) (run fill-transaction (filling) '()))
     (match-define (list tx) filled)

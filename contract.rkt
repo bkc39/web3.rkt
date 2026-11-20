@@ -2,7 +2,6 @@
 
 (require racket/contract/base
          (only-in racket/contract/combinator raise-blame-error)
-         (only-in json jsexpr?)
          (only-in keccak keccak256)
          (only-in racket/match match match* struct*)
          (only-in racket/string string-contains? string-join)
@@ -22,7 +21,7 @@
          "private/contract-call.rkt"
          "private/exn.rkt"
          (only-in "private/hex.rkt" hex-data-string?)
-         (only-in "private/send.rkt" from/c)
+         (only-in "private/contracts.rkt" errors/c from/c provider/c receipt/c)
          "private/who.rkt")
 
 (define-syntax-parse-rule (transaction->* (required:expr ...) (optional ...) result:expr)
@@ -99,16 +98,13 @@
   #:property prop:custom-write write-instance)
 
 (define signature/c (or/c string? abi-signature?))
-(define errors/c (listof (or/c string? abi-signature?)))
 (define init-code/c
   (or/c bytes?
         (flat-named-contract '(and/c string? #px"^0x(?:[0-9a-fA-F]{2})*$") hex-data-string?)))
 (define salt/c
   (or/c (and/c bytes? (property/c bytes-length (=/c 32))) (integer-in 0 (sub1 (expt 2 256)))))
 (define nonce/c (integer-in 0 (- (expt 2 64) 2)))
-(define receipt/c (and/c hash? jsexpr?))
 (define block/c (flat-named-contract 'block-param/c block-param/c))
-(define provider/c (or/c #f provider?))
 
 (define target/c
   (flat-named-contract 'target/c (or/c (abi-value/c 'address) contract-instance?)))

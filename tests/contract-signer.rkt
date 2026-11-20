@@ -27,9 +27,6 @@
   (define transfer-data (bytes->hex-string (encode-call "transfer(address,uint256)" anvil-bob 10)))
   (define transfer-tx (hasheq 'from anvil-alice 'to token 'data transfer-data))
 
-  (define (method-names calls)
-    (map first calls))
-
   (define (call-param calls method)
     (match (assoc method calls)
       [(list _ param _ ...) param]
@@ -164,7 +161,26 @@
       (check-pred exn:fail:web3:transaction? failure)
       (check-equal? (abi-revert-arguments (exn:fail:web3:transaction-revert failure)) '(0 5000))
       (check-equal? (last failure-calls)
-                    `("eth_call" ,(hash-set transfer-tx 'gas "0x5208") "0x5"))))
+                    `("eth_call" ,(hash-set transfer-tx 'gas "0x5208") "0x5"))
+      (define-values (refused _refused-calls)
+        (run-mock (filling #:raw (reverting "eth_sendRawTransaction")) send))
+      (check-pred exn:fail:web3:rpc:revert? refused)
+      (when (exn:fail:web3:rpc:revert? refused)
+        (check-equal? (abi-revert-arguments (exn:fail:web3:rpc:revert-revert refused)) '(0 5000)))))
+
+  (test-case "K15: a signer whose address changes after the fill sends nothing"
+    (for ([entry (in-list entry-points)])
+      (match-define (list name send) entry)
+      (define-values (e calls) (run-mock node (lambda () (send (flipper)))))
+      (check-pred exn:fail:web3:signer? e (symbol->string name))
+      (when (exn:fail:web3:signer? e)
+        (check-eq? (exn:fail:web3:signer-reason e) 'wrong-signer)
+        (check-regexp-match
+         (regexp-quote (format (string-append "wrong signer: the transaction's sender is ~a, "
+                                              "not the address it was filled for ~a")
+                               anvil-bob anvil-alice))
+         (exn-message e)))
+      (check-false (member "eth_sendRawTransaction" (method-names calls)) (symbol->string name))))
 
   (test-case "K9, K10: no sender, a lying signer and malformed counts name the entry point"
     (define-values (none none-calls)
@@ -206,6 +222,23 @@
           (lambda (from) (token-binding-transfer token anvil-bob 1 #:from from))
           (lambda (from) (counter-deploy #:from from))))
 
+  (define misapplied
+    `((contract-call ,contract-call (,token "balanceOf(address)(uint256)" ,anvil-bob) ())
+      (contract-send ,contract-send (,token "transfer(address,uint256)" ,anvil-bob 1) ())
+      (contract-estimate-gas ,contract-estimate-gas (,token "transfer(address,uint256)" ,anvil-bob 1)
+                             ())
+      (deploy-contract ,deploy-contract (#"\x60") ())
+      (deploy-contract/receipt ,deploy-contract/receipt (#"\x60") ())
+      (deploy-contract-instance ,deploy-contract-instance (,counter-abi) ())
+      (contract-instance ,contract-instance (,token-abi ,token) (,token-abi))
+      (token-binding-transfer ,token-binding-transfer (,token ,anvil-bob 1) (,token))
+      (counter-deploy ,counter-deploy () (1 2 3))))
+
+  (define (misapplications row from)
+    (match-define (list _ procedure positional wrong-arity) row)
+    (list (lambda () (keyword-apply procedure '(#:bogus #:from) (list 1 from) positional))
+          (lambda () (keyword-apply procedure '(#:from) (list from) wrong-arity))))
+
   (test-case "K11: a sender of another kind blames the caller and shows no key"
     (parameterize ([current-provider (mock-provider node)])
       (for* ([take (in-list from-takers)]
@@ -214,7 +247,13 @@
         (check-pred exn:fail:contract:blame? e)
         (when (exn? e)
           (check-regexp-match #rx"expected: #f, an address or a signer" (exn-message e))
-          (check-no-leak (exn-message e))))))
+          (check-no-leak (exn-message e))))
+      (for* ([row (in-list misapplied)]
+             [call (in-list (misapplications row (local-signer marker-key)))])
+        (define e (with-handlers ([exn:fail? values]) (call)))
+        (check-pred exn:fail? e (format "~a" (first row)))
+        (when (exn? e)
+          (check-no-leak (exn-message e) (format "~a" (first row)))))))
 
   (test-case "K12, K13: bound keywords are unchanged, and an instance keeps its signer"
     (check-equal? all-keywords '(#:from #:value #:block #:gas #:errors #:provider))

@@ -31,8 +31,11 @@
          model-unsigned
          nick-raw
          no-point-r
+         quantity
+         random-checksummed-address
          random-partial
          random-transaction
+         random-u64
          slot-1
          transaction-fields
          transaction-kind
@@ -381,6 +384,9 @@
 
 (define (maybe prng kw make)
   (if (zero? (random 2 prng)) '() (list kw (make))))
+
+(define (random-checksummed-address prng)
+  (address->checksum-string (random-address prng)))
 
 (define (random-checksummed-access-list prng)
   (for/list ([entry (in-list (random-access-list prng))])

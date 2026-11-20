@@ -16,7 +16,8 @@ bezzle, which pin it as a flake input.
 | `contract.rkt` | deploying, calls and sends, contract instances, define-contract, contract addresses; an `internal` submodule of entry points that take the caller's `who` |
 | `private/contract-call.rkt` | the calls, sends, estimates and deploys `contract.rkt` and bound procedures run, under their caller's `who`; the sending itself is `private/send.rkt`'s |
 | `send.rkt` | filling transactions from a node, signing them with a signer and sending them raw; every procedure under `opaque->` |
-| `private/send.rkt` | filling, raw sends, and the estimate/send/wait/replay every send runs, from an address or a signer, under the caller's `who`; `from/c` |
+| `private/send.rkt` | filling, raw sends, and the estimate/send/wait/replay every send runs, from an address or a signer, under the caller's `who`; `define-fill-keywords`, the one table of fill keywords their formals and contracts come from |
+| `private/contracts.rkt` | the argument contracts the send and contract entry points share: senders, `to`, errors, providers, receipts |
 | `private/bindings.rkt` | `define-contract` and `contract-bindings-out`, and the procedures they bind |
 | `private/define-contract.rkt` | define-contract's expansion-time half; reads JSON at phase 1, never keccak |
 | `private/binding-rules.rkt` | the keywords a bound procedure accepts and the messages for what it refuses, shared by the expansion-time checks and the procedures |

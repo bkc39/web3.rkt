@@ -16,6 +16,7 @@
          legacy-block
          legacy-hash
          legacy-raw
+         method-names
          mined
          raw-answer
          raw-transactions
@@ -32,6 +33,9 @@
 (define insufficient-payload (encode-call insufficient-balance 0 5000))
 (define mined (hasheq 'status "0x1" 'blockNumber "0x2" 'transactionHash tx-hash 'logs '()))
 (define failed (hasheq 'status "0x0" 'blockNumber "0x5" 'transactionHash tx-hash 'logs '()))
+
+(define (method-names calls)
+  (map first calls))
 
 (define (hex-word n)
   (bytes->hex-string (word n)))

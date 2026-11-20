@@ -10,7 +10,7 @@
            (only-in "helpers/accounts.rkt" random-natural)
            "helpers/mock.rkt"
            (only-in "helpers/signers.rkt" key0 signer0)
-           (only-in "helpers/transactions.rkt" random-partial)
+           (only-in "helpers/transactions.rkt" random-partial random-u64)
            "modules.rkt"
            (only-in "util.rkt" anvil-alice anvil-bob insufficient-balance pick raised seeded))
 
@@ -21,9 +21,6 @@
 
   (define (filled handler fields #:to [to anvil-bob] #:procedure [procedure fill-transaction])
     (run-mock handler (lambda () (call-with-fields procedure fields signer0 to))))
-
-  (define (method-names calls)
-    (map first calls))
 
   (define (after-count calls)
     (match (memf (lambda (call) (equal? (first call) "eth_getTransactionCount")) calls)
@@ -73,6 +70,9 @@
       ((#:max-priority-fee-per-gas 5 #:max-fee-per-gas 9) both 2 () (5 9))
       ((#:max-fee-per-gas 1000) both fee-cap ("eth_maxPriorityFeePerGas") ())))
 
+  (define latest-blocks
+    `((both ,base-block ,legacy-block) (base ,base-block) (none ,legacy-block)))
+
   (define (fee-fields tx)
     (match (transaction-type tx)
       [2 (list (transaction-max-priority-fee-per-gas tx) (transaction-max-fee-per-gas tx))]
@@ -81,9 +81,7 @@
   (test-case "F3: the fields given and the latest block decide the type and the requests"
     (for* ([row (in-list type-rows)]
            [block (in-list (match row
-                             [(list _ 'both _ ...) (list base-block legacy-block)]
-                             [(list _ 'base _ ...) (list base-block)]
-                             [(list _ 'none _ ...) (list legacy-block)]))])
+                             [(list _ blocks _ ...) (rest (assq blocks latest-blocks))]))])
       (match-define (list fields _ expected requests fees) row)
       (define name (format "~s ~s" row block))
       (define-values (result calls) (filled (filling #:block block) fields))
@@ -132,11 +130,6 @@
         (pick prng (list 0 1 gwei (quotient (sub1 (expt 2 255)) 2) (sub1 (expt 2 255))))
         (random-natural prng (random 33 prng))))
 
-  (define (random-u64 prng)
-    (if (zero? (random 2 prng))
-        (pick prng (list 1 21000 (sub1 (expt 2 64))))
-        (add1 (random-natural prng (random 8 prng)))))
-
   (test-case "F5: filled fields are the node's answers, and a fee cap past 256 bits is refused"
     (define prng (seeded 5 5 1 2 0 9))
     (define refusals
@@ -144,8 +137,8 @@
         (define base (random-fee prng))
         (define priority (random-fee prng))
         (define gas-price (random-fee prng))
-        (define tx-count (sub1 (random-u64 prng)))
-        (define estimate (random-u64 prng))
+        (define tx-count (random-u64 prng))
+        (define estimate (max 1 (random-u64 prng)))
         (define legacy? (zero? (random 4 prng)))
         (define handler
           (filling #:block (if legacy?

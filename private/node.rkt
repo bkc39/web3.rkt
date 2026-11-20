@@ -25,9 +25,11 @@
     [(hex-data-string? v) (hex->bytes v)]
     [else (raise-node-malformed who what v)]))
 
+;; No Ethereum quantity has more than 64 significant hex digits; a longer one is refused unread.
 (define (node-quantity->number who what v)
   (cond
-    [(node-string? #px"^0x[0-9a-fA-F]+$" v) (string->number (substring v 2) 16)]
+    [(node-string? #px"^0x(?=[0-9a-fA-F])(?>0*)[0-9a-fA-F]{0,64}$" v)
+     (string->number (regexp-replace #px"^0x0*(?=.)" v "") 16)]
     [else (raise-node-malformed who what v)]))
 
 (define (node-address->string who what v)

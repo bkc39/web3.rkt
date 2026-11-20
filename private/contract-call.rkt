@@ -21,12 +21,12 @@
 
 (define current-account (make-parameter #f))
 
-(define (sender who from)
+(define (required-sender who from)
   (or from
       (raise (exn:fail:web3 (format "~a: no sender; pass #:from or set current-account" who)
                             (current-continuation-marks)))))
 
-(define (call-sender who from)
+(define (from-address who from)
   (if (signer? from) (sender-address who from) from))
 
 (define (call-function who address signature args
@@ -39,7 +39,7 @@
   (define sig (result-signature/who who signature))
   (check-error-signatures/who who errors)
   (define tx (call-object #:to address
-                           #:from (call-sender who from)
+                           #:from (from-address who from)
                            #:data (apply encode-call/who who sig args)
                            #:value value
                            #:gas gas))
@@ -55,7 +55,7 @@
   (check-error-signatures/who who errors)
   (define data (apply encode-call/who who sig args))
   (define-values (_tx-hash receipt)
-    (submit who (sender who from)
+    (submit who (required-sender who from)
             #:to address #:data data #:value value #:gas gas #:errors errors #:provider provider))
   receipt)
 
@@ -65,7 +65,7 @@
   (check-error-signatures/who who errors)
   (define data (apply encode-call/who who sig args))
   (estimate-gas who
-                (call-object #:to address #:from (call-sender who from) #:data data #:value value
+                (call-object #:to address #:from (from-address who from) #:data data #:value value
                              #:gas #f)
                 errors
                 provider))
@@ -87,7 +87,7 @@
     (bytes-append (init-code->bytes init-code)
                   (abi-encode/who who (abi-signature-inputs sig) args)))
   (define-values (tx-hash receipt)
-    (submit who (sender who from)
+    (submit who (required-sender who from)
             #:to #f #:data data #:value value #:gas gas #:errors errors #:provider provider))
   (values (node-address->string who
                                 (of-transaction "contract address" tx-hash)
