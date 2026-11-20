@@ -13,6 +13,7 @@
 
 (provide cast-decode
          cast-encode
+         cast-outcome
          cast-path
          cast-succeeds?
          cast-version
@@ -67,6 +68,12 @@
   (unless (zero? status)
     (error 'cast "~a failed: ~a" (string-join args " ") (string-trim stderr)))
   (string-trim stdout))
+
+(define (cast-outcome . args)
+  (define-values (status stdout stderr) (call-cast args))
+  (if (zero? status)
+      (list 'ok (string-trim stdout))
+      (list 'failed stderr)))
 
 (define (cast-succeeds? . args)
   (define-values (status _stdout _stderr) (call-cast args))

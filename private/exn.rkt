@@ -12,6 +12,7 @@
          (struct-out exn:fail:web3:abi:value)
          (struct-out exn:fail:web3:abi:decode)
          (struct-out exn:fail:web3:key)
+         (struct-out exn:fail:web3:rlp)
          (struct-out exn:fail:web3:signature))
 
 (struct exn:fail:web3 exn:fail ())
@@ -23,4 +24,5 @@
 (struct exn:fail:web3:abi:value exn:fail:web3:abi (type value path))
 (struct exn:fail:web3:abi:decode exn:fail:web3:abi (type offset reason))
 (struct exn:fail:web3:key exn:fail:web3 ())
+(struct exn:fail:web3:rlp exn:fail:web3 (offset reason))
 (struct exn:fail:web3:signature exn:fail:web3 ())

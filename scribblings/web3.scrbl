@@ -18,6 +18,7 @@
                     web3/eth
                     web3/eth/log
                     web3/event
+                    web3/rlp
                     web3/rpc]
           scribble/example]
 
@@ -25,6 +26,7 @@
 @(define contract-eval (make-base-eval '(require web3)))
 @(define event-eval (make-base-eval '(require web3)))
 @(define account-eval (make-base-eval '(require web3 (only-in keccak keccak256))))
+@(define rlp-eval (make-base-eval '(require web3 (only-in keccak keccak256))))
 
 @title{web3: Ethereum JSON-RPC for Racket}
 @author{bkc}
@@ -38,7 +40,7 @@ support for running local
 
 @racket[(require web3)] provides everything in @racketmodname[web3/rpc],
 @racketmodname[web3/eth], @racketmodname[web3/abi],
-@racketmodname[web3/address], @racketmodname[web3/account],
+@racketmodname[web3/address], @racketmodname[web3/account], @racketmodname[web3/rlp],
 @racketmodname[web3/contract],
 @racketmodname[web3/event] and @racketmodname[web3/anvil].
 
@@ -122,6 +124,41 @@ Nodes, wallets and contracts pass a signature as 65 bytes.
           (equal? (bytes->signature (signature->bytes sig)) sig)]
 
 See @filepath{examples/09-accounts.rkt}.
+
+@subsection[#:tag "guide-rlp"]{Recursive Length Prefix}
+
+Transactions, and the addresses of contracts created by @tt{CREATE}, are hashed and sent as RLP:
+an item is a byte string or a list of items.  @racket[rlp-encode] writes an item and
+@racket[rlp-decode] reads one back.
+
+@examples[#:eval rlp-eval
+          (bytes->hex-string (rlp-encode (list #"cat" #"dog")))
+          (rlp-decode (hex-string->bytes "0xc88363617483646f67"))]
+
+RLP has no integers.  A number is written as a scalar, its big-endian bytes without leading
+zeros, so zero is the empty byte string.
+
+@examples[#:eval rlp-eval
+          (bytes->hex-string (rlp-encode (list (natural->rlp-scalar 0) (natural->rlp-scalar 1024))))
+          (map rlp-scalar->natural (rlp-decode (hex-string->bytes "0xc480820400")))]
+
+A contract's address is the last 20 bytes of the Keccak-256 hash of the list of its creator's
+address and nonce, which is what @racket[create-address] computes.
+
+@examples[#:eval rlp-eval
+          (define sender "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")
+          (define preimage (rlp-encode (list (hex-string->bytes sender) (natural->rlp-scalar 1))))
+          (address->checksum-string (bytes->hex-string (subbytes (keccak256 preimage) 12)))
+          (create-address sender 1)]
+
+Each item has exactly one encoding, and @racket[rlp-decode] accepts nothing else: not a byte
+written with a longer prefix than it needs, nor bytes after the item.
+
+@examples[#:eval rlp-eval
+          (eval:error (rlp-decode (bytes #x81 #x05)))
+          (eval:error (rlp-decode (bytes #xc0 #x00)))]
+
+See @filepath{examples/10-rlp.rkt}.
 
 @section{Providers and Calls}
 
@@ -618,6 +655,69 @@ Raised for a secret key that is zero or not less than @racket[secp256k1-order].}
 @defstruct*[(exn:fail:web3:signature exn:fail:web3) ()]{
 Raised for bytes that do not encode a signature, and by @racket[sign-digest] for a signature
 whose recovery id Ethereum cannot encode.}
+
+@section[#:tag "rlp"]{Recursive Length Prefix}
+
+@defmodule[web3/rlp]
+
+The @hyperlink["https://ethereum.org/en/developers/docs/data-structures-and-encoding/rlp/"]{RLP}
+serialization.  An item is a byte string or a list of items; integers are written as scalars.
+
+@defproc[(rlp-item? [v any/c]) boolean?]{
+Whether @racket[v] is a byte string or a list of items.
+
+@examples[#:eval rlp-eval
+          (rlp-item? (list #"" (list #"a")))
+          (rlp-item? (list "a"))]}
+
+@defproc[(rlp-encode [item rlp-item?]) bytes?]{
+The encoding of @racket[item].  A single byte below @racket[#x80] is its own encoding.
+
+@examples[#:eval rlp-eval
+          (bytes->hex-string (rlp-encode #"\x7f"))
+          (bytes->hex-string (rlp-encode #"\x80"))
+          (bytes->hex-string (rlp-encode (list #"" '())))]}
+
+@defproc[(rlp-decode [bs bytes?]) rlp-item?]{
+The item @racket[bs] encodes.  @racket[bs] is untrusted: unless it is exactly one canonical
+encoding, @racket[rlp-decode] raises @racket[exn:fail:web3:rlp] with one of these reasons:
+
+@itemlist[
+ @item{@racket['short]: the input, or the list the item is in, ends before the item does;}
+ @item{@racket['single-byte]: a byte below @racket[#x80] written with a prefix;}
+ @item{@racket['size]: a length below 56 written in the long form;}
+ @item{@racket['leading-zero]: a length written with a leading zero byte;}
+ @item{@racket['trailing]: bytes after the item.}]
+
+The reason is the first fault in reading order.  Byte strings in the result are fresh and
+mutable.  Nesting is not limited.
+
+@examples[#:eval rlp-eval
+          (rlp-decode (bytes #xc3 #x80 #xc1 #x01))
+          (eval:error (rlp-decode (bytes #xb8 #x01 #xff)))]}
+
+@defproc[(natural->rlp-scalar [n exact-nonnegative-integer?]) bytes?]{
+@racket[n] as big-endian bytes without leading zeros; zero is the empty byte string.
+
+@examples[#:eval rlp-eval
+          (natural->rlp-scalar 0)
+          (natural->rlp-scalar 1024)]}
+
+@defproc[(rlp-scalar->natural [item rlp-item?]) exact-nonnegative-integer?]{
+The integer the scalar @racket[item] writes.  Raises @racket[exn:fail:web3:rlp] with reason
+@racket['leading-zero] when @racket[item] starts with a zero byte, and @racket['list] when it is
+a list.
+
+@examples[#:eval rlp-eval
+          (rlp-scalar->natural #"\4\0")
+          (eval:error (rlp-scalar->natural #"\0\4"))]}
+
+@defstruct*[(exn:fail:web3:rlp exn:fail:web3)
+            ([offset (or/c #f exact-nonnegative-integer?)]
+             [reason (or/c 'short 'single-byte 'size 'leading-zero 'trailing 'list)])]{
+Bytes that are not one canonical encoding, or an item that is not a scalar.  @racket[offset]
+indexes the bytes passed to @racket[rlp-decode]: where the item at fault starts, or the first
+trailing byte.  It is @racket[#f] for @racket[rlp-scalar->natural].}
 
 @section{Contract ABI}
 
@@ -1370,7 +1470,9 @@ receipt.  Gas and failures are as for @racket[contract-send].
 @defproc[(create-address [sender (abi-value/c 'address)]
                          [nonce (integer-in 0 (- (expt 2 64) 2))])
          checksum-address?]{
-The address of the contract @racket[sender] creates with @racket[nonce].
+The address of the contract @racket[sender] creates with @racket[nonce].  That is the last 20
+bytes of the Keccak-256 hash of the RLP list of @racket[sender]'s bytes and
+@racket[(natural->rlp-scalar nonce)]; see @secref["guide-rlp"].
 
 @examples[#:eval contract-eval
           (create-address "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266" 0)]}

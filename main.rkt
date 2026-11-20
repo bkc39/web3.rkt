@@ -10,6 +10,7 @@
 ;;   web3/abi/description ABI items and contract descriptions from strings, s-expressions and JSON
 ;;   web3/address         EIP-55 checksums
 ;;   web3/account         secret keys, addresses, signing digests, recovering signers
+;;   web3/rlp             Recursive Length Prefix: encoding, strict decoding, scalars
 ;;   web3/contract        deploying, calling and sending; contract instances; define-contract;
 ;;                        CREATE and CREATE2 addresses
 ;;   web3/event           event logs: filters, get-logs, receipt-logs
@@ -26,6 +27,7 @@
          "contract.rkt"
          "eth.rkt"
          "event.rkt"
+         "rlp.rkt"
          "rpc.rkt")
 
 (provide (all-from-out "abi.rkt"
@@ -35,4 +37,5 @@
                        "contract.rkt"
                        "eth.rkt"
                        "event.rkt"
+                       "rlp.rkt"
                        "rpc.rkt"))
