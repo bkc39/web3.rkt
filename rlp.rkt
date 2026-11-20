@@ -79,9 +79,12 @@
           (bytes-append (bytes (+ base 55 (bytes-length size))) size))))
   (values (cons header pieces) (+ (bytes-length header) payload)))
 
-(define/who (rlp-decode who bs)
+(define (rlp-decode bs)
+  (rlp-decode/who 'rlp-decode bs))
+
+(define (rlp-decode/who who bs [start 0])
   (define end (bytes-length bs))
-  (define-values (item next) (decode-item who bs 0 end))
+  (define-values (item next) (decode-item who bs start end))
   (when (< next end)
     (raise-rlp-error who 'trailing next (format "~a after the item" (byte-count (- end next)))))
   item)

@@ -24,7 +24,8 @@
          "private/exn.rkt"
          (only-in "private/hex.rkt" bytes->natural)
          "private/opaque.rkt"
-         (rename-in "private/signature.rkt" [signature raw-signature]))
+         (rename-in "private/signature.rkt" [signature raw-signature])
+         "private/who.rkt")
 
 (define (scalar? v)
   (and (exact-integer? v) (< 0 v secp256k1-order)))
@@ -39,7 +40,6 @@
   (opaque/c 'signature-bytes/c "65 bytes" (lambda (v) (and (bytes? v) (= (bytes-length v) 65)))))
 (define digest/c
   (opaque/c 'digest/c "a 32-byte digest" (lambda (v) (and (bytes? v) (= (bytes-length v) 32)))))
-(define secret-key/c (opaque/c 'secret-key? "a secret key" secret-key?))
 (define public-key/c (opaque/c 'public-key? "a public key" public-key?))
 (define signature/c (opaque/c 'signature? "a signature" signature?))
 
@@ -68,7 +68,8 @@
   [bytes->signature (opaque-> signature-bytes/c signature?)]))
 
 (module* private #f
-  (provide recoverable->signature))
+  (provide recoverable->signature
+           sign-digest/who))
 
 (define-module-boundary-contract checked-signature raw-signature
   (opaque-> signature-scalar/c signature-scalar/c y-parity/c signature?)
@@ -94,8 +95,8 @@
 (define (public-key->address key)
   (digest->address (keccak256 (subbytes (public-key->bytes key #:compressed? #f) 1))))
 
-(define (sign-digest key digest)
-  (recoverable->signature 'sign-digest (ecdsa-sign-recoverable digest key)))
+(define/who (sign-digest who key digest)
+  (recoverable->signature who (ecdsa-sign-recoverable digest key)))
 
 (define (recoverable->signature who rsig)
   (define id (ecdsa-recoverable-signature-id rsig))

@@ -13,6 +13,7 @@
 ;;   web3/rlp             Recursive Length Prefix: encoding, strict decoding, scalars
 ;;   web3/units           amounts in wei, gwei, ether or a token's decimals, from and to
 ;;                        decimal strings
+;;   web3/transaction     legacy, EIP-2930 and EIP-1559 transactions: build, sign, raw bytes, parse
 ;;   web3/contract        deploying, calling and sending; contract instances; define-contract;
 ;;                        CREATE and CREATE2 addresses
 ;;   web3/event           event logs: filters, get-logs, receipt-logs
@@ -31,6 +32,7 @@
          "event.rkt"
          "rlp.rkt"
          "rpc.rkt"
+         "transaction.rkt"
          "units.rkt")
 
 (provide (all-from-out "abi.rkt"
@@ -42,4 +44,5 @@
                        "event.rkt"
                        "rlp.rkt"
                        "rpc.rkt"
+                       "transaction.rkt"
                        "units.rkt"))

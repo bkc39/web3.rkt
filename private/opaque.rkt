@@ -24,7 +24,8 @@
 
 (provide describe-kind
          opaque->
-         (rename-out [opaque-contract opaque/c]))
+         (rename-out [opaque-contract opaque/c])
+         secret-key/c)
 
 (define web3-kinds
   (list (cons signature? "a signature")))
@@ -62,6 +63,8 @@
              (raise-blame-error blame #:missing-party neg v
                                 '(expected: "~a" given: "~a")
                                 (opaque-contract-expected c) (describe-kind v))))))))
+
+(define secret-key/c (opaque-contract 'secret-key? "a secret key" secret-key?))
 
 (define (opaque v)
   (if (opaque-contract? v)
