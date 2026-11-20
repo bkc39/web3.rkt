@@ -8,6 +8,12 @@
           [address->checksum-string (-> (abi-value/c 'address) string?)]
           [checksum-address? (-> any/c boolean?)]))
 
+(module* private #f
+  (require (only-in "private/hex.rkt" bytes->hex))
+  (provide digest->address)
+  (define (digest->address digest)
+    (address->checksum-string (bytes->hex (subbytes digest 12)))))
+
 (define (address->checksum-string address)
   (define lower (string-downcase (substring address 2)))
   (define hash (keccak256 (string->bytes/latin-1 lower)))

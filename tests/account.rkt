@@ -2,6 +2,7 @@
 
 (module+ test
   (require (only-in racket/contract exn:fail:contract:blame?)
+           (only-in racket/dict in-dict)
            racket/list
            racket/match
            rackunit
@@ -203,7 +204,7 @@
       (define key
         (hex-string->secret-key (if (eq? which 'key-1) (hex-of 1) (list-ref anvil-keys which))))
       (check-equal? (signature-hex (sign-digest key d)) expected (format "~a" which)))
-    (check-equal? (remove-duplicates (map (lambda (v) (string-ref (caddr v) 131)) vectors))
+    (check-equal? (remove-duplicates (map (match-lambda [(list _ _ hex) (string-ref hex 131)]) vectors))
                   '(#\b #\c)))
 
   (test-case "the flipped and the high-s forms of anvil 0's signature recover what the node does"
@@ -252,12 +253,12 @@
     (check-key-error (make-string 64 #\f)))
 
   (test-case "public-key->address agrees on a key's 33-byte and 65-byte forms"
-    (for ([c (in-list cases)])
-      (define pk (secret-key->public-key (car c)))
+    (for ([(k _) (in-dict cases)])
+      (define pk (secret-key->public-key k))
       (define compressed (bytes->public-key (public-key->bytes pk #:compressed? #t)))
       (define uncompressed (bytes->public-key (public-key->bytes pk #:compressed? #f)))
       (check-equal? (public-key->address compressed) (public-key->address uncompressed))
-      (check-equal? (public-key->address pk) (secret-key->address (car c)))))
+      (check-equal? (public-key->address pk) (secret-key->address k))))
 
   (test-case "recovery ids 2 and 3 cannot be encoded; 0 and 1 are the y-parity"
     (for ([id (in-list '(2 3))])
@@ -276,8 +277,8 @@
 
   (test-case "an r that is no curve point's x recovers nothing"
     (define r0 (for/first ([r (in-naturals 1)] #:unless (on-curve? r)) r))
-    (for ([c (in-list cases)])
-      (check-false (recover-address (signature r0 1 0) (cdr c)))))
+    (for ([(_ d) (in-dict cases)])
+      (check-false (recover-address (signature r0 1 0) d))))
 
   (define good-key (integer->secret-key 7))
   (define good-public-key (secret-key->public-key good-key))
@@ -323,6 +324,40 @@
     (check-blames-here (signature 5 n 0))
     (check-blames-here (signature 5 6 2))
     (check-equal? (signature-r (signature (sub1 n) 1 1)) (sub1 n)))
+
+  (test-case "signature is a constructor and a match pattern, but no struct type to extend"
+    (define ev (make-base-eval '(require racket/match web3)))
+    (check-equal? (ev '(match (map signature '(5 7) '(6 8) '(0 1))
+                         [(list (signature r s y) ...) (list r s y)]))
+                  '((5 7) (6 8) (0 1)))
+    (for ([form (in-list '((struct-copy signature (signature 5 6 0) [r 0])
+                           (struct forged signature ())
+                           (struct forged signature () #:constructor-name forged)))])
+      (check-exn exn:fail? (lambda () (ev form)) (format "~s" form))))
+
+  (define (refusal thunk)
+    (with-handlers ([exn:fail:contract:blame? values])
+      (thunk)
+      #f))
+
+  (define expected-kinds
+    `((,(lambda () (sign-digest good-key (make-bytes 31 1))) "a 32-byte digest")
+      (,(lambda () (recover-address good-signature digest-empty #"")) "2 arguments")
+      (,(lambda () (recover-address good-signature anvil-0)) "a 32-byte digest")
+      (,(lambda () (sign-digest anvil-0 digest-empty)) "a secret key")
+      (,(lambda () (secret-key->address 7)) "a secret key")
+      (,(lambda () (signature-r anvil-0)) "a signature")
+      (,(lambda () (signature 0 1 0)) "an integer in [1, n)")
+      (,(lambda () (signature 1 1 2)) "0 or 1")))
+
+  (test-case "a refused argument is named by the kind the manual names"
+    (for ([entry (in-list expected-kinds)])
+      (match-define (list call expected) entry)
+      (define e (refusal call))
+      (check-pred exn:fail:contract:blame? e expected)
+      (when e
+        (check-regexp-match (regexp (string-append "\n  expected: " (regexp-quote expected) "\n"))
+                            (exn-message e)))))
 
   (define (acceptable-raise? e)
     (or (exn:fail:contract:blame? e) (exn:fail:web3:key? e) (exn:fail:web3:signature? e)))
@@ -373,9 +408,9 @@
   (test-case "signing and recovering from 8 threads gives the sequential results"
     (define inputs (key-digest-cases 50 8 8 8 1 2 3))
     (define (results)
-      (for/list ([c (in-list inputs)])
-        (define sig (sign-digest (car c) (cdr c)))
-        (cons sig (recover-address sig (cdr c)))))
+      (for/list ([(k d) (in-dict inputs)])
+        (define sig (sign-digest k d))
+        (cons sig (recover-address sig d))))
     (define expected (results))
     (define channels
       (for/list ([_ (in-range 8)])

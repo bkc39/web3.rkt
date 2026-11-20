@@ -1,10 +1,8 @@
 #lang racket/base
 
-;; Recovery against the ecrecover precompile of a throwaway anvil.  Skipped when anvil is not
-;; available.
-
 (module+ test
-  (require racket/match
+  (require (only-in racket/dict in-dict)
+           racket/match
            rackunit
            web3
            "helpers/accounts.rkt"
@@ -26,12 +24,12 @@
     [else
      (with-anvil ()
        (test-case "recover-address agrees with the ecrecover precompile"
-         (for* ([c (in-list (key-digest-cases 24 2 7 1 8 2 8))]
-                [sig (in-list (let ([sig (sign-digest (car c) (cdr c))])
+         (for* ([(k d) (in-dict (key-digest-cases 24 2 7 1 8 2 8))]
+                [sig (in-list (let ([sig (sign-digest k d)])
                                 (list sig (other-s sig) (flipped-parity sig))))])
            (match-define (signature r s _) sig)
-           (check-equal? (precompile-recover (cdr c) (signature-v sig) r s)
-                         (recover-address sig (cdr c)))))
+           (check-equal? (precompile-recover d (signature-v sig) r s)
+                         (recover-address sig d))))
 
        (test-case "the precompile recovers nothing for v = 0"
          (match-define (signature r s _)

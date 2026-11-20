@@ -1,7 +1,6 @@
 #lang racket/base
 
-;; Contracts whose violations name the kind of value given, never the value: for arguments that
-;; may be secret.  Copied from libsecp256k1's private/contracts.rkt, which does not export them.
+;; Deliberately copied from libsecp256k1's private contracts (bkc39/rkt-libsecp256k1#12).
 
 (require (for-syntax racket/base
                      syntax/parse)
@@ -18,15 +17,23 @@
                   make-contract
                   prop:flat-contract
                   raise-blame-error)
+         (only-in racket/dict in-dict)
          (only-in racket/string string-join string-trim)
          syntax/parse/define
          (only-in "signature.rkt" signature?))
 
 (provide describe-kind
          opaque->
-         opaque/c)
+         (rename-out [opaque-contract opaque/c]))
+
+(define web3-kinds
+  (list (cons signature? "a signature")))
 
 (define (describe-kind v)
+  (or (for/first ([(kind? text) (in-dict web3-kinds)] #:when (kind? v)) text)
+      (describe-common-kind v)))
+
+(define (describe-common-kind v)
   (cond
     [(string? v)
      (format "a string of ~a characters~a"
@@ -36,7 +43,6 @@
     [(exact-integer? v) "an exact integer"]
     [(secret-key? v) "a secret key"]
     [(public-key? v) "a public key"]
-    [(signature? v) "a signature"]
     [(boolean? v) "a boolean"]
     [(symbol? v) "a symbol"]
     [else "a value of another kind"]))
@@ -56,8 +62,6 @@
              (raise-blame-error blame #:missing-party neg v
                                 '(expected: "~a" given: "~a")
                                 (opaque-contract-expected c) (describe-kind v))))))))
-
-(define opaque/c opaque-contract)
 
 (define (opaque v)
   (if (opaque-contract? v)

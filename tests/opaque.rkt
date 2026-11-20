@@ -7,6 +7,7 @@
                     contract
                     exn:fail:contract:blame-object
                     exn:fail:contract:blame?)
+           (only-in racket/match match)
            racket/string
            rackunit
            (only-in libsecp256k1 integer->secret-key secret-key->public-key)
@@ -27,8 +28,9 @@
       #f))
 
   (define (field message name)
-    (define m (regexp-match (pregexp (string-append "(?m:^  " name ": (.*)$)")) message))
-    (and m (cadr m)))
+    (match (regexp-match (pregexp (string-append "(?m:^  " name ": (.*)$)")) message)
+      [(list _ value) value]
+      [_ #f]))
 
   (define (check-refusal e party expected given)
     (check-pred exn:fail:contract:blame? e)

@@ -1,9 +1,7 @@
 #lang racket/base
 
 ;; Runs every numbered script in examples/ against its own anvil, so the
-;; examples keep working.  Skipped when anvil is not available.  A program,
-;; an example with a main submodule, is run by its own test in
-;; tests/examples/ instead.
+;; examples keep working.  Skipped when anvil is not available.
 
 (module+ test
   (require racket/list

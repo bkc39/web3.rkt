@@ -105,13 +105,6 @@ wallets and @tt{anvil} print.  The account's address comes from the key.
           key
           (secret-key->address key)]
 
-A secret key prints as @litchar{#<secret-key>}, and no error shows the text a key was read from.
-
-@examples[#:eval account-eval
-          (eval:error
-           (hex-string->secret-key
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80\n"))]
-
 @racket[sign-digest] signs a 32-byte digest, usually a Keccak-256 hash, and does not hash it
 again.  The same key and digest always give the same signature.  @racket[recover-address] gives
 the address that signed a digest; for another digest it gives another address.
@@ -122,8 +115,7 @@ the address that signed a digest; for another digest it gives another address.
           (recover-address sig digest)
           (equal? (recover-address sig (keccak256 #"hello!")) (secret-key->address key))]
 
-Nodes, wallets and contracts pass a signature as 65 bytes: @racket[r], @racket[s] and
-@italic{v}, which is 27 or 28.
+Nodes, wallets and contracts pass a signature as 65 bytes.
 
 @examples[#:eval account-eval
           (bytes->hex-string (signature->bytes sig))
@@ -534,10 +526,11 @@ Whether @racket[v] is an address string in its EIP-55 form.
 @defmodule[web3/account]
 
 Secret keys, their addresses, and signatures of 32-byte digests, computed locally with
-@racketmodname[libsecp256k1].  Also provides @racket[secret-key?], @racket[generate-secret-key],
-@racket[secret-key->public-key], @racket[public-key?] and @racket[secp256k1-order] from
 @racketmodname[libsecp256k1], which reads keys from bytes and integers.  No procedure here shows
 an argument in an error.
+
+Re-exports @racket[secret-key?], @racket[generate-secret-key], @racket[secret-key->public-key],
+@racket[public-key?] and @racket[secp256k1-order] from @racketmodname[libsecp256k1].
 
 @subsection{Keys and Addresses}
 
@@ -573,14 +566,14 @@ An ECDSA signature as Ethereum uses it.  @racket[y-parity] is the parity of the 
 coordinate of the curve point whose @italic{x} is @racket[r]; it picks out the signer.}
 
 @defproc[(sign-digest [key secret-key?]
-                      [digest (and/c bytes? (property/c bytes-length (=/c 32)))])
+                      [digest digest/c])
          signature?]{
 Signs @racket[digest] as given, without hashing it.  The nonce is derived from the key and the
 digest (RFC 6979), so the same arguments always give the same signature, and @racket[s] is at
 most half of @racket[secp256k1-order].}
 
 @defproc[(recover-address [sig signature?]
-                          [digest (and/c bytes? (property/c bytes-length (=/c 32)))])
+                          [digest digest/c])
          (or/c #f checksum-address?)]{
 The address whose key signed @racket[digest] to give @racket[sig], as the @tt{ecrecover}
 precompile computes it, or @racket[#f] when there is none.  Almost every signature recovers

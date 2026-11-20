@@ -1,9 +1,10 @@
 #lang racket/base
 
-(require racket/contract/base
+(require (for-syntax racket/base
+                     syntax/parse)
+         racket/contract/base
          (only-in keccak keccak256)
          (only-in libsecp256k1
-                  digest/c
                   ecdsa-recover
                   ecdsa-recoverable-signature
                   ecdsa-recoverable-signature-id
@@ -16,25 +17,29 @@
                   public-key?
                   secp256k1-order
                   secret-key->public-key
-                  secret-key/c
                   secret-key?)
-         (only-in racket/match match-define)
-         (only-in "address.rkt" address->checksum-string checksum-address?)
+         (only-in racket/match define-match-expander match-define)
+         (only-in "address.rkt" checksum-address?)
+         (only-in (submod "address.rkt" private) digest->address)
          "private/exn.rkt"
-         (only-in "private/hex.rkt" bytes->hex bytes->natural)
+         (only-in "private/hex.rkt" bytes->natural)
          "private/opaque.rkt"
-         "private/signature.rkt")
+         (rename-in "private/signature.rkt" [signature raw-signature]))
+
+(define (scalar? v)
+  (and (exact-integer? v) (< 0 v secp256k1-order)))
 
 (define secret-hex/c
   (opaque/c 'secret-hex/c "64 hexadecimal digits, optionally after 0x"
             (lambda (v) (and (string? v) (regexp-match? #px"^(?:0[xX])?[0-9a-fA-F]{64}$" v)))))
-(define signature-scalar/c
-  (opaque/c 'signature-scalar/c "an integer in [1, n)"
-            (lambda (v) (and (exact-integer? v) (< 0 v secp256k1-order)))))
+(define signature-scalar/c (opaque/c 'signature-scalar/c "an integer in [1, n)" scalar?))
 (define y-parity/c
   (opaque/c 'y-parity/c "0 or 1" (lambda (v) (or (eqv? v 0) (eqv? v 1)))))
 (define signature-bytes/c
   (opaque/c 'signature-bytes/c "65 bytes" (lambda (v) (and (bytes? v) (= (bytes-length v) 65)))))
+(define digest/c
+  (opaque/c 'digest/c "a 32-byte digest" (lambda (v) (and (bytes? v) (= (bytes-length v) 32)))))
+(define secret-key/c (opaque/c 'secret-key? "a secret key" secret-key?))
 (define public-key/c (opaque/c 'public-key? "a public key" public-key?))
 (define signature/c (opaque/c 'signature? "a signature" signature?))
 
@@ -46,10 +51,12 @@
  secret-key->public-key
  public-key?
  secp256k1-order
+ signature
+ signature?
  (contract-out
-  (struct signature ([r signature-scalar/c]
-                     [s signature-scalar/c]
-                     [y-parity y-parity/c]))
+  [signature-r (opaque-> signature/c signature-scalar/c)]
+  [signature-s (opaque-> signature/c signature-scalar/c)]
+  [signature-y-parity (opaque-> signature/c y-parity/c)]
   [hex-string->secret-key (opaque-> secret-hex/c secret-key?)]
   [secret-key->address (opaque-> secret-key/c checksum-address?)]
   [public-key->address (opaque-> public-key/c checksum-address?)]
@@ -63,21 +70,29 @@
 (module* private #f
   (provide recoverable->signature))
 
+(define-module-boundary-contract checked-signature raw-signature
+  (opaque-> signature-scalar/c signature-scalar/c y-parity/c signature?)
+  #:name-for-blame signature)
+
+(define-match-expander signature
+  (syntax-parser
+    [(_ r s y-parity) #'(raw-signature r s y-parity)])
+  (syntax-parser
+    [_:id #'checked-signature]
+    [(_ . args) #'(checked-signature . args)]))
+
 (define (hex-string->secret-key s)
   (define k (string->number (regexp-replace #rx"^0[xX]" s "") 16))
-  (unless (< 0 k secp256k1-order)
-    (raise (exn:fail:web3:key
-            (string-append "hex-string->secret-key: invalid secret key;\n"
-                           " the value is zero or not less than the curve order")
-            (current-continuation-marks))))
+  (unless (scalar? k)
+    (raise-key-error "hex-string->secret-key: invalid secret key;\n ~a"
+                     "the value is zero or not less than the curve order"))
   (integer->secret-key k))
 
 (define (secret-key->address key)
   (public-key->address (secret-key->public-key key)))
 
 (define (public-key->address key)
-  (define point (subbytes (public-key->bytes key #:compressed? #f) 1))
-  (address->checksum-string (bytes->hex (subbytes (keccak256 point) 12))))
+  (digest->address (keccak256 (subbytes (public-key->bytes key #:compressed? #f) 1))))
 
 (define (sign-digest key digest)
   (recoverable->signature 'sign-digest (ecdsa-sign-recoverable digest key)))
@@ -87,7 +102,7 @@
   (unless (< id 2)
     (raise-signature-error "~a: the signature's recovery id is ~a; Ethereum encodes only 0 and 1"
                            who id))
-  (signature (ecdsa-signature-r rsig) (ecdsa-signature-s rsig) id))
+  (raw-signature (ecdsa-signature-r rsig) (ecdsa-signature-s rsig) id))
 
 (define (recover-address sig digest)
   (match-define (signature r s y-parity) sig)
@@ -97,13 +112,10 @@
 (define (signature-low-s? sig)
   (<= (signature-s sig) (quotient secp256k1-order 2)))
 
-(define (scalar? n)
-  (< 0 n secp256k1-order))
-
 (define (bytes->signature bs)
   (define v (bytes-ref bs 64))
-  (define r (bytes->natural (subbytes bs 0 32)))
-  (define s (bytes->natural (subbytes bs 32 64)))
+  (define r (bytes->natural bs 0 32))
+  (define s (bytes->natural bs 32 64))
   (define (invalid fmt . args)
     (apply raise-signature-error (string-append "bytes->signature: invalid signature;\n " fmt)
            args))
@@ -111,7 +123,10 @@
     [(not (memv v '(0 1 27 28))) (invalid "v is ~a, not 0, 1, 27 or 28" v)]
     [(not (scalar? r)) (invalid "r is zero or not less than the curve order")]
     [(not (scalar? s)) (invalid "s is zero or not less than the curve order")]
-    [else (signature r s (if (>= v 27) (- v 27) v))]))
+    [else (raw-signature r s (if (>= v 27) (- v 27) v))]))
+
+(define (raise-key-error fmt . args)
+  (raise (exn:fail:web3:key (apply format fmt args) (current-continuation-marks))))
 
 (define (raise-signature-error fmt . args)
   (raise (exn:fail:web3:signature (apply format fmt args) (current-continuation-marks))))

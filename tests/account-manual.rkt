@@ -1,14 +1,9 @@
 #lang racket/base
 
-;; The examples of the manual's Accounts and Signatures sections, block by block, in one evaluator
-;; set up as the manual's, with what each form prints there.
-
 (module+ test
   (require racket/match
            rackunit
-           (only-in scribble/example make-base-eval)
-           (only-in web3/rpc hex-string->bytes)
-           "helpers/secrets.rkt")
+           (only-in scribble/example make-base-eval))
 
   (define anvil-0-address "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")
 
@@ -19,9 +14,6 @@
         (void)]
        [key (prints "#<secret-key>")]
        [(secret-key->address key) (value ,anvil-0-address)])
-      ([(hex-string->secret-key
-         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80\n")
-        (refused "a string of 67 characters, with leading or trailing whitespace")])
       ([(define digest (keccak256 #"hello")) (void)]
        [(define sig (sign-digest key digest)) (void)]
        [(recover-address sig digest) (value ,anvil-0-address)]
@@ -51,9 +43,6 @@
        [(bytes->signature (bytes-append (subbytes bs 0 64) (bytes 37)))
         (raises "bytes->signature: invalid signature;\n v is 37, not 0, 1, 27 or 28")])))
 
-  (define anvil-0-secret
-    (hex-string->bytes "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"))
-
   (define (outcome ev form)
     (with-handlers ([exn:fail? values])
       (ev form)))
@@ -68,14 +57,7 @@
       [`(raises ,message)
        (check-pred exn:fail? result name)
        (when (exn:fail? result)
-         (check-equal? (exn-message result) message name))]
-      [`(refused ,given)
-       (check-pred exn:fail:contract? result name)
-       (when (exn:fail? result)
-         (check-regexp-match (regexp (string-append "\n  given: " (regexp-quote given) "\n"))
-                             (exn-message result)
-                             name)
-         (check-no-leak (exn-message result) name #:secret anvil-0-secret))]))
+         (check-equal? (exn-message result) message name))]))
 
   (test-case "the manual's account examples print what the manual shows"
     (define ev (make-base-eval '(require web3 (only-in keccak keccak256))))

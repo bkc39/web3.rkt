@@ -22,7 +22,6 @@
          random-natural
          signature-hex)
 
-;; anvil's default accounts, from its banner.
 (define anvil-keys
   '("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
     "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
@@ -67,13 +66,11 @@
 (define (random-digest prng)
   (apply bytes (for/list ([_ (in-range 32)]) (random 256 prng))))
 
-;; count seeded (key . digest) pairs after every pair of an edge key and an edge digest.
 (define (key-digest-cases count . seed)
   (define prng (apply seeded seed))
   (append (for*/list ([k (in-list edge-keys)] [d (in-list edge-digests)]) (cons k d))
           (for/list ([_ (in-range count)]) (cons (random-key prng) (random-digest prng)))))
 
-;; The signature with the other s, n - s, which recovers the same key with the other parity.
 (define (other-s sig)
   (match-define (signature r s y) sig)
   (signature r (- secp256k1-order s) (- 1 y)))

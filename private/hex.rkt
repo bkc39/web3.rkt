@@ -1,7 +1,6 @@
 #lang racket/base
 
-;; Unchecked conversions shared by web3/rpc, web3/abi and web3/account; callers check
-;; their input.  Hex strings here always start with 0x.
+;; Unchecked conversions: callers check their input.  Hex strings here always start with 0x.
 
 (provide bytes->hex
          bytes->natural
@@ -30,6 +29,6 @@
     (bytes-set! bs (- width i 1) (bitwise-and (arithmetic-shift n (* -8 i)) 255)))
   bs)
 
-(define (bytes->natural bs)
-  (for/fold ([n 0]) ([b (in-bytes bs)])
+(define (bytes->natural bs [start 0] [end (bytes-length bs)])
+  (for/fold ([n 0]) ([b (in-bytes bs start end)])
     (+ (* n 256) b)))

@@ -80,8 +80,6 @@
        (regexp-match? (regexp (string-append "blaming: [^\n]*" (regexp-quote file-name)))
                       (exn-message e))))
 
-;; A contract violation blaming the module this form appears in, named by its directory and file
-;; so that tests/account.rkt is not mistaken for web3/account.rkt.
 (define-syntax-parse-rule (check-blames-here expr)
   #:with file-name
   (datum->syntax #'expr (string-join (map path->string

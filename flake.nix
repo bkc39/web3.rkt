@@ -36,6 +36,7 @@
         let
           pkgs = import nixpkgs { inherit system; };
           libsecp256k1-native = libsecp256k1-rkt.packages.${system}.native;
+          libsecp256k1-file = "libsecp256k1${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}";
 
           # casemate (ours) and crypto (keccak-rkt's build dep) with their
           # non-distribution closure, as unpacked source trees so the
@@ -89,8 +90,7 @@
               raco pkg install --batch --deps fail --no-setup --copy --scope user \
                 --name web3 "$PWD"
               raco setup --no-docs --pkgs keccak
-              # libsecp256k1's pre-installer copies the Nix-built library into its
-              # native-libs/; its docs are built so web3's manual links resolve.
+              # Stages the Nix-built library; docs are built so web3's manual links resolve.
               LIBSECP256K1_NATIVE_LIB_PATH=${libsecp256k1-native} raco setup --pkgs libsecp256k1
               # Strict checks for web3 only, with its docs so their build deps
               # count as used; keccak's doc-only deps look unused with --no-docs.
@@ -104,6 +104,10 @@
               ${solcEnv pkgs}
               racket -l racket/base -l libsecp256k1 \
                 -e "(unless (eq? (libsecp256k1-origin) 'bundled) (exit 1))"
+              libsecp256k1_dir=$(racket -l racket/base -l pkg/lib \
+                -e '(display (pkg-directory "libsecp256k1"))')
+              cmp "$libsecp256k1_dir/native-libs/${libsecp256k1-file}" \
+                ${libsecp256k1-native}/lib/${libsecp256k1-file}
               raco test -x --timeout 120 -p web3
               runHook postCheck
             '';
@@ -143,13 +147,15 @@
               export PLTUSERHOME="$cache_root/$project_id"
               mkdir -p "$PLTUSERHOME"
               stamp_key=$(${pkgs.coreutils}/bin/sha256sum info.rkt | cut -c1-12)
-              deps_stamp="$PLTUSERHOME/.setup-$stamp_key-$(basename ${racket-deps})-$(basename ${keccak-rkt})"
-              deps_stamp="$deps_stamp-$(basename ${libsecp256k1-rkt})"
-              deps_stamp="$deps_stamp-$(basename ${libsecp256k1-native})"
+              deps_stamp="$PLTUSERHOME/.setup-$stamp_key"
+              for input in ${racket-deps} ${keccak-rkt} \
+                           ${libsecp256k1-rkt} ${libsecp256k1-native}; do
+                deps_stamp="$deps_stamp-$(basename "$input")"
+              done
               if [ ! -f "$deps_stamp" ]; then
                 echo "Setting up web3 in $PLTUSERHOME (deps changed or first run)"
                 rm -f "$PLTUSERHOME"/.setup-* 2>/dev/null || true
-                # One at a time: a name that is not installed fails the whole remove.
+                # One at a time: one missing name fails the whole remove.
                 for p in web3 keccak libsecp256k1; do
                   raco pkg remove --batch --no-setup --scope user "$p" >/dev/null 2>&1 || true
                 done

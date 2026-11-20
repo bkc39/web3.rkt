@@ -56,8 +56,7 @@
           reason)))
 
 (define (word-at data i)
-  (for/fold ([n 0]) ([b (in-bytes data i (+ i 32))])
-    (+ (* n 256) b)))
+  (bytes->natural data i (+ i 32)))
 
 (define (head-size ts)
   (for/sum ([t (in-list ts)]) (or (static-size t) 32)))

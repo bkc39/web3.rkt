@@ -11,7 +11,6 @@
          marker-hex
          marker-integer)
 
-;; A secret no message has reason to contain: the bytes #x11 ... #x30.
 (define marker (list->bytes (range #x11 #x31)))
 (define marker-hex (substring (bytes->hex marker) 2))
 (define marker-integer (bytes->natural marker))
