@@ -14,7 +14,8 @@ bezzle, which pin it as a flake input.
 | `eth.rkt` | `web3_*`, `net_*`, `eth_*` endpoints, receipts |
 | `abi.rkt` | the contract ABI: encoders, decoders, selectors, reverts; an `internal` submodule of entry points that take the caller's `who` |
 | `contract.rkt` | deploying, calls and sends, contract instances, define-contract, contract addresses; an `internal` submodule of entry points that take the caller's `who` |
-| `private/contract-call.rkt` | the calls, sends, estimates and deploys `contract.rkt` and bound procedures run, under their caller's `who` |
+| `private/contract-call.rkt` | the calls, sends, estimates and deploys `contract.rkt` and bound procedures run, under their caller's `who`; the sending itself is `private/send.rkt`'s |
+| `private/send.rkt` | the estimate/send/wait/replay every send runs, under the caller's `who` |
 | `private/bindings.rkt` | `define-contract` and `contract-bindings-out`, and the procedures they bind |
 | `private/define-contract.rkt` | define-contract's expansion-time half; reads JSON at phase 1, never keccak |
 | `private/binding-rules.rkt` | the keywords a bound procedure accepts and the messages for what it refuses, shared by the expansion-time checks and the procedures |
