@@ -107,7 +107,9 @@
     (match o
       [(list 'raised reason index message)
        (list 'raised reason index
-             (regexp-replace #px"^[a-z]+->wei: (?:the unit|wei|gwei|ether) has" message "has"))]
+             (regexp-replace #px"(?:the unit|gwei|wei|ether) has"
+                             (regexp-replace #px"^[a-z]+->wei: " message "")
+                             "UNIT has"))]
       [_ o]))
 
   (test-case "P4: ether->wei and gwei->wei are units->wei with 'ether and 'gwei, or 18 and 9"

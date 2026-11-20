@@ -30,10 +30,6 @@
          (loop (if (in-range? (truncate (* (model-value s) (expt 10 d)))) (cons s found) found)
                (add1 tries))])))
 
-  (define (truncated s d)
-    (match (regexp-match-positions #rx"\\." s)
-      [(list (cons point _)) (substring s 0 (min (string-length s) (+ point 1 d)))]))
-
   (define syntax-inputs
     '(" 1" "1 " "+1" "1e3" "1,000" "0x10" "1.2.3" "--1" "1-" "1/2" "#e1.5" "Infinity" "+inf.0"
       "1\n" "١" "1.5 ether" ".-1"))
@@ -56,7 +52,7 @@
          (check-pred exn:fail:web3:units? e name)
          (check-eq? (and (exn:fail:web3:units? e) (exn:fail:web3:units-reason e)) 'precision name)
          (check-equal? (cast-read s u)
-                       (number->string (units->wei (truncated s (unit-decimals u)) u))
+                       (number->string (truncate (* (model-value s) (expt 10 (unit-decimals u)))))
                        name))
        (check-equal? (cast-read "-1.0000000000000000019" 'ether) "-1000000000000000001")
        (check-equal? (cast-read "1.9999999" 6) "1999999"))
@@ -89,10 +85,17 @@
          (define d (unit-decimals u))
          (define k (if (zero? (remainder n (expt 10 d))) 0 d))
          (define expected (wei->string n d #:min-fraction-digits k))
-         (check-equal? (run-cast "format-units" "--" (number->string n) (number->string d))
-                       expected
-                       (format "format-units ~a ~a" n d))
+         (unless (and (negative? n) (= d 77))
+           (check-equal? (run-cast "format-units" "--" (number->string n) (number->string d))
+                         expected
+                         (format "format-units ~a ~a" n d)))
          (when (and (symbol? u) (>= n 0))
            (check-equal? (run-cast "to-unit" (number->string n) (symbol->string u))
                          expected
-                         (format "to-unit ~a ~a" n u)))))]))
+                         (format "to-unit ~a ~a" n u)))))
+
+     (test-case "C5: divergences: cast drops a digit of a negative amount with 77 decimals"
+       (check-equal? (run-cast "format-units" "--" "-1" "77")
+                     (string-append "-0." (make-string 75 #\0) "1"))
+       (check-equal? (wei->string -1 77) (string-append "-0." (make-string 76 #\0) "1"))
+       (check-match (cast-outcome "to-unit" "--" "-5" "gwei") (list 'failed _)))]))
