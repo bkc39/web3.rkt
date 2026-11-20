@@ -28,6 +28,7 @@
          eth-mining
          eth-hashrate
          eth-gas-price
+         eth-max-priority-fee-per-gas
          eth-accounts
          eth-block-number
          eth-get-balance
@@ -86,6 +87,8 @@
   #:result-transform hex-string->number)
 ;; wei
 (define-jsonrpc-endpoint eth_gasPrice (-> exact-nonnegative-integer?)
+  #:result-transform hex-string->number)
+(define-jsonrpc-endpoint eth_maxPriorityFeePerGas (-> exact-nonnegative-integer?)
   #:result-transform hex-string->number)
 (define-jsonrpc-endpoint eth_accounts (-> (listof string?)))
 (define-jsonrpc-endpoint eth_blockNumber (-> exact-nonnegative-integer?)

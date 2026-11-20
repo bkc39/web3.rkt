@@ -16,6 +16,7 @@
 ;;                        decimal strings
 ;;   web3/transaction     legacy, EIP-2930 and EIP-1559 transactions: build, sign, raw bytes, parse
 ;;   web3/signer          signers: local keys, node accounts, gen:signer
+;;   web3/send            filling transactions from a node, signing and sending them
 ;;   web3/contract        deploying, calling and sending; contract instances; define-contract;
 ;;                        CREATE and CREATE2 addresses
 ;;   web3/event           event logs: filters, get-logs, receipt-logs
@@ -34,6 +35,7 @@
          "event.rkt"
          "rlp.rkt"
          "rpc.rkt"
+         "send.rkt"
          "signer.rkt"
          "transaction.rkt"
          "units.rkt")
@@ -47,6 +49,7 @@
                        "event.rkt"
                        "rlp.rkt"
                        "rpc.rkt"
+                       "send.rkt"
                        "signer.rkt"
                        "transaction.rkt"
                        "units.rkt"))

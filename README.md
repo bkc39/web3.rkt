@@ -26,7 +26,7 @@ support for local [anvil](https://book.getfoundry.sh/anvil/) nodes.
 | module | contents |
 |---|---|
 | `web3/rpc` | `gen:provider` (`provider-request`, `provider-close`), `url->http-provider`, `mock-provider` (`mock-provider-calls`) for tests without a node, `current-provider`, `with-provider`, `rpc-call`, `define-jsonrpc-endpoint`, `exn:fail:web3`, `exn:fail:web3:rpc` (with `code`, `rpc-message`, `data`), `raise-rpc-error`, hex helpers |
-| `web3/eth` | `web3_*`, `net_*` and `eth_*` endpoints (`eth-call`, `eth-send-transaction`, `eth-get-transaction-receipt`, `eth-get-logs`, ...), `wait-for-receipt`, `send-transaction/receipt`, `receipt-succeeded?` |
+| `web3/eth` | `web3_*`, `net_*` and `eth_*` endpoints (`eth-call`, `eth-send-transaction`, `eth-get-transaction-receipt`, `eth-get-logs`, ...), `eth-max-priority-fee-per-gas`, `wait-for-receipt`, `send-transaction/receipt`, `receipt-succeeded?` |
 | `web3/abi` | `abi-encode`, `abi-encode-packed`, `encode-call`, `function-selector`, `word->bytes`, `bytes->words`; `abi-decode`, `decode-result`, `decode-call`; `decode-revert`, `abi-revert->string`, `rpc-exn->revert` (Error(string), Panic(uint256), custom errors); everything in `web3/abi/type`, `web3/abi/event-type` and `web3/abi/description` |
 | `web3/abi/type` | ABI types as structs (`abi-uint`, `abi-array`, `abi-tuple`, ...), canonical strings or s-expressions; `abi-value?`, `abi-signature`, `exn:fail:web3:abi` and its subtypes. No runtime dependencies, so macros can use it at phase 1 |
 | `web3/abi/event-type` | events as structs (`abi-event`, `abi-event-parameter`), strings or s-expressions; `abi-event->signature`. Usable at phase 1 |
@@ -41,7 +41,8 @@ support for local [anvil](https://book.getfoundry.sh/anvil/) nodes.
 | `web3/units` | `units->wei`, `ether->wei`, `gwei->wei`, `wei->string`, `exn:fail:web3:units` |
 | `web3/transaction` | `legacy-transaction`, `eip2930-transaction`, `eip1559-transaction`, `sign-transaction`, `signed-transaction->bytes`, `bytes->signed-transaction` (strict, recovers the sender), `transaction->jsexpr`, `exn:fail:web3:raw-transaction` |
 | `web3/signer` | `gen:signer`, `local-signer`, `node-signer`, `signer-address`, `signer-sign-digest`, `signer-sign-message`, `signer-sign-transaction`, `exn:fail:web3:signer` |
-| `web3/contract` | `deploy-contract`, `deploy-contract/receipt`, `contract-call`, `contract-send`, `contract-estimate-gas`, `current-account`, `create-address`, `create2-address`, `exn:fail:web3:transaction`; `contract-instance`, `contract-logs`, `deploy-contract-instance`, `file->contract-abi`; `define-contract` (a procedure per function, `token-balance-of` for `balanceOf`) and `contract-bindings-out` |
+| `web3/send` | `fill-transaction`, `send-signed-transaction`, `send-signed-transaction/receipt`, `exn:fail:web3:fill` |
+| `web3/contract` | `deploy-contract`, `deploy-contract/receipt`, `contract-call`, `contract-send`, `contract-estimate-gas`, `current-account` (senders are addresses or signers), `create-address`, `create2-address`, `exn:fail:web3:transaction`; `contract-instance`, `contract-logs`, `deploy-contract-instance`, `file->contract-abi`; `define-contract` (a procedure per function, `token-balance-of` for `balanceOf`) and `contract-bindings-out` |
 | `web3/anvil` | `anvil_*`, `evm_snapshot`/`evm_revert`, `debug_traceCall`/`debug_traceTransaction`; `start-anvil`, `stop-anvil`, `with-anvil` |
 
 Endpoints are named after their RPC method in kebab-case

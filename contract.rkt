@@ -22,12 +22,13 @@
          "private/contract-call.rkt"
          "private/exn.rkt"
          (only-in "private/hex.rkt" hex-data-string?)
+         (only-in "private/send.rkt" from/c)
          "private/who.rkt")
 
 (define-syntax-parse-rule (transaction->* (required:expr ...) (optional ...) result:expr)
   (->* (required ...)
        (optional ...
-        #:from (or/c #f (abi-value/c 'address))
+        #:from from/c
         #:value exact-nonnegative-integer?
         #:gas (or/c #f exact-positive-integer?)
         #:errors errors/c
@@ -39,19 +40,19 @@
          define-contract
          contract-bindings-out
          (contract-out
-          [current-account (parameter/c (or/c #f (abi-value/c 'address)))]
+          [current-account (parameter/c from/c)]
           [contract-call call/c]
           [contract-send send/c]
           [contract-estimate-gas estimate/c]
           [contract-instance (->* (contract-abi? (abi-value/c 'address))
                                   (#:provider (or/c #f provider?)
-                                   #:from (or/c #f (abi-value/c 'address)))
+                                   #:from from/c)
                                   contract-instance?)]
           [contract-instance? (-> any/c boolean?)]
           [contract-instance-abi (-> contract-instance? contract-abi?)]
           [contract-instance-address (-> contract-instance? checksum-address?)]
           [contract-instance-provider (-> contract-instance? (or/c #f provider?))]
-          [contract-instance-from (-> contract-instance? (or/c #f (abi-value/c 'address)))]
+          [contract-instance-from (-> contract-instance? from/c)]
           [contract-logs
            (->i ([target target/c])
                 ([event (target) (event/c target)]
@@ -107,7 +108,6 @@
 (define nonce/c (integer-in 0 (- (expt 2 64) 2)))
 (define receipt/c (and/c hash? jsexpr?))
 (define block/c (flat-named-contract 'block-param/c block-param/c))
-(define from/c (or/c #f (abi-value/c 'address)))
 (define provider/c (or/c #f provider?))
 
 (define target/c

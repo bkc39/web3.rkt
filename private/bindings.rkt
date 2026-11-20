@@ -16,13 +16,13 @@
          (only-in "../rpc.rkt" current-provider provider?)
          "binding-rules.rkt"
          "contract-call.rkt"
-         "exn.rkt")
+         "exn.rkt"
+         (only-in "send.rkt" from/c))
 
 (provide contract-bindings-out
          define-contract)
 
 (define address/c (abi-value/c 'address))
-(define from/c (or/c #f address/c))
 (define value/c exact-nonnegative-integer?)
 (define block/c (flat-named-contract 'block-param/c block-param/c))
 (define gas/c (or/c #f exact-positive-integer?))

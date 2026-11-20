@@ -8,7 +8,8 @@
          "../rpc.rkt"
          "exn.rkt"
          "node.rkt"
-         "send.rkt")
+         "send.rkt"
+         (only-in "signer.rkt" signer?))
 
 (provide call-function
          current-account
@@ -25,6 +26,9 @@
       (raise (exn:fail:web3 (format "~a: no sender; pass #:from or set current-account" who)
                             (current-continuation-marks)))))
 
+(define (call-sender who from)
+  (if (signer? from) (sender-address who from) from))
+
 (define (call-function who address signature args
                        #:from from
                        #:value value
@@ -35,7 +39,7 @@
   (define sig (result-signature/who who signature))
   (check-error-signatures/who who errors)
   (define tx (call-object #:to address
-                           #:from from
+                           #:from (call-sender who from)
                            #:data (apply encode-call/who who sig args)
                            #:value value
                            #:gas gas))
@@ -51,10 +55,8 @@
   (check-error-signatures/who who errors)
   (define data (apply encode-call/who who sig args))
   (define-values (_tx-hash receipt)
-    (submit who
-            (call-object #:to address #:from (sender who from) #:data data #:value value #:gas gas)
-            errors
-            provider))
+    (submit who (sender who from)
+            #:to address #:data data #:value value #:gas gas #:errors errors #:provider provider))
   receipt)
 
 (define (estimate-function who address signature args
@@ -63,7 +65,8 @@
   (check-error-signatures/who who errors)
   (define data (apply encode-call/who who sig args))
   (estimate-gas who
-                (call-object #:to address #:from from #:data data #:value value #:gas #f)
+                (call-object #:to address #:from (call-sender who from) #:data data #:value value
+                             #:gas #f)
                 errors
                 provider))
 
@@ -84,9 +87,8 @@
     (bytes-append (init-code->bytes init-code)
                   (abi-encode/who who (abi-signature-inputs sig) args)))
   (define-values (tx-hash receipt)
-    (submit who (call-object #:from (sender who from) #:data data #:value value #:gas gas)
-            errors
-            provider))
+    (submit who (sender who from)
+            #:to #f #:data data #:value value #:gas gas #:errors errors #:provider provider))
   (values (node-address->string who
                                 (of-transaction "contract address" tx-hash)
                                 (hash-ref receipt 'contractAddress #f))

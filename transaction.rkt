@@ -96,6 +96,7 @@
            raw-transaction-reason/c
            transaction/c
            transaction-difference
+           transaction-hash/c
            wire-fields))
 
 (define raw-transaction-phrases

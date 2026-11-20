@@ -2,20 +2,23 @@
 
 (require racket/list
          racket/match
+         rackunit
          (only-in racket/string string-join)
          (only-in web3/account hex-string->secret-key secp256k1-order signature)
          (only-in web3/rlp natural->rlp-scalar rlp-decode rlp-encode)
-         (only-in web3/rpc bytes->hex-string hex-string->bytes)
+         (only-in web3/rpc bytes->hex-string hex-string->bytes hex-string->number)
          web3/transaction
          (only-in (submod web3/transaction internal) wire-fields)
          (only-in web3/units ether->wei gwei->wei)
          (only-in web3/private/hex bytes->natural)
          (only-in "../abi-gen.rkt" random-address random-bytes)
          (only-in "../util.rkt" anvil-bob pick zero-address)
+         (only-in web3/address address->checksum-string)
          (only-in "accounts.rkt" anvil-keys random-natural))
 
 (provide base-names
          bases
+         check-node-fields
          edge-transactions
          edit-raw
          example-eip1559
@@ -28,6 +31,7 @@
          model-unsigned
          nick-raw
          no-point-r
+         random-partial
          random-transaction
          slot-1
          transaction-fields
@@ -329,3 +333,76 @@
               #:unless (= 1 (modular-power (+ (* r r r) 7) (quotient (sub1 field-prime) 2)
                                            field-prime)))
     r))
+
+(define (quantity text)
+  (hex-string->number text))
+
+(define (check-node-fields stx node)
+  (define tx (signed-transaction-transaction stx))
+  (match-define (signature r s y-parity) (signed-transaction-signature stx))
+  (define (field key) (hash-ref node key 'null))
+  (define name (format "~s" stx))
+  (check-equal? (string-downcase (field 'from)) (string-downcase (signed-transaction-sender stx))
+                name)
+  (check-equal? (field 'hash) (signed-transaction-hash stx) name)
+  (check-equal? (quantity (field 'type)) (transaction-type tx) name)
+  (check-equal? (quantity (field 'nonce)) (transaction-nonce tx) name)
+  (check-equal? (match (field 'chainId) ['null #f] [id (quantity id)]) (transaction-chain-id tx)
+                name)
+  (check-equal? (field 'to) (match (transaction-to tx) [#f 'null] [to (string-downcase to)]) name)
+  (check-equal? (quantity (field 'value)) (transaction-value tx) name)
+  (check-equal? (field 'input) (bytes->hex-string (transaction-data tx)) name)
+  (check-equal? (quantity (field 'gas)) (transaction-gas-limit tx) name)
+  (check-equal? (quantity (field 'r)) r name)
+  (check-equal? (quantity (field 's)) s name)
+  (match (transaction-type tx)
+    [0
+     (check-equal? (quantity (field 'gasPrice)) (transaction-gas-price tx) name)
+     (check-equal? (quantity (field 'v))
+                   (match (transaction-chain-id tx)
+                     [#f (+ 27 y-parity)]
+                     [chain-id (+ 35 (* 2 chain-id) y-parity)])
+                   name)]
+    [type
+     (check-equal? (quantity (field 'yParity)) y-parity name)
+     (check-equal? (field 'accessList)
+                   (for/list ([entry (in-list (transaction-access-list tx))])
+                     (match-define (cons address keys) entry)
+                     (hasheq 'address (string-downcase address)
+                             'storageKeys (map bytes->hex-string keys)))
+                   name)
+     (if (= type 1)
+         (check-equal? (quantity (field 'gasPrice)) (transaction-gas-price tx) name)
+         (check-equal? (list (quantity (field 'maxFeePerGas))
+                             (quantity (field 'maxPriorityFeePerGas)))
+                       (list (transaction-max-fee-per-gas tx)
+                             (transaction-max-priority-fee-per-gas tx))
+                       name))]))
+
+(define (maybe prng kw make)
+  (if (zero? (random 2 prng)) '() (list kw (make))))
+
+(define (random-checksummed-access-list prng)
+  (for/list ([entry (in-list (random-access-list prng))])
+    (match-define (cons address keys) entry)
+    (cons (address->checksum-string address) keys)))
+
+(define (random-partial prng)
+  (define type (random 3 prng))
+  (define cap (+ (expt 10 9) (random-natural prng 8)))
+  (define (access-list)
+    (maybe prng '#:access-list (lambda () (random-checksummed-access-list prng))))
+  (append
+   (maybe prng '#:type (lambda () type))
+   (maybe prng '#:nonce (lambda () (random-u64 prng)))
+   (maybe prng '#:gas-limit (lambda () (random-u64 prng)))
+   (maybe prng '#:chain-id (lambda () 31337))
+   (maybe prng '#:value (lambda () (random-u256 prng)))
+   (maybe prng '#:data (lambda () (random-data prng)))
+   (match type
+     [0 (maybe prng '#:gas-price (lambda () (random-u256 prng)))]
+     [1 (append (maybe prng '#:gas-price (lambda () (random-u256 prng))) (access-list))]
+     [2 (append (maybe prng '#:max-priority-fee-per-gas
+                       (lambda () (modulo (random-natural prng 8) (add1 cap))))
+                (maybe prng '#:max-fee-per-gas (lambda () cap))
+                (access-list))])))
