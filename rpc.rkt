@@ -33,7 +33,12 @@
           [rename send-request provider-request (-> provider? string? (listof jsexpr?) any)]
           [rename close-provider provider-close (-> provider? void?)]
           [current-provider (parameter/c (or/c #f provider?))]
-          [url->http-provider (-> string? http-provider?)]
+          [url->http-provider
+           (->i ([url string?])
+                (#:ssl-context [ssl-context (url) (if (https-url? url)
+                                                      ssl-client-context?
+                                                      ssl-context-needs-https)])
+                [_ http-provider?])]
           [http-provider-url (-> http-provider? string?)]
           [mock-provider (-> mock-handler/c mock-provider?)]
           [mock-provider-calls (-> mock-provider? (listof (cons/c string? list?)))]
@@ -91,16 +96,25 @@
 
 ;;;; HTTP
 
-(struct http-provider (url path host port ssl? link owner last-id)
+(struct http-provider (url path host port ssl-context link owner last-id)
   #:methods gen:provider
   [(define (provider-request p method params)
      (response->result method (call-with-connection p (lambda () (exchange p method params)))))
    (define (provider-close p)
      (call-with-connection p (lambda () (drop-link! p))))])
 
-(define (url->http-provider url-string)
+(define (https-scheme? u)
+  (equal? "https" (url-scheme u)))
+
+(define (https-url? url-string)
+  (https-scheme? (string->url url-string)))
+
+(define ssl-context-needs-https
+  (flat-named-contract "#:ssl-context needs an https URL" (lambda (_) #f)))
+
+(define (url->http-provider url-string #:ssl-context [ssl-context #f])
   (define u (string->url url-string))
-  (define ssl? (equal? "https" (url-scheme u)))
+  (define https? (https-scheme? u))
   (define path
     (cond
       [(regexp-match #px"^[a-zA-Z]+://[^/]+(/.+)$" url-string) => cadr]
@@ -108,11 +122,19 @@
   (http-provider url-string
                  path
                  (url-host u)
-                 (or (url-port u) (if ssl? 443 80))
-                 ssl?
+                 (or (url-port u) (if https? 443 80))
+                 (provider-ssl-context https? ssl-context)
                  (box #f)
                  (box #f)
                  (box 0)))
+
+(define (provider-ssl-context https? ssl-context)
+  (cond
+    [(not https?) #f]
+    [ssl-context ssl-context]
+    [(not ssl-available?)
+     (raise-web3-error 'url->http-provider "TLS is not available: ~a" ssl-load-fail-reason)]
+    [else (ssl-secure-client-context)]))
 
 ;; `link` holds the open connection, or #f.  A connection is never reopened
 ;; in place: net/http-client's body readers keep the `http-conn` and close
@@ -170,14 +192,41 @@
               (byte-ready? (link-in l))))))
 
 (define (open-link! p)
-  (match-define (struct* http-provider ([host host] [port port] [ssl? ssl?])) p)
-  (define-values (in out) ((if ssl? ssl-connect tcp-connect) host port))
+  (match-define (struct* http-provider ([host host] [port port] [ssl-context ssl-context])) p)
+  (define-values (tcp-in tcp-out) (tcp-connect host port))
+  (define-values (in out abandon)
+    (cond
+      [ssl-context
+       (define-values (ssl-in ssl-out) (tls-handshake host port ssl-context tcp-in tcp-out))
+       (values ssl-in ssl-out ssl-abandon-port)]
+      [else (values tcp-in tcp-out tcp-abandon-port)]))
   (define conn (http-conn))
   (http-conn-open! conn host
                    #:port port
-                   #:ssl? (list ssl? in out (if ssl? ssl-abandon-port tcp-abandon-port)))
+                   #:ssl? (list (and ssl-context #t) in out abandon))
   (set-box! (http-provider-link p) (link conn in))
   conn)
+
+;; The message names the host and port only: the URL may carry an API key.
+(define (tls-handshake host port ssl-context in out)
+  (with-handlers ([(lambda (_) #t)
+                   (lambda (e)
+                     (tcp-abandon-port in)
+                     (tcp-abandon-port out)
+                     (raise (tls-failure host port e)))])
+    (ports->ssl-ports in out
+                      #:mode 'connect
+                      #:context ssl-context
+                      #:hostname host
+                      #:close-original? #t
+                      #:shutdown-on-close? #f)))
+
+(define (tls-failure host port raised)
+  (cond
+    [(exn:fail? raised)
+     (exn:fail:web3 (format "TLS handshake with ~a:~a failed: ~a" host port (exn-message raised))
+                    (current-continuation-marks))]
+    [else raised]))
 
 ;; Closing flushes, which fails on a broken connection; abandoning it
 ;; releases the socket anyway.

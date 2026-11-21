@@ -6,7 +6,7 @@
 (define build-deps '("racket-doc" "rackunit-lib" "scribble-lib"))
 (define scribblings '(("scribblings/web3.scrbl" () (library))))
 (define pkg-desc "Ethereum JSON-RPC client for Racket, with ABI helpers and anvil support")
-(define version "0.3")
+(define version "0.4")
 (define pkg-authors '(bkc))
 (define license '(Apache-2.0 OR MIT))
 ;; Nix build links and direnv state live next to the sources.
