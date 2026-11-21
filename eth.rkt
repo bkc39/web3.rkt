@@ -13,7 +13,7 @@
                   storage-slot/c
                   storage-slots->jsexpr)
          (only-in "private/hex.rkt" hex-data-string?)
-         (only-in "private/node.rkt" node-quantity->number receipt-status->boolean)
+         (only-in "private/node.rkt" node-quantity->number node-quantity? receipt-status->boolean)
          "rpc.rkt")
 
 (provide (all-from-out "eth/log.rkt")
@@ -79,7 +79,7 @@
   (if (equal? v "0x") 'null v))
 
 (define (quantity->number v)
-  (node-quantity->number 'quantity->number "quantity" v))
+  (and (node-quantity? v) (node-quantity->number 'quantity->number "quantity" v)))
 
 (define (count-or-null->number v)
   (if (eq? v 'null) 0 (quantity->number v)))

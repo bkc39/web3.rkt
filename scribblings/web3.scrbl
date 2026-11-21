@@ -756,7 +756,8 @@ the JSON parameter.  The response's @tt{result} goes through
 @racket[result-contract-expr], a flat contract.  A result that
 @racket[transform-expr] raises on or that fails the contract raises
 @racket[exn:fail:web3] with the message
-@racket["method: unexpected result value"].
+@racket["method: unexpected result value"], unless @racket[transform-expr] raises
+@racket[exn:fail:web3] itself, which is raised as it is.
 
 @racketblock[
 (define-jsonrpc-endpoint eth_getBalance
