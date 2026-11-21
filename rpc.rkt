@@ -42,8 +42,8 @@
                                 any)]
           [rpc-call (->* (string? (listof jsexpr?))
                          (#:provider (or/c #f provider?))
-                         any)])
-         hex-string->number
+                         any)]
+          [hex-string->number (-> hex-string? exact-nonnegative-integer?)])
          number->hex-string
          bytes->hex-string
          hex-string->bytes)
@@ -311,13 +311,8 @@
 (define (hex-string? v)
   (and (string? v) (regexp-match? #px"^0x[0-9a-fA-F]*$" v)))
 
-(define/contract (hex-string->number s)
-  (-> string? exact-nonnegative-integer?)
-  (cond
-    [(string=? s "0x") 0]
-    [(hex-string? s) (string->number (substring s 2) 16)]
-    [(regexp-match? #px"^[0-9]+$" s) (string->number s 10)]
-    [else (raise-argument-error 'hex-string->number "a hex quantity" s)]))
+(define (hex-string->number s)
+  (if (string=? s "0x") 0 (string->number (substring s 2) 16)))
 
 (define/contract (number->hex-string n)
   (-> exact-nonnegative-integer? string?)
@@ -335,16 +330,6 @@
   (hex->bytes h))
 
 (module+ test
-  (check-equal? (hex-string->number "0x2") 2)
-  (check-equal? (hex-string->number "0x") 0)
-  (check-equal? (hex-string->number "2") 2)
-  (check-exn #rx"expected: a hex quantity" (lambda () (hex-string->number "0xzz")))
-  (check-exn #rx"expected: a hex quantity" (lambda () (hex-string->number "1.5")))
-  (test-case "hex-string->number reads decimal digits only"
-    (for ([s (in-list '("#x10" "+5" "1e3" "#e1e3"))])
-      (check-exn #rx"expected: a hex quantity" (lambda () (hex-string->number s))))
-    (check-equal? (hex-string->number "0x10") 16)
-    (check-equal? (hex-string->number "16") 16))
   (check-equal? (number->hex-string #xbeef) "0xbeef")
   (check-equal? (bytes->hex-string (bytes 0 15 255)) "0x000fff")
   (check-equal? (hex-string->bytes "0x000fff") (bytes 0 15 255))

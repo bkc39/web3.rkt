@@ -148,7 +148,8 @@
     (define p (mock-provider (hash "eth_chainId" 7
                                    "eth_blockNumber" "0xzz"
                                    "eth_sendRawTransaction" 42
-                                   "eth_accounts" "0xaa")))
+                                   "eth_accounts" "0xaa"
+                                   "eth_gasPrice" "10")))
     (define (unexpected thunk)
       (with-handlers ([exn:fail:web3? exn-message]) (thunk)))
     (check-equal? (unexpected (lambda () (eth-chain-id #:provider p)))
@@ -158,7 +159,9 @@
     (check-equal? (unexpected (lambda () (eth-send-raw-transaction "0x01" #:provider p)))
                   "eth_sendRawTransaction: unexpected result 42")
     (check-equal? (unexpected (lambda () (eth-accounts #:provider p)))
-                  "eth_accounts: unexpected result \"0xaa\""))
+                  "eth_accounts: unexpected result \"0xaa\"")
+    (check-equal? (unexpected (lambda () (eth-gas-price #:provider p)))
+                  "eth_gasPrice: unexpected result \"10\""))
 
   (cond
     [(not (current-anvil-path))

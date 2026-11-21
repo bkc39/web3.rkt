@@ -19,7 +19,8 @@
                     web3/eth/log
                     web3/event
                     web3/rlp
-                    web3/rpc]
+                    web3/rpc
+                    web3/units]
           scribble/example]
 
 @(define abi-eval (make-base-eval '(require web3/abi web3/address web3/rpc)))
@@ -27,6 +28,7 @@
 @(define event-eval (make-base-eval '(require web3)))
 @(define account-eval (make-base-eval '(require web3 (only-in keccak keccak256))))
 @(define rlp-eval (make-base-eval '(require web3 (only-in keccak keccak256))))
+@(define units-eval (make-base-eval '(require web3)))
 
 @title{web3: Ethereum JSON-RPC for Racket}
 @author{bkc}
@@ -41,7 +43,7 @@ support for running local
 @racket[(require web3)] provides everything in @racketmodname[web3/rpc],
 @racketmodname[web3/eth], @racketmodname[web3/abi],
 @racketmodname[web3/address], @racketmodname[web3/account], @racketmodname[web3/rlp],
-@racketmodname[web3/contract],
+@racketmodname[web3/units], @racketmodname[web3/contract],
 @racketmodname[web3/event] and @racketmodname[web3/anvil].
 
 @racketblock[
@@ -151,6 +153,27 @@ address and nonce, which is what @racket[create-address] computes.
           (create-address sender 1)]
 
 See @filepath{examples/10-rlp.rkt}.
+
+@subsection[#:tag "guide-units"]{Units}
+
+Amounts of ether are exact integers of wei: a gwei is 10@superscript{9} wei and an ether
+10@superscript{18}.  @racket[ether->wei] and @racket[gwei->wei] read an amount written as a decimal
+string or given as an exact number, and @racket[wei->string] writes one back.
+
+@examples[#:eval units-eval
+          (ether->wei "1.5")
+          (gwei->wei 30)
+          (wei->string (* 21000 (gwei->wei 30)))]
+
+Nothing is rounded.  An amount finer than one wei is refused, and so is a flonum, which cannot
+hold most decimal amounts exactly.
+
+@examples[#:eval units-eval
+          (ether->wei 3/2)
+          (eval:error (ether->wei "0.0000000000000000001"))
+          (eval:error (ether->wei 1.5))]
+
+See @filepath{examples/11-units.rkt}.
 
 @section{Providers and Calls}
 
@@ -343,10 +366,14 @@ Raises @racket[exn:fail:web3:rpc] with the given fields and the message
 Recognizes strings of the form @racket["0x"] followed by zero or more
 hexadecimal digits.}
 
-@defproc[(hex-string->number [s string?]) exact-nonnegative-integer?]{
-Reads a JSON-RPC quantity.  @racket["0x"] alone reads as @racket[0].
-A string without the @racket["0x"] prefix is read as decimal.  Raises
-@racket[exn:fail:contract] for a string that is neither.}
+@defproc[(hex-string->number [s hex-string?]) exact-nonnegative-integer?]{
+Reads a JSON-RPC quantity: @racket["0x"] and hexadecimal digits in either case.
+@racket["0x"] alone reads as @racket[0].  A string without the prefix is not a quantity, even
+when all its digits are decimal.
+
+@examples[#:eval contract-eval
+          (hex-string->number "0x10")
+          (eval:error (hex-string->number "10"))]}
 
 @defproc[(number->hex-string [n exact-nonnegative-integer?]) string?]{
 Writes @racket[n] as a JSON-RPC quantity, such as @racket["0xbeef"].}
@@ -710,6 +737,61 @@ a list.
 Bytes that are not one canonical encoding, or an item that is not a scalar.  @racket[offset]
 indexes the bytes passed to @racket[rlp-decode]: where the item at fault starts, or the first
 trailing byte.  It is @racket[#f] for @racket[rlp-scalar->natural].}
+
+@section[#:tag "units"]{Units}
+
+@defmodule[web3/units]
+
+Amounts as exact integers of wei, or of a token's smallest unit, read from and written as
+decimal strings.  Nothing is rounded.  A unit is @racket['wei], @racket['gwei]
+(10@superscript{9} wei), @racket['ether] (10@superscript{18} wei), or a number of decimals, such
+as an ERC-20 token's @tt{decimals()}.
+
+@defproc[(units->wei [amount (or/c string? (and/c rational? exact?))]
+                     [unit (or/c 'wei 'gwei 'ether (integer-in 0 255))])
+         exact-integer?]{
+@racket[amount] of @racket[unit], in wei.  A string is an optional @racket["-"] and ASCII
+digits with at most one @racket["."]; there must be a digit, and nothing else is allowed: no
+spaces, @racket["+"], exponents or separators.  Raises @racket[exn:fail:web3:units] with reason
+@racket['syntax] for any other string, and @racket['precision] when @racket[amount] is not a
+whole number of wei.  Zeros past the unit's decimals are allowed.
+
+@examples[#:eval units-eval
+          (units->wei "0.25" 'gwei)
+          (units->wei "1.500000000" 6)
+          (eval:error (units->wei "1.0000005" 6))]}
+
+@deftogether[(@defproc[(ether->wei [amount (or/c string? (and/c rational? exact?))])
+                       exact-integer?]
+              @defproc[(gwei->wei [amount (or/c string? (and/c rational? exact?))])
+                       exact-integer?])]{
+@racket[(units->wei amount 'ether)] and @racket[(units->wei amount 'gwei)], raising under their
+own names.
+
+@examples[#:eval units-eval
+          (gwei->wei "1.5")
+          (ether->wei 1/1000)]}
+
+@defproc[(wei->string [n exact-integer?]
+                      [unit (or/c 'wei 'gwei 'ether (integer-in 0 255)) 'ether]
+                      [#:min-fraction-digits min-digits (integer-in 0 255) 0])
+         string?]{
+@racket[n] wei in @racket[unit], as a decimal number with every digit it needs and no more,
+padded with zeros to at least @racket[min-digits] places after the point.  For every
+@racket[n], @racket[(units->wei (wei->string n unit) unit)] is @racket[n].
+
+@examples[#:eval units-eval
+          (wei->string 1500000000000000000)
+          (wei->string -1 'gwei)
+          (wei->string 1500000 6 #:min-fraction-digits 2)]}
+
+@defstruct*[(exn:fail:web3:units exn:fail:web3)
+            ([index (or/c #f exact-nonnegative-integer?)]
+             [reason (or/c 'syntax 'precision)])]{
+An amount that is not a decimal number (@racket['syntax]) or is finer than one wei
+(@racket['precision]).  @racket[index] is the position in the string, counted from 0: the
+unexpected character, the string's length when it has no digits, or the first nonzero digit past
+the unit's decimals.  It is @racket[#f] for an exact number.}
 
 @section{Contract ABI}
 

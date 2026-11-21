@@ -38,6 +38,7 @@ support for local [anvil](https://book.getfoundry.sh/anvil/) nodes.
 | `web3/address` | `address->checksum-string`, `checksum-address?` (EIP-55) |
 | `web3/account` | `hex-string->secret-key`, `secret-key->address`, `public-key->address`, `sign-digest`, `recover-address`, `signature` (`signature->bytes`, `bytes->signature`, `signature-v`, `signature-low-s?`), `exn:fail:web3:key`, `exn:fail:web3:signature`; `secret-key?`, `generate-secret-key`, `secret-key->public-key`, `public-key?`, `secp256k1-order` from `libsecp256k1` |
 | `web3/rlp` | `rlp-encode`, `rlp-decode` (canonical only), `rlp-item?`, `natural->rlp-scalar`, `rlp-scalar->natural`, `exn:fail:web3:rlp` |
+| `web3/units` | `units->wei`, `ether->wei`, `gwei->wei`, `wei->string`, `exn:fail:web3:units` |
 | `web3/contract` | `deploy-contract`, `deploy-contract/receipt`, `contract-call`, `contract-send`, `contract-estimate-gas`, `current-account`, `create-address`, `create2-address`, `exn:fail:web3:transaction`; `contract-instance`, `contract-logs`, `deploy-contract-instance`, `file->contract-abi`; `define-contract` (a procedure per function, `token-balance-of` for `balanceOf`) and `contract-bindings-out` |
 | `web3/anvil` | `anvil_*`, `evm_snapshot`/`evm_revert`, `debug_traceCall`/`debug_traceTransaction`; `start-anvil`, `stop-anvil`, `with-anvil` |
 

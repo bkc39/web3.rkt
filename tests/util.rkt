@@ -29,6 +29,7 @@
          filled-hash
          insufficient-balance
          max-word
+         pick
          raised
          raised-type-error
          seeded
@@ -61,6 +62,9 @@
 
 (define (seeded . seed)
   (vector->pseudo-random-generator (list->vector seed)))
+
+(define (pick prng xs)
+  (list-ref xs (random (length xs) prng)))
 
 (define (signature-string name inputs [outputs #f])
   (abi-signature->string (abi-signature name inputs outputs) #:outputs? #t))

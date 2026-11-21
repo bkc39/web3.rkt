@@ -17,8 +17,6 @@
   (define seed '(5 4 3 2 1 0))
   (define reason? (flat-contract-predicate abi-decode-reason/c))
 
-  (define (pick prng xs)
-    (list-ref xs (random (length xs) prng)))
 
   (define (random-topics prng)
     (for/list ([_ (in-range (random 5 prng))])

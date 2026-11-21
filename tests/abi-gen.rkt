@@ -26,8 +26,6 @@
          random-decode-inputs
          random-word)
 
-(define (pick prng xs)
-  (list-ref xs (random (length xs) prng)))
 
 (define (random-elementary prng static?)
   (match (random (if static? 5 7) prng)
