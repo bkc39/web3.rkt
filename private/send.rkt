@@ -5,11 +5,11 @@
                      syntax/parse)
          racket/contract/base
          (only-in racket/list first rest)
-         (only-in racket/match match match-lambda)
+         (only-in racket/match match match* match-lambda)
          "../abi.rkt"
          (submod "../abi.rkt" internal)
          (only-in "../address.rkt" address->checksum-string)
-         (only-in "../eth.rkt" eth-call eth-send-transaction)
+         (only-in "../eth.rkt" eth-call)
          (only-in (submod "../eth.rkt" internal) wait-for-receipt/who)
          (only-in "../eth/receipt.rkt" receipt-block-number receipt-status)
          (only-in (submod "../eth/receipt.rkt" internal) jsexpr->receipt-of)
@@ -19,6 +19,10 @@
                   signer-address/who
                   signer-sign-transaction/who)
          "../transaction.rkt"
+         (only-in (submod "../transaction.rkt" internal)
+                  field->jsexpr
+                  field-json-key
+                  transaction-field-name?)
          "contracts.rkt"
          "exn.rkt"
          "node.rkt"
@@ -65,6 +69,7 @@
                             key:fill-keyword ...)
   #:with new-order (format-id #'order "new-~a" #'order)
   #:with order-ref (format-id #'order "~a-ref" #'order)
+  #:with order->hash (format-id #'order "~a->hash" #'order)
   #:with (accessor ...) (for/list ([field (in-list (attribute key.field))])
                           (format-id #'order "~a-~a" #'order field))
   (begin
@@ -74,6 +79,8 @@
     (define (order-ref fields kw)
       (case kw
         [(key.kw) (accessor fields)] ...))
+    (define (order->hash fields)
+      (make-immutable-hasheq (list (cons 'key.field (accessor fields)) ...)))
     (define-syntax-parse-rule (define/filling (name:id who:id from:id to:id fields:id)
                                 body:expr (... ...+))
       (define/who (name who from to (~@ key.kw [key.field key.default]) ...)
@@ -111,24 +118,25 @@
       (signer-address/who who sender)
       (address->checksum-string sender)))
 
-(define (access-entry->json entry)
-  (match entry
-    [(cons address keys)
-     (hasheq 'address (address->checksum-string address)
-             'storageKeys (map bytes->hex-string keys))]))
+(define (sent-field? name value)
+  (match* (name value)
+    [(_ #f) #f]
+    [('value 0) #f]
+    [(_ _) (transaction-field-name? name)]))
+
+(define (sender-object from fields)
+  (for/fold ([object (if from (hasheq 'from (address->checksum-string from)) (hasheq))])
+            ([(name value) (in-hash fields)]
+             #:when (sent-field? name value))
+    (hash-set object (field-json-key name) (field->jsexpr name value))))
 
 (define (call-object #:to [to #f] #:from from #:data data #:value value #:gas gas
                      #:access-list [access-list #f])
-  (define fields
-    (hasheq 'to to
-            'from from
-            'data (bytes->hex-string data)
-            'value (and (positive? value) (number->hex-string value))
-            'gas (and gas (number->hex-string gas))
-            'accessList (and (pair? access-list) (map access-entry->json access-list))))
-  (for/hasheq ([(key v) (in-hash fields)]
-               #:when v)
-    (values key v)))
+  (sender-object from (hasheq 'to to 'data data 'value value 'gas-limit gas
+                              'access-list (and (pair? access-list) access-list))))
+
+(define (node-object address to order gas)
+  (sender-object address (hash-set* (fill-order->hash order) 'to to 'gas-limit gas)))
 
 (define (call-raising-reverts errors thunk)
   (with-handlers ([exn:fail:web3:rpc?
@@ -259,14 +267,13 @@
                       wanted chain-id)]))
 
 (define (estimate-object address to order)
-  (call-object #:from address #:to (and to (address->checksum-string to))
+  (call-object #:from address #:to to
                #:data (fill-order-data order) #:value (fill-order-value order) #:gas #f
                #:access-list (fill-order-access-list order)))
 
-(define (filled-gas-limit who address to order provider)
+(define (filled-gas-limit who order estimated provider)
   (or (fill-order-gas-limit order)
-      (estimate-gas who (estimate-object address to order) (fill-order-errors order) provider
-                    #:limit (expt 2 64))))
+      (estimate-gas who estimated (fill-order-errors order) provider #:limit (expt 2 64))))
 
 (define (filled-nonce who address order provider)
   (or (fill-order-nonce order)
@@ -329,16 +336,20 @@
                          #:gas-price (gas-price who order provider) #:gas-limit gas-limit
                          #:to to #:value value #:data data)]))
 
-(define (fill who from to order)
-  (define provider (fill-order-provider order))
+(define (checked-rows who order)
   (define rows (given-rows order))
   (check-error-signatures/who who (fill-order-errors order))
   (check-conflicts who order rows)
+  rows)
+
+(define (fill who from to order)
+  (define provider (fill-order-provider order))
+  (define rows (checked-rows who order))
   (define address (sender-address who from))
   (define candidates (candidate-types rows))
   (define fixed (fixed-type order candidates))
   (define chain-id (node-chain-id who order provider))
-  (define gas-limit (filled-gas-limit who address to order provider))
+  (define gas-limit (filled-gas-limit who order (estimate-object address to order) provider))
   (define nonce (filled-nonce who address order provider))
   (define block? (block-needed? order fixed))
   (define base-fee (and block? (latest-base-fee who provider)))
@@ -406,25 +417,40 @@
   (when (>= v (expt 2 bits))
     (raise-conflict who "~a is more than a transaction's ~a bits hold" kw bits)))
 
-(define (send-from-signer who signer to data value gas errors provider)
-  (check-width who '#:value value 256)
-  (check-width who '#:gas (or gas 0) 64)
-  (send-raw/receipt who signer to
-                    (fill-order #:value value #:data data #:gas-limit gas #:errors errors
-                                #:provider provider)))
-
-(define (send-from-node who address to data value gas errors provider)
-  (define tx (call-object #:to to #:from address #:data data #:value value #:gas gas))
-  (define tx+gas
-    (cond
-      [gas tx]
-      [else (hash-set tx 'gas (number->hex-string (estimate-gas who tx errors provider)))]))
-  (define tx-hash
-    (call-raising-reverts errors (lambda () (eth-send-transaction tx+gas #:provider provider))))
-  (values tx-hash (settle who tx-hash tx+gas errors provider)))
+(define (send-from-signer who signer to order)
+  (check-width who '#:value (fill-order-value order) 256)
+  (check-width who '#:gas (or (fill-order-gas-limit order) 0) 64)
+  (send-raw/receipt who signer to order))
 
 (define (submit who sender #:to to #:data data #:value value #:gas gas #:errors errors
                 #:provider provider)
+  (define order
+    (fill-order #:value value #:data data #:gas-limit gas #:errors errors #:provider provider))
   (cond
-    [(signer? sender) (send-from-signer who sender to data value gas errors provider)]
-    [else (send-from-node who sender to data value gas errors provider)]))
+    [(signer? sender) (send-from-signer who sender to order)]
+    [else (send-from-node/receipt who sender to order)]))
+
+;;;; signed by the node
+
+(define (send-from-node who address to order)
+  (define provider (fill-order-provider order))
+  (define errors (fill-order-errors order))
+  (checked-rows who order)
+  (when (fill-order-chain-id order)
+    (node-chain-id who order provider))
+  (define gas (filled-gas-limit who order (node-object address to order #f) provider))
+  (define answer
+    (call-raising-reverts errors
+                          (lambda ()
+                            (rpc-call "eth_sendTransaction" (list (node-object address to order gas))
+                                      #:provider provider))))
+  (values (node-hash->string who "transaction hash" answer) gas))
+
+(define (send-from-node/receipt who address to order)
+  (define-values (tx-hash gas) (send-from-node who address to order))
+  (define replayed
+    (call-object #:from address #:to to #:data (fill-order-data order)
+                 #:value (fill-order-value order) #:gas gas
+                 #:access-list (fill-order-access-list order)))
+  (values tx-hash
+          (settle who tx-hash replayed (fill-order-errors order) (fill-order-provider order))))
