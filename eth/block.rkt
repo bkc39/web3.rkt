@@ -1,6 +1,7 @@
 #lang racket/base
 
 (require racket/contract/base
+         (only-in racket/match match)
          (only-in "../private/field-contracts.rkt" hash-string/c)
          (only-in "../private/node.rkt" raise-node-malformed)
          "../private/record.rkt"
@@ -74,6 +75,27 @@
   [uncles (list-field hash-field) #:optional]
   [transactions block-transactions-field])
 
+(define (write-fee-history history port _mode)
+  (define oldest (fee-history-oldest-block history))
+  (match (length (fee-history-gas-used-ratio history))
+    [0 (write-string "#<fee-history no blocks>" port)]
+    [blocks (fprintf port "#<fee-history blocks ~a to ~a>" oldest (+ oldest blocks -1))]))
+
+(define (check-fee-history who detail history)
+  (define base-fees (fee-history-base-fee-per-gas history))
+  (unless (= (length base-fees) (add1 (length (fee-history-gas-used-ratio history))))
+    (raise-node-malformed who (string-append "fee history base fee per gas" detail)
+                          (hash-ref (fee-history->jsexpr history) 'baseFeePerGas))))
+
+(define-node-record fee-history #:noun "fee history" #:printer write-fee-history
+  #:check check-fee-history
+  [oldest-block uint64-field #:key oldestBlock]
+  [base-fee-per-gas (list-field quantity-field) #:key baseFeePerGas]
+  [gas-used-ratio (list-field ratio-field) #:key gasUsedRatio]
+  [reward (list-field (list-field quantity-field)) #:optional]
+  [base-fee-per-blob-gas (list-field quantity-field) #:key baseFeePerBlobGas #:optional]
+  [blob-gas-used-ratio (list-field ratio-field) #:key blobGasUsedRatio #:optional])
+
 (define (block-transaction-hashes block)
   (for/list ([entry (in-list (block-transactions block))])
     (if (string? entry) entry (transaction-info-hash entry))))
@@ -87,6 +109,8 @@
 
 (module* internal #f
   (provide block-fields
+           fee-history-fields
            jsexpr->block-of
            jsexpr->block/who
+           jsexpr->fee-history/who
            withdrawal-fields))

@@ -7,12 +7,13 @@
            rackunit
            (only-in web3/eth eth-get-block-by-hash eth-get-block-by-number)
            web3/eth/block
-           (only-in (submod web3/eth/block internal) block-fields withdrawal-fields)
+           (only-in (submod web3/eth/block internal) block-fields fee-history-fields withdrawal-fields)
            (only-in web3/eth/transaction-info jsexpr->transaction-info transaction-info->jsexpr)
            (only-in web3/private/record field-row-field field-row-provided?)
            (only-in web3/rpc exn:fail:web3? mock-provider)
            (only-in "helpers/results.rkt"
                     block-json
+                    fee-history-json
                     full-block-json
                     pending-block-json
                     transaction-info-json/0
@@ -149,7 +150,11 @@
                           [,(jsexpr->block (hash-set block-json 'transactions (list zero-hash)))
                            ,(~a "#<block 1 " mined-hash " 1 transaction>")]
                           [,(jsexpr->withdrawal withdrawal-json)
-                           "#<withdrawal 7 validator 42 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 1000000000 gwei>"]))])
+                           "#<withdrawal 7 validator 42 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 1000000000 gwei>"]
+                          [,(jsexpr->fee-history fee-history-json) "#<fee-history blocks 0 to 1>"]
+                          [,(jsexpr->fee-history (hasheq 'oldestBlock "0x5" 'baseFeePerGas '("0x7")
+                                                         'gasUsedRatio '()))
+                           "#<fee-history no blocks>"]))])
       (match-define (list value text) row)
       (for ([mode (in-list (list ~a ~s ~v))])
         (check-equal? (mode value) text)
@@ -159,7 +164,35 @@
     (check-blames-here (block-number 42))
     (check-blames-here (block->jsexpr (hasheq)))
     (check-blames-here (block-transaction-hashes block-json))
-    (check-blames-here (withdrawal-amount withdrawal-json)))
+    (check-blames-here (withdrawal-amount withdrawal-json))
+    (check-blames-here (fee-history-reward fee-history-json)))
+
+  (test-case "fee history reads into its fields"
+    (define history (jsexpr->fee-history fee-history-json))
+    (check-equal? (list (fee-history-oldest-block history)
+                        (fee-history-base-fee-per-gas history)
+                        (fee-history-gas-used-ratio history)
+                        (fee-history-reward history)
+                        (fee-history-base-fee-per-blob-gas history)
+                        (fee-history-blob-gas-used-ratio history))
+                  '(0 (1000000000 1000000000 875560834) (0.0 0.0022433333333333333)
+                      ((0 0) (2000000000 29000000000)) (1 1 1) (0.0 0.0)))
+    (check-eq? (fee-history->jsexpr history) fee-history-json)
+    (check-false (fee-history-reward (jsexpr->fee-history (hash-remove fee-history-json 'reward)))))
+
+  (test-case "B8: a fee history has one more base fee than it has blocks"
+    (for ([base-fees (in-list '(("0x1" "0x1") ("0x1" "0x1" "0x1" "0x1")))])
+      (check-equal? (message-of (lambda ()
+                                  (jsexpr->fee-history
+                                   (hash-set fee-history-json 'baseFeePerGas base-fees))))
+                    (~a "jsexpr->fee-history: malformed fee history base fee per gas from the node: "
+                        (~e base-fees))))
+    (for ([ratio (in-list '(1.5 -0.1))])
+      (check-regexp-match #rx"^jsexpr->fee-history: malformed fee history gas used ratio 1 from"
+                          (message-of (lambda ()
+                                        (jsexpr->fee-history
+                                         (hash-set fee-history-json 'gasUsedRatio
+                                                   (list 0.0 ratio))))))))
 
   (test-case "every accessor the field tables provide is in web3 and the manual"
     (define manual (file->string (collection-file-path "scribblings/web3.scrbl" "web3")))
@@ -169,8 +202,10 @@
         (string->symbol (~a prefix "-" (field-row-field row)))))
     (for ([name (in-list (append (accessors "block" block-fields)
                                  (accessors "withdrawal" withdrawal-fields)
+                                 (accessors "fee-history" fee-history-fields)
                                  '(block? jsexpr->block block->jsexpr block-transaction-hashes
-                                   withdrawal? jsexpr->withdrawal withdrawal->jsexpr)))])
+                                   withdrawal? jsexpr->withdrawal withdrawal->jsexpr
+                                   fee-history? jsexpr->fee-history fee-history->jsexpr)))])
       (check-not-false (memq name names) (~a name))
       (check-not-false (regexp-match? (regexp (~a "@defproc\\[\\(" (regexp-quote (~a name)) " "))
                                       manual)

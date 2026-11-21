@@ -20,6 +20,7 @@
   (define a-query (hasheq 'address addr 'fromBlock "earliest"))
   (define history (hasheq 'oldestBlock "0x10" 'baseFeePerGas '("0x7" "0x7")
                           'gasUsedRatio '(0.5) 'reward '(("0x1" "0x2"))))
+  (define a-history (jsexpr->fee-history history))
   (define a-proof (hasheq 'address addr 'accountProof '("0xf8") 'storageProof '()))
   (define an-access-list (hasheq 'accessList '() 'gasUsed "0x5208"))
   (define zero-word (filled-hash #\0))
@@ -28,8 +29,8 @@
   (define endpoints
     `([,eth-blob-base-fee () "eth_blobBaseFee" () "0x1" 1]
       [,eth-fee-history (4 16 (1/2 25 75.5)) "eth_feeHistory" ("0x4" "0x10" (0.5 25 75.5))
-                        ,history ,history]
-      [,eth-fee-history (1 "latest" ()) "eth_feeHistory" ("0x1" "latest" ()) ,history ,history]
+                        ,history ,a-history]
+      [,eth-fee-history (1 "latest" ()) "eth_feeHistory" ("0x1" "latest" ()) ,history ,a-history]
       [,eth-get-proof (,addr (0 255) "latest")
                       "eth_getProof" (,addr (,zero-word ,word-255) "latest") ,a-proof ,a-proof]
       [,eth-get-block-by-hash ("0xbb" #t) "eth_getBlockByHash" ("0xbb" #t) ,full-block-json ,a-block]

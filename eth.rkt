@@ -3,7 +3,7 @@
 (require racket/contract
          (only-in racket/match match)
          "eth/block.rkt"
-         (only-in (submod "eth/block.rkt" internal) jsexpr->block-of)
+         (only-in (submod "eth/block.rkt" internal) jsexpr->block-of jsexpr->fee-history/who)
          "eth/log.rkt"
          "eth/receipt.rkt"
          "eth/transaction-info.rkt"
@@ -135,7 +135,8 @@
   #:result-transform quantity->number)
 (define-jsonrpc-endpoint eth_feeHistory
   (-> [exact-positive-integer? number->hex-string] [block-param/c block-param->string]
-      [reward-percentiles/c percentiles->jsexpr] hash?))
+      [reward-percentiles/c percentiles->jsexpr] fee-history?)
+  #:result-transform (nullable jsexpr->fee-history/who "eth_feeHistory" hash?))
 (define-jsonrpc-endpoint eth_accounts (-> (listof string?)))
 (define-jsonrpc-endpoint eth_blockNumber (-> exact-nonnegative-integer?)
   #:result-transform quantity->number)

@@ -35,6 +35,7 @@
          lenient-uint64-field
          list-field
          quantity-field
+         ratio-field
          read-field
          record-field
          uint64-field)
@@ -70,7 +71,11 @@
       v
       (node-natural who what v 64)))
 
+(define (read-ratio who what v)
+  (if (and (real? v) (<= 0 v 1)) v (raise-node-malformed who what v)))
+
 (define quantity-field (node-kind 'quantity node-quantity->number uint256/c))
+(define ratio-field (node-kind 'ratio read-ratio (real-in 0 1)))
 (define uint64-field (natural-field 'uint64 64 uint64/c))
 (define lenient-uint64-field (node-kind 'lenient-uint64 read-lenient-uint64 uint64/c))
 (define byte-field (natural-field 'byte 8 byte?))

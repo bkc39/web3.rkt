@@ -3,12 +3,14 @@
 (module+ test
   (require racket/format
            (only-in racket/list make-list)
-           (only-in racket/match match match-define)
+           (only-in racket/match match match-define match-let)
            (only-in racket/string string-join)
            rackunit
            (only-in web3/address checksum-address?)
-           (only-in web3/eth/block jsexpr->block jsexpr->withdrawal withdrawal->jsexpr)
-           (only-in (submod web3/eth/block internal) block-fields withdrawal-fields)
+           (only-in web3/eth/block
+                    jsexpr->block jsexpr->fee-history jsexpr->withdrawal withdrawal->jsexpr)
+           (only-in (submod web3/eth/block internal)
+                    block-fields fee-history-fields withdrawal-fields)
            (only-in web3/eth/log jsexpr->log log->jsexpr)
            (only-in (submod web3/eth/log internal) log-fields)
            (only-in web3/eth/receipt jsexpr->receipt)
@@ -103,6 +105,20 @@
         (let ([json (make-list size transaction-info-json/0)])
           (list json (lambda (v) (equal? (map transaction-info->jsexpr v) json))))))
 
+  (define ((list-sample size element) prng)
+    (define pairs (for/list ([_ (in-range (or size (random 4 prng)))]) (element prng)))
+    (list (map (lambda (pair) (match-let ([(list json _) pair]) json)) pairs)
+          (lambda (v)
+            (and (list? v)
+                 (= (length v) (length pairs))
+                 (for/and ([read (in-list v)]
+                           [pair (in-list pairs)])
+                   (match-let ([(list _ good?) pair]) (good? read)))))))
+
+  (define (ratio-sample prng)
+    (define r (/ (random 1001 prng) 1000.0))
+    (list r (lambda (v) (eqv? v r))))
+
   (define samples
     (hash 'uint64 (natural-sample 64)
           'lenient-uint64 lenient-sample
@@ -120,6 +136,9 @@
           '(fixed-data 8) (data-sample 8)
           'block-transactions block-transactions-sample
           '(list (record withdrawal?) +inf.0) withdrawals-sample
+          '(list quantity +inf.0) (list-sample 3 (natural-sample 256))
+          '(list ratio +inf.0) (list-sample 2 ratio-sample)
+          '(list (list quantity +inf.0) +inf.0) (list-sample #f (list-sample #f (natural-sample 256)))
           '(list (record log?) +inf.0) logs-sample))
 
   (define hostiles
@@ -146,7 +165,10 @@
                                    (,(hex (make-bytes 32 0)) ,transaction-info-json/0)
                                    (,(hash-set transaction-info-json/0 'gas "zz")))
           '(list (record withdrawal?) +inf.0) `(42 "0xzz" (1) "0x" #t (,withdrawal-json 42)
-                                                   (,(hash-set withdrawal-json 'amount "zz")))))
+                                                   (,(hash-set withdrawal-json 'amount "zz")))
+          '(list quantity +inf.0) '(42 "0xzz" (1) "0x" #t ("0x1" "0xzz" "0x1"))
+          '(list ratio +inf.0) '(42 "0xzz" (#t 0.0) "0x" #t (1.5 0.0) (-0.1 0.0) ("0x1" 0.0))
+          '(list (list quantity +inf.0) +inf.0) '(42 "0xzz" (1) "0x" #t (("0xzz")) (42))))
 
   (define (kind-entry table kind)
     (hash-ref table (field-kind-name kind)
@@ -162,10 +184,11 @@
       [transaction-info ,jsexpr->transaction-info ,transaction-info-fields
                         ,transaction-info-json/1]
       [block ,jsexpr->block ,block-fields ,block-json]
-      [withdrawal ,jsexpr->withdrawal ,withdrawal-fields ,withdrawal-json]))
+      [withdrawal ,jsexpr->withdrawal ,withdrawal-fields ,withdrawal-json]
+      [fee-history ,jsexpr->fee-history ,fee-history-fields ,fee-history-json]))
 
   (define nouns
-    (hasheq 'transaction-info "transaction"))
+    (hasheq 'transaction-info "transaction" 'fee-history "fee history"))
 
   (define (table-rows table)
     (match-define (list _ _ rows _) table)
@@ -263,7 +286,14 @@
      '((index "withdrawal index")
        (validator-index "withdrawal validator index")
        (address "withdrawal address")
-       (amount "withdrawal amount"))))
+       (amount "withdrawal amount"))
+     'fee-history
+     '((oldest-block "fee history oldest block")
+       (base-fee-per-gas "fee history base fee per gas(?: [0-9]+)?")
+       (gas-used-ratio "fee history gas used ratio(?: [0-9]+)?")
+       (reward "fee history reward(?: [0-9]+(?: [0-9]+)?)?")
+       (base-fee-per-blob-gas "fee history base fee per blob gas(?: [0-9]+)?")
+       (blob-gas-used-ratio "fee history blob gas used ratio(?: [0-9]+)?"))))
 
   (define (field-message noun field)
     (match (assq field (hash-ref messages noun))
