@@ -10,7 +10,7 @@ bezzle, which pin it as a flake input.
 
 | module | holds |
 |---|---|
-| `rpc.rkt` | providers, `rpc-call`, errors, hex helpers, `define-jsonrpc-endpoint` |
+| `rpc.rkt` | providers, `rpc-call`, errors, hex helpers, `define-jsonrpc-endpoint` (whose `#:result-transform/arguments` also sees the call's arguments) |
 | `eth.rkt` | `web3_*`, `net_*`, `eth_*` endpoints (fees, blocks, receipts, proofs, filters), `wait-for-receipt`; an `internal` submodule holds `poll-receipt/who`, the raw poll every wait runs |
 | `private/eth-params.rkt` | the endpoints' parameter contracts and their conversions to the node's JSON: block parameters, reward percentiles, storage slots, JSON objects; `eth.rkt` exports the documented ones |
 | `abi.rkt` | the contract ABI: encoders, decoders, selectors, reverts; an `internal` submodule of entry points that take the caller's `who` |
@@ -38,7 +38,9 @@ bezzle, which pin it as a flake input.
 | `abi/event.rkt` | event topics, `event-topics`, decoding logs into `event-log`s; an `internal` submodule of entry points that take the caller's `who` |
 | `eth/log.rkt` | logs, a `define-node-record` table (the struct is `log-struct`; nothing binds `log`); an `internal` submodule holds the reader under the caller's `who`, the table and what `abi/event.rkt` extends |
 | `eth/receipt.rkt` | receipts, a `define-node-record` table, and `receipt-succeeded?`; an `internal` submodule holds the reader under the caller's `who`, the check of a receipt's transaction hash, the table and the logs accessor `event.rkt` uses |
-| `private/record.rkt` | `define-node-record`: one field table per node object, from which its struct, accessors, contracts, reader, printer hook and `T-fields`, its `field-row`s, come; the field kinds, each a reader under the caller's `who` and a contract |
+| `eth/transaction-info.rkt` | transactions as a node describes them, a `define-node-record` table, and `transaction-info->signed-transaction`, which rebuilds the signed transaction and checks the node's hash and sender against it; an `internal` submodule holds the readers under the caller's `who`, the check of the asked hash and the table |
+| `eth/block.rkt` | blocks, withdrawals and fee histories, three `define-node-record` tables; a block's transactions are all hashes or all `transaction-info`s; an `internal` submodule holds the readers under the caller's `who`, the block reader that checks the form asked for, and the tables |
+| `private/record.rkt` | `define-node-record`: one field table per node object, from which its struct, accessors, contracts, reader, printer hook and `T-fields`, its `field-row`s, come; the field kinds, each a reader under the caller's `who` and a contract; `asked-reader`, a reader that checks the record's hash against the one asked for |
 | `private/field-contracts.rkt` | the field contracts records and transactions share: hashes, `to`, `uint64/c`, `uint256/c`, 32 bytes, access lists |
 | `event.rkt` | `log-filter`, `get-logs` (chunks, halving on a refused range), `receipt-logs` |
 | `abi/vectors.rkt` | conformance vectors, data in `abi/vectors/encode.rktd` (regenerate with `racket tests/generate-abi-vectors.rkt`) and the hand-written `abi/vectors/decode.rktd` |

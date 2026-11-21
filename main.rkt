@@ -3,7 +3,7 @@
 ;; web3: an Ethereum JSON-RPC client for Racket.
 ;;
 ;;   web3/rpc             providers, rpc-call, errors, hex helpers, define-jsonrpc-endpoint
-;;   web3/eth             web3_* / net_* / eth_* endpoints, receipts
+;;   web3/eth             web3_* / net_* / eth_* endpoints, receipts, blocks, transactions
 ;;   web3/abi             standard and packed encodings, decoders, selectors, call data, reverts
 ;;   web3/abi/type        ABI types as structs, strings and s-expressions; signatures
 ;;   web3/abi/event-type  events as structs, strings and s-expressions
@@ -23,6 +23,8 @@
 ;;   web3/abi/event       event topics and log decoding
 ;;   web3/eth/log         logs as structs
 ;;   web3/eth/receipt     receipts as structs
+;;   web3/eth/block       blocks, withdrawals and fee histories as structs
+;;   web3/eth/transaction-info  transactions as a node describes them
 ;;   web3/anvil           anvil_* / evm_* / debug_* endpoints, managing anvil processes
 ;;
 ;; `(require web3)` provides all of them.
