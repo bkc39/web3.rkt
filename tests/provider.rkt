@@ -9,7 +9,7 @@
            racket/generic
            rackunit
            web3
-           (only-in "util.rkt" raised))
+           (only-in "util.rkt" check-blames-here raised))
 
   (define (rpc-error thunk)
     (with-handlers ([exn:fail:web3:rpc? (lambda (e)
@@ -79,7 +79,7 @@
     (check-true (blames-caller? (lambda () (current-provider 'nope))))
     (check-true (blames-caller? (lambda () (parameterize ([current-provider 5]) (void)))))
     (check-true (blames-caller? (lambda () (with-provider "http://localhost" (void)))))
-    (check-exn exn:fail:contract? (lambda () (eth-chain-id #:provider 'nope)))
+    (check-blames-here (eth-chain-id #:provider 'nope))
     (check-exn exn:fail:contract? (lambda () (rpc-call "eth_chainId" '() #:provider 'nope)))
     (check-exn exn:fail:contract? (lambda () (provider-request 'nope "eth_chainId" '())))
     (check-exn exn:fail:contract? (lambda () (provider-close 'nope)))
@@ -195,6 +195,58 @@
     (check-equal? (mock-provider-calls p)
                   '(("eth_getUncleCountByBlockNumber" "0x10")
                     ("eth_getUncleCountByBlockNumber" "0x0"))))
+
+  (define endpoint-modules
+    '((module endpoints racket/base
+        (require web3)
+        (provide eth-get-uncle-count-by-block-number forward immediate local node)
+        (define node (mock-provider (lambda (method params) "0x2")))
+        (define (forward) (eth-get-uncle-count-by-block-number 1 #:provider node))
+        (define-jsonrpc-endpoint eth_getUncleCountByBlockNumber
+          (-> [exact-nonnegative-integer? number->hex-string] exact-nonnegative-integer?)
+          #:result-transform hex-string->number)
+        (define immediate (eth-get-uncle-count-by-block-number 0 #:provider node))
+        (define local
+          (let ()
+            (define-jsonrpc-endpoint eth_getUncleCountByBlockHash
+              (-> hex-string? exact-nonnegative-integer?)
+              #:result-transform hex-string->number)
+            (list (eth-get-uncle-count-by-block-hash "0xbb" #:provider node)
+                  (map (lambda (hash) (eth-get-uncle-count-by-block-hash hash #:provider node))
+                       '("0x01" "0x02"))))))
+      (module caller racket/base
+        (require 'endpoints)
+        (provide refused)
+        (define (refused)
+          (with-handlers ([exn:fail:contract? exn-message])
+            (eth-get-uncle-count-by-block-number -1 #:provider node))))))
+
+  (define (endpoints-namespace)
+    (define ns (make-base-namespace))
+    (for ([form (in-list endpoint-modules)])
+      (eval form ns))
+    (eval '(require web3 'caller 'endpoints) ns)
+    ns)
+
+  (test-case "a module calls its own endpoint before and after the definition and in a body"
+    (define ns (endpoints-namespace))
+    (check-equal? (eval '(list immediate (forward) local) ns) '(2 2 (2 (2 2))))
+    (check-equal? (eval '(map car (mock-provider-calls node)) ns)
+                  '("eth_getUncleCountByBlockNumber"
+                    "eth_getUncleCountByBlockHash"
+                    "eth_getUncleCountByBlockHash"
+                    "eth_getUncleCountByBlockHash"
+                    "eth_getUncleCountByBlockNumber")))
+
+  (test-case "a defined endpoint blames the module that calls it"
+    (define message (eval '(refused) (endpoints-namespace)))
+    (check-regexp-match #rx"contract from: '?endpoints\n" message)
+    (check-regexp-match #rx"blaming: caller\n" message))
+
+  (test-case "an endpoint cannot be assigned"
+    (check-exn exn:fail:syntax?
+               (lambda () (eval '(set! eth-get-uncle-count-by-block-number 0)
+                                (endpoints-namespace)))))
 
   (test-case "closing a mock does nothing, and it answers after"
     (define p (mock-provider (hash "eth_chainId" "0x7a69")))

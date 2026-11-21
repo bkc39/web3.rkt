@@ -252,23 +252,23 @@
     (for ([e (in-list never-retried)])
       (check-false (log-limit-error? e) (exn-message e))))
 
-  (define (malformed-from thunk who)
+  (define (malformed-from thunk message)
     (define e (raised thunk))
     (check-pred exn:fail:web3? e)
-    (when who
-      (check-regexp-match (regexp (string-append "^" who ": malformed")) (exn-message e))))
+    (check-regexp-match (regexp (string-append "^" (regexp-quote message))) (exn-message e)))
+
+  (define (logs-answered answer)
+    (lambda () (get-logs transfers #:provider (mock-provider (hash "eth_getLogs" answer)))))
 
   (test-case "malformed node data raises exn:fail:web3"
-    (malformed-from (lambda () (get-logs transfers #:provider (mock-provider (hash "eth_getLogs" '(42)))))
-                    "get-logs")
     (define five-topics (log-jsexpr #:topics (make-list 5 transfer-topic)))
-    (malformed-from (lambda () (get-logs transfers #:provider (mock-provider (hash "eth_getLogs" (list five-topics)))))
-                    "get-logs")
-    (malformed-from (lambda () (get-logs transfers #:provider (mock-provider (hash "eth_getLogs" "x")))) #f)
+    (malformed-from (logs-answered '(42)) "eth_getLogs: unexpected result '(42)")
+    (malformed-from (logs-answered "x") "eth_getLogs: unexpected result \"x\"")
+    (malformed-from (logs-answered (list five-topics)) "get-logs: malformed")
     (malformed-from (lambda ()
                       (get-logs (log-filter #:from-block "safe") #:chunk 10
                                 #:provider (mock-provider (hash "eth_getBlockByNumber" 'null))))
-                    "get-logs"))
+                    "get-logs: malformed"))
 
   (define approval-json
     (log-jsexpr #:topics (list (event-topic approval) (topic-word anvil-alice) (topic-word anvil-bob))
@@ -305,7 +305,7 @@
     (check-equal? (map event-log? (receipt-logs receipt #:events (list transfer))) '(#t #f))
     (for ([logs (in-list '(missing null "x"))])
       (define bad (if (eq? logs 'missing) (hasheq 'status "0x1") (hasheq 'logs logs)))
-      (malformed-from (lambda () (receipt-logs bad)) "receipt-logs"))
+      (malformed-from (lambda () (receipt-logs bad)) "receipt-logs: malformed"))
     (check-blames-here (receipt-logs 'null)))
 
   (test-case "get-logs blames its caller"

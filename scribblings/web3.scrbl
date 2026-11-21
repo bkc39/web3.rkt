@@ -40,6 +40,7 @@
 @(define transaction-eval (make-base-eval '(require web3)))
 @(define signer-eval (make-base-eval '(require web3)))
 @(define send-eval (make-base-eval '(require web3)))
+@(define eth-eval (make-base-eval '(require web3)))
 @(define provider-eval (make-base-eval '(require openssl web3)))
 @(define provider-guide-eval (make-base-eval '(require racket/generic racket/match web3)))
 @(define abi-guide-eval (make-base-eval '(require web3)))
@@ -114,8 +115,8 @@ Results come back decoded where the encoding is unambiguous:
        hash tables with symbol keys, as read by @racketmodname[json];}
  @item{logs from @racket[get-logs] and @racket[receipt-logs] are
        @racket[log] values; @racket[eth-get-logs] returns the node's JSON;}
- @item{a missing object (an unknown transaction, a block that does not
-       exist yet) is @racket['null].}]
+ @item{a missing object (an unknown transaction, raw transaction or block, a block that
+       does not exist yet) is @racket['null].}]
 
 Addresses and transaction objects are passed as the node expects them:
 addresses as @racket["0x..."] strings, and transaction or call objects
@@ -745,11 +746,12 @@ response's @tt{result}.  Raises @racket[exn:fail:web3] when
 Defines a function for the JSON-RPC method @racket[rpc-name], named
 after it in kebab-case (@racket[eth_getBalance] defines
 @racket[eth-get-balance]).  The function takes one positional argument
-per @racket[arg-spec] and an optional @racket[#:provider].
+per @racket[arg-spec] and an optional @racket[#:provider].  The name is bound as syntax that
+stands for the function wherever it appears, so it cannot be @racket[set!].
 
-Each argument is checked against its @racket[contract-expr] and, when
-the spec gives a @racket[->param-expr], converted by it into the JSON
-parameter.  The response's @tt{result} goes through
+Each argument is checked against its @racket[contract-expr], which blames the
+module of the call, and, when the spec gives a @racket[->param-expr], converted by it into
+the JSON parameter.  The response's @tt{result} goes through
 @racket[transform-expr] (default @racket[values]) and is checked against
 @racket[result-contract-expr], a flat contract.  A result that
 @racket[transform-expr] raises on or that fails the contract raises
@@ -925,6 +927,14 @@ A block to query: a block number or one of the named block tags.}
 @defproc[(block-param->string [block block-param/c]) string?]{
 Writes a block number as a hex quantity and passes tags through.}
 
+@defthing[reward-percentiles/c flat-contract?]{
+Percentiles for @racket[eth-fee-history]: a list of reals between 0 and 100, strictly increasing
+once each non-integer is written as a flonum, as the node reads them.}
+
+@defthing[storage-slot/c flat-contract?
+          #:value (integer-in 0 (sub1 (expt 2 256)))]{
+A storage slot: a 256-bit word.}
+
 @subsection{Node and Chain}
 
 @deftogether[(
@@ -945,6 +955,8 @@ Writes a block number as a hex quantity and passes tags through.}
 @defproc[(eth-max-priority-fee-per-gas [#:provider provider (or/c #f provider?)
                                                    (current-provider)])
          exact-nonnegative-integer?]
+@defproc[(eth-blob-base-fee [#:provider provider (or/c #f provider?) (current-provider)])
+         exact-nonnegative-integer?]
 @defproc[(eth-accounts [#:provider provider (or/c #f provider?) (current-provider)])
          (listof string?)]
 @defproc[(eth-block-number [#:provider provider (or/c #f provider?) (current-provider)])
@@ -952,9 +964,27 @@ Writes a block number as a hex quantity and passes tags through.}
 
 @tt{web3_clientVersion}, @tt{net_version}, @tt{net_listening},
 @tt{net_peerCount}, @tt{eth_chainId}, @tt{eth_syncing},
-@tt{eth_gasPrice} (in wei), @tt{eth_maxPriorityFeePerGas} (in wei), @tt{eth_accounts} and
+@tt{eth_gasPrice} (in wei), @tt{eth_maxPriorityFeePerGas} (in wei),
+@tt{eth_blobBaseFee} (in wei), @tt{eth_accounts} and
 @tt{eth_blockNumber}.  @racket[net-version] returns the network id as
 the node reports it, a decimal string.}
+
+@defproc[(eth-fee-history [block-count exact-positive-integer?]
+                          [newest-block block-param/c]
+                          [reward-percentiles reward-percentiles/c]
+                          [#:provider provider (or/c #f provider?) (current-provider)])
+         hash?]{
+Base fees and gas used ratios of the @racket[block-count] blocks ending at @racket[newest-block],
+and the priority fee paid at each of @racket[reward-percentiles].  The result is the node's JSON;
+@racket['baseFeePerGas] has one more entry, for the next block.
+
+@examples[#:eval eth-eval
+          (define node
+            (mock-provider (hash "eth_feeHistory"
+                                 (hasheq 'oldestBlock "0x10" 'baseFeePerGas '("0x7" "0x7")
+                                         'gasUsedRatio '(0.5) 'reward '(("0x1" "0x2"))))))
+          (eth-fee-history 1 16 '(1/2 25) #:provider node)
+          (mock-provider-calls node)]}
 
 @deftogether[(
 @defproc[(eth-protocol-version [#:provider provider (or/c #f provider?) (current-provider)])
@@ -996,6 +1026,14 @@ The number of transactions sent from @racket[address]: its next nonce.}
          hex-string?]{
 The 32-byte word at storage @racket[slot] of @racket[address].}
 
+@defproc[(eth-get-proof [address string?]
+                        [slots (listof storage-slot/c)]
+                        [block block-param/c]
+                        [#:provider provider (or/c #f provider?) (current-provider)])
+         hash?]{
+The Merkle proof of @racket[address] and of its storage @racket[slots] at @racket[block], as the
+node's JSON.  Slots are sent as 32-byte words.}
+
 @defproc[(eth-get-code [address string?]
                        [block block-param/c]
                        [#:provider provider (or/c #f provider?) (current-provider)])
@@ -1005,16 +1043,39 @@ without code.}
 
 @subsection{Blocks}
 
+@deftogether[(
 @defproc[(eth-get-block-by-number [block block-param/c]
                                   [full-transactions? boolean?]
                                   [#:provider provider (or/c #f provider?) (current-provider)])
-         (or/c 'null hash?)]{
+         (or/c 'null hash?)]
+@defproc[(eth-get-block-by-hash [block-hash hex-string?]
+                                [full-transactions? boolean?]
+                                [#:provider provider (or/c #f provider?) (current-provider)])
+         (or/c 'null hash?)])]{
 The block, with full transaction objects when
 @racket[full-transactions?] is true and transaction hashes otherwise.}
 
+@defproc[(eth-get-block-receipts [block block-param/c]
+                                 [#:provider provider (or/c #f provider?) (current-provider)])
+         (or/c 'null (listof hash?))]{
+The receipts of the block's transactions, in order, or @racket['null] for an unknown block.}
+
+@deftogether[(
+@defproc[(eth-get-transaction-by-block-hash-and-index
+          [block-hash hex-string?]
+          [index exact-nonnegative-integer?]
+          [#:provider provider (or/c #f provider?) (current-provider)])
+         (or/c 'null hash?)]
+@defproc[(eth-get-transaction-by-block-number-and-index
+          [block block-param/c]
+          [index exact-nonnegative-integer?]
+          [#:provider provider (or/c #f provider?) (current-provider)])
+         (or/c 'null hash?)])]{
+The transaction at @racket[index] in a block, or @racket['null].}
+
 @deftogether[(
 @defproc[(eth-get-block-transaction-count-by-hash
-          [block-hash string?]
+          [block-hash hex-string?]
           [#:provider provider (or/c #f provider?) (current-provider)])
          exact-nonnegative-integer?]
 @defproc[(eth-get-block-transaction-count-by-number
@@ -1038,6 +1099,13 @@ raises @racket[exn:fail:web3:rpc] with the revert payload in its
                            [#:provider provider (or/c #f provider?) (current-provider)])
          exact-nonnegative-integer?]{
 An estimate of the gas @racket[tx] would use.}
+
+@defproc[(eth-create-access-list [tx (and/c hash? jsexpr?)]
+                                 [block block-param/c]
+                                 [#:provider provider (or/c #f provider?) (current-provider)])
+         hash?]{
+The access list and gas used of @racket[tx] at @racket[block], as the node's JSON; a reverting
+@racket[tx] gives an @racket['error] field, not an exception.}
 
 @defproc[(eth-send-transaction [tx (and/c hash? jsexpr?)]
                                [#:provider provider (or/c #f provider?) (current-provider)])
@@ -1075,9 +1143,17 @@ that answers with an object gives its @racket['raw].  See @racket[transaction->j
          (or/c 'null hash?)])]{
 A transaction, or its receipt once it has been mined.}
 
+@defproc[(eth-get-raw-transaction-by-hash
+          [tx-hash hex-string?]
+          [#:provider provider (or/c #f provider?) (current-provider)])
+         (or/c 'null hex-string?)]{
+The signed, serialized transaction, an even number of hex digits as
+@racket[eth-send-raw-transaction] takes it, or @racket['null] for an unknown one; see
+@racket[bytes->signed-transaction].}
+
 @defproc[(eth-get-logs [filter (and/c hash? jsexpr?)]
                        [#:provider provider (or/c #f provider?) (current-provider)])
-         list?]{
+         (listof hash?)]{
 The logs matching @racket[filter], a hash table with keys such as
 @racket['address], @racket['topics], @racket['fromBlock] and
 @racket['toBlock].}
@@ -1103,6 +1179,45 @@ receipt once mined.  For a transaction signed here, see
 Whether the receipt's status is success, @racket["0x1"], rather than
 failure, @racket["0x0"].  Any other status, or none, raises
 @racket[exn:fail:web3].}
+
+@subsection{Filters}
+
+@defproc[(eth-new-filter [filter (and/c hash? jsexpr?)]
+                         [#:provider provider (or/c #f provider?) (current-provider)])
+         hex-string?]{
+Installs a log filter on the node and returns its id, which the other filter endpoints take as
+the node wrote it.  @racket[filter] is as for @racket[eth-get-logs], such as
+@racket[(log-filter->jsexpr f)].
+
+@examples[#:eval eth-eval
+          (define node (mock-provider (hash "eth_newFilter" "0x1f")))
+          (eth-new-filter
+           (log-filter->jsexpr (log-filter #:address "0x5FbDB2315678afecb367f032d93F642f64180aa3"))
+           #:provider node)
+          (mock-provider-calls node)]}
+
+@deftogether[(
+@defproc[(eth-new-block-filter [#:provider provider (or/c #f provider?) (current-provider)])
+         hex-string?]
+@defproc[(eth-new-pending-transaction-filter
+          [#:provider provider (or/c #f provider?) (current-provider)])
+         hex-string?])]{
+Install a filter for new block hashes, or for new pending transaction hashes.}
+
+@defproc[(eth-get-filter-changes [filter-id hex-string?]
+                                 [#:provider provider (or/c #f provider?) (current-provider)])
+         (listof (or/c hex-string? hash?))]{
+What the filter has matched since it was last polled: logs for a log filter, hashes otherwise.}
+
+@defproc[(eth-get-filter-logs [filter-id hex-string?]
+                              [#:provider provider (or/c #f provider?) (current-provider)])
+         (listof hash?)]{
+Every log a log filter matches.}
+
+@defproc[(eth-uninstall-filter [filter-id hex-string?]
+                               [#:provider provider (or/c #f provider?) (current-provider)])
+         boolean?]{
+Removes the filter; @racket[#f] if the node had none with that id.}
 
 @section{Addresses}
 
