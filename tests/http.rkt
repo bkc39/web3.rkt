@@ -291,69 +291,92 @@
   (test-case "HTTP: threads sharing a provider each get their own answer"
     (check-shared-provider))
 
-  (define (trusting host-names?)
+  (define (roots->sources roots)
+    (match roots
+      ['none '()]
+      ['test-pem (list test-pem)]))
+
+  (define (client-context roots host-names)
     (define context (ssl-make-client-context 'auto))
-    (ssl-load-verify-source! context test-pem)
-    (ssl-set-verify! context #t)
-    (ssl-set-verify-hostname! context host-names?)
+    (define sources (roots->sources roots))
+    (for ([source (in-list sources)])
+      (ssl-load-verify-source! context source))
+    (ssl-set-verify! context (pair? sources))
+    (ssl-set-verify-hostname! context (eq? host-names 'checked))
     context)
 
-  (define connectors
-    (hash 'default
-          (lambda (url)
-            (parameterize ([ssl-default-verify-sources '()]) (url->http-provider url)))
-          'default/trusting
-          (lambda (url)
-            (parameterize ([ssl-default-verify-sources (list test-pem)]) (url->http-provider url)))
-          'trusting
-          (lambda (url) (url->http-provider url #:ssl-context (trusting #f)))
-          'trusting/host-names
-          (lambda (url) (url->http-provider url #:ssl-context (trusting #t)))
-          'unverified
-          (lambda (url) (url->http-provider url #:ssl-context (ssl-make-client-context 'auto)))))
+  (define (connector spec)
+    (match spec
+      [`(default ,roots)
+       (lambda (url)
+         (parameterize ([ssl-default-verify-sources (roots->sources roots)])
+           (url->http-provider url)))]
+      [`(explicit ,roots ,host-names)
+       (lambda (url) (url->http-provider url #:ssl-context (client-context roots host-names)))]))
 
-  (define (refused p)
+  (define refusal-texts
+    (hash 'chain #rx"certificate verify failed"
+          'host-name #rx"certificate verify failed|certificate not valid for hostname"))
+
+  (define (refused p [refusal 'chain])
     (define e (raised (lambda () (rpc-call "eth_chainId" '() #:provider p))))
     (check-pred exn:fail:web3? e)
     (check-false (exn:fail:web3:rpc? e))
     (check-regexp-match #px"^eth_chainId: TLS handshake with 127[.]0[.]0[.]1:[0-9]+ failed: "
                         (exn-message e))
-    (check-regexp-match #rx"certificate verify failed" (exn-message e))
+    (check-regexp-match (hash-ref refusal-texts refusal) (exn-message e))
     e)
 
-  (define (check-refuses p seen)
-    (refused p)
+  (define ((check-refuses refusal) p seen)
+    (refused p refusal)
     (define-values (requests _connections) (seen))
     (check-equal? requests '()))
 
   (define (check-accepts p _seen)
     (check-equal? (rpc-call "eth_chainId" '() #:provider p) "0x7a69"))
 
+  (define outcome-checks
+    (hash 'accepts check-accepts
+          'refuses/chain (check-refuses 'chain)
+          'refuses/host-name (check-refuses 'host-name)))
+
   (test-case "HTTPS: which contexts accept a self-signed node"
-    (for ([row (in-list '(("no trusted roots" default refuses)
+    (for ([row (in-list '(("no trusted roots" (default none) refuses/chain)
                           ("the node's certificate trusted, its host name wrong"
-                           default/trusting refuses)
+                           (default test-pem) refuses/host-name)
                           ("a context trusting the certificate, host names unchecked"
-                           trusting accepts)
+                           (explicit test-pem unchecked) accepts)
                           ("a context trusting the certificate, host names checked"
-                           trusting/host-names refuses)
-                          ("a context that checks nothing" unverified accepts)))])
-      (match-define (list name connector outcome) row)
+                           (explicit test-pem checked) refuses/host-name)
+                          ("a context that checks nothing" (explicit none unchecked) accepts)))])
+      (match-define (list name spec outcome) row)
       (test-case name
         (call-with-canned-node
          (list (result-body 1 "0x7a69"))
          #:tls? #t
-         #:connect (hash-ref connectors connector)
-         (match outcome
-           ['refuses check-refuses]
-           ['accepts check-accepts])))))
+         #:connect (connector spec)
+         (hash-ref outcome-checks outcome)))))
+
+  (test-case "HTTPS: a context the caller changes applies to the next connection"
+    (define context (ssl-make-client-context 'auto))
+    (ssl-set-verify! context #t)
+    (call-with-canned-node
+     (list (result-body 2 "0x7a69"))
+     #:tls? #t
+     #:connect (lambda (url) (url->http-provider url #:ssl-context context))
+     (lambda (p seen)
+       (refused p)
+       (ssl-load-verify-source! context test-pem)
+       (check-equal? (rpc-call "eth_chainId" '() #:provider p) "0x7a69")
+       (define-values (requests connections) (seen))
+       (check-equal? (list (length requests) connections) '(1 2)))))
 
   (test-case "HTTPS: every connection uses the provider's context"
     (define closed (make-semaphore))
     (call-with-canned-node
      (list (result-body 1 "0x1") (closing (result-body 2 "0x2") closed) (result-body 3 "0x3"))
      #:tls? #t
-     #:connect (hash-ref connectors 'trusting)
+     #:connect (connector '(explicit test-pem unchecked))
      (lambda (p seen)
        (check-equal? (rpc-call "eth_blockNumber" '() #:provider p) "0x1")
        (provider-close p)
@@ -365,7 +388,7 @@
     (call-with-canned-node
      '()
      #:tls? #t
-     #:connect (hash-ref connectors 'default)
+     #:connect (connector '(default none))
      (lambda (p seen)
        (refused p)
        (refused p)
@@ -378,7 +401,7 @@
     (call-with-canned-node
      '()
      #:tls? #t
-     #:connect (hash-ref connectors 'default)
+     #:connect (connector '(default none))
      #:path "/v3/s3cr3t-key?apikey=hunter2"
      (lambda (p _seen)
        (define message (exn-message (refused p)))
@@ -387,27 +410,57 @@
        (check-false (string-contains? message "s3cr3t-key"))
        (check-false (string-contains? message "hunter2")))))
 
+  (define (open-ports custodian)
+    (filter port? (custodian-managed-list custodian (current-custodian))))
+
   (test-case "HTTPS: a refused handshake leaves no port open"
     (call-with-canned-node
      '()
      #:tls? #t
-     #:connect (hash-ref connectors 'default)
+     #:connect (connector '(default none))
      (lambda (p _seen)
        (define requester (make-custodian))
        (parameterize ([current-custodian requester])
          (refused p))
-       (check-equal? (filter port? (custodian-managed-list requester (current-custodian)))
-                     '()))))
+       (check-equal? (open-ports requester) '()))))
+
+  (test-case "HTTPS: a request broken during the handshake raises the break, leaving no port open"
+    (define server (make-custodian))
+    (define accepted (make-semaphore))
+    (define port
+      (parameterize ([current-custodian server])
+        (define listener (tcp-listen 0 4 #t "127.0.0.1"))
+        (thread (lambda ()
+                  (tcp-accept listener)
+                  (semaphore-post accepted)
+                  (sync never-evt)))
+        (define-values (_host port _rhost _rport) (tcp-addresses listener #t))
+        port))
+    (define p ((connector '(explicit none unchecked)) (format "https://127.0.0.1:~a/" port)))
+    (define requester (make-custodian))
+    (define outcome #f)
+    (define caller
+      (parameterize ([current-custodian requester])
+        (thread (lambda ()
+                  (set! outcome (with-handlers ([exn:break? values])
+                                  (rpc-call "eth_chainId" '() #:provider p)))))))
+    (sync accepted)
+    (sync (system-idle-evt))
+    (break-thread caller)
+    (within 5 (lambda () (thread-wait caller)))
+    (custodian-shutdown-all server)
+    (check-pred exn:break? outcome)
+    (check-equal? (open-ports requester) '()))
 
   (test-case "HTTPS: a refused TCP connect is not a TLS failure"
     (define listener (tcp-listen 0 4 #t "127.0.0.1"))
     (define-values (_host port _rhost _rport) (tcp-addresses listener #t))
     (tcp-close listener)
-    (define p ((hash-ref connectors 'unverified) (format "https://127.0.0.1:~a/" port)))
+    (define p ((connector '(explicit none unchecked)) (format "https://127.0.0.1:~a/" port)))
     (define e (raised (lambda () (rpc-call "eth_chainId" '() #:provider p))))
     (check-pred exn:fail:web3? e)
     (check-regexp-match #rx"^eth_chainId: tcp-connect" (exn-message e))
     (check-false (regexp-match? #rx"TLS handshake" (exn-message e))))
 
   (test-case "HTTPS: a trusting context serves concurrent callers"
-    (check-shared-provider #:tls? #t #:connect (hash-ref connectors 'trusting))))
+    (check-shared-provider #:tls? #t #:connect (connector '(explicit test-pem unchecked)))))

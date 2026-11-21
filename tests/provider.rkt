@@ -84,18 +84,27 @@
     (check-exn exn:fail:contract? (lambda () (provider-request 'nope "eth_chainId" '())))
     (check-exn exn:fail:contract? (lambda () (provider-close 'nope)))
     (check-exn #rx"no provider"
-               (lambda () (with-provider #f (eth-chain-id))))
+               (lambda () (with-provider #f (eth-chain-id)))))
+
+  (test-case "#:ssl-context takes a client context, for an https URL only"
+    (define unverified (ssl-make-client-context 'auto))
     (check-true (blames-caller? (lambda ()
                                   (url->http-provider "http://127.0.0.1:8545"
-                                                      #:ssl-context
-                                                      (ssl-make-client-context 'auto)))))
+                                                      #:ssl-context unverified))))
     (for ([context (list 'secure #f (ssl-make-server-context))])
       (check-true (blames-caller? (lambda ()
                                     (url->http-provider "https://127.0.0.1:8545"
                                                         #:ssl-context context)))))
-    (check-true (http-provider? (url->http-provider "https://127.0.0.1:8545"
-                                                    #:ssl-context
-                                                    (ssl-make-client-context 'auto)))))
+    (for ([url '("https://127.0.0.1:8545" "HTTPS://127.0.0.1:8545")])
+      (check-true (http-provider? (url->http-provider url #:ssl-context unverified)))))
+
+  (test-case "#:ssl-context refused for an http URL without showing the URL"
+    (define e (raised (lambda ()
+                        (url->http-provider "http://node.example/v3/s3cr3t-key?apikey=hunter2"
+                                            #:ssl-context (ssl-make-client-context 'auto)))))
+    (check-pred exn:fail:contract:blame? e)
+    (check-regexp-match #rx"#:ssl-context needs an https URL" (exn-message e))
+    (check-false (regexp-match? #rx"s3cr3t-key|hunter2|node[.]example" (exn-message e))))
 
   (test-case "a provider must implement provider-request"
     (define ns (make-base-namespace))

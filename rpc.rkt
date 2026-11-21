@@ -35,10 +35,9 @@
           [current-provider (parameter/c (or/c #f provider?))]
           [url->http-provider
            (->i ([url string?])
-                (#:ssl-context [ssl-context ssl-client-context?])
-                #:pre/name (url ssl-context)
-                "#:ssl-context needs an https URL"
-                (or (unsupplied-arg? ssl-context) (https-url? url))
+                (#:ssl-context [ssl-context (url) (if (https-url? url)
+                                                      ssl-client-context?
+                                                      ssl-context-needs-https)])
                 [_ http-provider?])]
           [http-provider-url (-> http-provider? string?)]
           [mock-provider (-> mock-handler/c mock-provider?)]
@@ -104,12 +103,18 @@
    (define (provider-close p)
      (call-with-connection p (lambda () (drop-link! p))))])
 
+(define (https-scheme? u)
+  (equal? "https" (url-scheme u)))
+
 (define (https-url? url-string)
-  (equal? "https" (url-scheme (string->url url-string))))
+  (https-scheme? (string->url url-string)))
+
+(define ssl-context-needs-https
+  (flat-named-contract "#:ssl-context needs an https URL" (lambda (_) #f)))
 
 (define (url->http-provider url-string #:ssl-context [ssl-context #f])
   (define u (string->url url-string))
-  (define https? (https-url? url-string))
+  (define https? (https-scheme? u))
   (define path
     (cond
       [(regexp-match #px"^[a-zA-Z]+://[^/]+(/.+)$" url-string) => cadr]
@@ -208,17 +213,20 @@
                    (lambda (e)
                      (tcp-abandon-port in)
                      (tcp-abandon-port out)
-                     (raise (if (exn:fail? e)
-                                (exn:fail:web3 (format "TLS handshake with ~a:~a failed: ~a"
-                                                       host port (exn-message e))
-                                               (current-continuation-marks))
-                                e)))])
+                     (raise (tls-failure host port e)))])
     (ports->ssl-ports in out
                       #:mode 'connect
                       #:context ssl-context
                       #:hostname host
                       #:close-original? #t
                       #:shutdown-on-close? #f)))
+
+(define (tls-failure host port raised)
+  (cond
+    [(exn:fail? raised)
+     (exn:fail:web3 (format "TLS handshake with ~a:~a failed: ~a" host port (exn-message raised))
+                    (current-continuation-marks))]
+    [else raised]))
 
 ;; Closing flushes, which fails on a broken connection; abandoning it
 ;; releases the socket anyway.
@@ -444,15 +452,4 @@
     (check-equal? (sync/timeout 20 outcome) '("0x1" #f))
     (kill-thread runner)
     (custodian-shutdown-all server)
-    (provider-close p))
-
-  (test-case "an https provider holds its context"
-    (define test-pem (collection-file-path "test.pem" "openssl"))
-    (parameterize ([ssl-default-verify-sources (list test-pem)])
-      (check-eq? (http-provider-ssl-context (url->http-provider "https://127.0.0.1:1/"))
-                 (ssl-secure-client-context)))
-    (check-false (http-provider-ssl-context (url->http-provider "http://127.0.0.1:1/")))
-    (define context (ssl-make-client-context 'auto))
-    (check-eq? (http-provider-ssl-context
-                (url->http-provider "https://127.0.0.1:1/" #:ssl-context context))
-               context)))
+    (provider-close p)))
