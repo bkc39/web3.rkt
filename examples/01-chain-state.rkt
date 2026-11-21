@@ -17,7 +17,7 @@
        (hasheq 'from alice 'to bob 'value (number->hex-string (ether->wei 1)))))
     (define receipt (wait-for-receipt tx-hash))
     (printf "block ~a, gas used ~a, succeeded ~a\n"
-            (hex-string->number (hash-ref receipt 'blockNumber))
-            (hex-string->number (hash-ref receipt 'gasUsed))
+            (receipt-block-number receipt)
+            (receipt-gas-used receipt)
             (receipt-succeeded? receipt))
     (print-accounts alice bob)))

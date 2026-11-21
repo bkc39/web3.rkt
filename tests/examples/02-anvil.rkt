@@ -5,7 +5,7 @@
            (only-in "../helpers/examples.rkt" example-lines example-tests))
 
   (define expected
-    '("sent from 0x000000000000000000000000000000000000beef, stored 7"
+    '("sent from 0x000000000000000000000000000000000000bEEF, stored 7"
       "reverted, stored 0"))
 
   (example-tests "02-anvil" #:anvil

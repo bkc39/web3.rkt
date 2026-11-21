@@ -19,6 +19,6 @@
       (send-transaction/receipt
        (hasheq 'from stranger 'to contract 'data (bytes->hex-string (word->bytes 7)))))
     (anvil-stop-impersonating-account stranger)
-    (printf "sent from ~a, stored ~a\n" (hash-ref receipt 'from) (stored-value))
+    (printf "sent from ~a, stored ~a\n" (receipt-from receipt) (stored-value))
     (evm-revert snapshot)
     (printf "reverted, stored ~a\n" (stored-value))))

@@ -20,7 +20,7 @@
     (printf "transfer type ~a nonce ~a gas ~a\n"
             (transaction-type tx) (transaction-nonce tx) (transaction-gas-limit tx))
     (define receipt (send-signed-transaction/receipt signer recipient #:value (ether->wei "1.5")))
-    (define raw (eth-get-raw-transaction-by-hash (hash-ref receipt 'transactionHash)))
+    (define raw (eth-get-raw-transaction-by-hash (receipt-transaction-hash receipt)))
     (printf "  sender ~a\n"
             (signed-transaction-sender (bytes->signed-transaction (hex-string->bytes raw))))
     (printf "  balance ~a ether\n" (wei->string (eth-get-balance recipient "latest")))))

@@ -3,7 +3,8 @@
 (require racket/list
          racket/match
          web3
-         (only-in "../util.rkt" filled-hash insufficient-balance word))
+         (only-in "../util.rkt" filled-hash insufficient-balance word)
+         (only-in "results.rkt" receipt-json))
 
 (provide base-block
          call-with-fields
@@ -31,8 +32,8 @@
 (define token "0x5FbDB2315678afecb367f032d93F642f64180aa3")
 (define tx-hash (filled-hash #\a))
 (define insufficient-payload (encode-call insufficient-balance 0 5000))
-(define mined (hasheq 'status "0x1" 'blockNumber "0x2" 'transactionHash tx-hash 'logs '()))
-(define failed (hasheq 'status "0x0" 'blockNumber "0x5" 'transactionHash tx-hash 'logs '()))
+(define mined (hash-set* receipt-json 'status "0x1" 'blockNumber "0x2" 'transactionHash tx-hash))
+(define failed (hash-set* receipt-json 'status "0x0" 'blockNumber "0x5" 'transactionHash tx-hash))
 
 (define (method-names calls)
   (map first calls))
@@ -87,6 +88,7 @@
                  #:gas-price [gas-price "0x77359400"]
                  #:raw [raw raw-answer]
                  #:receipt [receipt mined]
+                 #:polled-hash? [polled-hash? #t]
                  #:replay [replay "0x"])
   (hash "eth_chainId" chain-id
         "eth_estimateGas" estimate
@@ -95,8 +97,14 @@
         "eth_maxPriorityFeePerGas" priority
         "eth_gasPrice" gas-price
         "eth_sendRawTransaction" raw
-        "eth_getTransactionReceipt" receipt
+        "eth_getTransactionReceipt" (if polled-hash? (receipt-of-polled receipt) receipt)
         "eth_call" replay))
+
+(define ((receipt-of-polled receipt) params)
+  (match* (receipt params)
+    [((? hash?) (list polled)) (hash-set receipt 'transactionHash polled)]
+    [((? procedure?) _) (receipt params)]
+    [(_ _) receipt]))
 
 (define (raw-transactions calls)
   (for/list ([call (in-list calls)]

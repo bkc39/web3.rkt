@@ -73,7 +73,7 @@
   (test-case "sends, estimates and deploys from an instance"
     (check-equal? (traffic (sending) (lambda () (contract-send instance 'transfer anvil-bob 10
                                                                #:from anvil-alice)))
-                  (list (list mined)
+                  (list (list (jsexpr->receipt mined))
                         (list (list "eth_estimateGas" transfer-tx)
                               (list "eth_sendTransaction" (hash-set transfer-tx 'gas "0x5208"))
                               (list "eth_getTransactionReceipt" tx-hash))))
@@ -219,7 +219,7 @@
     (define (send target f)
       (traffic (sending) (lambda () (contract-send target f anvil-bob 10 #:from anvil-alice #:value 5))))
     (define sent (send token "transfer(address,uint256)"))
-    (check-equal? (first sent) (list mined))
+    (check-equal? (first sent) (list (jsexpr->receipt mined)))
     (check-equal? (send instance (string->abi-signature "transfer(address,uint256)")) sent)
     (check-exn #rx"^contract-send: zz is nonpayable; #:value must be 0$"
                (lambda () (contract-send instance (string->abi-item "function zz(uint256)") 1

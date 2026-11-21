@@ -32,7 +32,7 @@
     (eth-get-transaction-count address "pending"))
 
   (define (fee receipt)
-    (* (quantity (hash-ref receipt 'gasUsed)) (quantity (hash-ref receipt 'effectiveGasPrice))))
+    (* (receipt-gas-used receipt) (receipt-effective-gas-price receipt)))
 
   (define (recorded calls method)
     (for/list ([call (in-list calls)]
@@ -60,11 +60,11 @@
 
   (define (chain-view address receipts sender)
     (list (for/list ([receipt (in-list receipts)])
-            (list (hash-ref receipt 'status) (hash-ref receipt 'gasUsed)
-                  (for/list ([l (in-list (hash-ref receipt 'logs))])
-                    (map (lambda (key) (hash-ref l key)) '(address topics data)))
-                  (hash-ref receipt 'contractAddress)
-                  (let ([tx (eth-get-transaction-by-hash (hash-ref receipt 'transactionHash))])
+            (list (receipt-status receipt) (receipt-gas-used receipt)
+                  (for/list ([l (in-list (receipt-logs receipt))])
+                    (list (log-address l) (log-topics l) (log-data l)))
+                  (receipt-contract-address receipt)
+                  (let ([tx (eth-get-transaction-by-hash (receipt-transaction-hash receipt))])
                     (map (lambda (key) (hash-ref tx key)) '(to input value gas)))))
           (token-balance-of address anvil-bob)
           (token-deposits address sender)
@@ -88,11 +88,11 @@
       (define receipt
         (send-signed-transaction/receipt signer recipient #:value one-and-a-half #:provider node))
       (define calls (recording-calls node))
-      (check-equal? (map (lambda (key) (hash-ref receipt key)) '(status type)) '("0x1" "0x2"))
+      (check-equal? (list (receipt-status receipt) (receipt-type receipt)) '(1 2))
       (check-equal? (balance recipient) one-and-a-half)
       (check-equal? (- sender-before (balance sender)) (+ one-and-a-half (fee receipt)))
       (check-equal? (pending sender) (add1 nonce-before))
-      (define tx-hash (hash-ref receipt 'transactionHash))
+      (define tx-hash (receipt-transaction-hash receipt))
       (define raw (rpc-call "eth_getRawTransactionByHash" (list tx-hash)))
       (check-equal? raw (raw-param calls))
       (define stx (bytes->signed-transaction (hex-string->bytes raw)))
@@ -112,7 +112,7 @@
           (send-signed-transaction signer (fresh-address) #:value 1)))
       (for ([tx-hash (in-list hashes)]
             [nonce (in-naturals first-nonce)])
-        (check-equal? (hash-ref (wait-for-receipt tx-hash) 'status) "0x1")
+        (check-equal? (receipt-status (wait-for-receipt tx-hash)) 1)
         (check-equal? (quantity (hash-ref (eth-get-transaction-by-hash tx-hash) 'nonce)) nonce))))
 
   (define (contract-cases)
@@ -147,9 +147,9 @@
       (define address (deploy-token deploy-contract (local-signer key1)))
       (define receipt
         (contract-send address "deposit(string)" "node" #:value 1 #:from (node-signer account3)))
-      (check-equal? (hash-ref receipt 'status) "0x1")
+      (check-equal? (receipt-status receipt) 1)
       (check-equal? (string-downcase (hash-ref (eth-get-transaction-by-hash
-                                                (hash-ref receipt 'transactionHash))
+                                                (receipt-transaction-hash receipt))
                                                'from))
                     (string-downcase account3))))
 
@@ -193,7 +193,7 @@
         (with-handlers ([exn:fail:web3:transaction? values])
           (send-signed-transaction/receipt (local-signer key2) reverter #:gas-limit 50000)))
       (check-pred exn:fail:web3:transaction? e)
-      (check-equal? (hash-ref (exn:fail:web3:transaction-receipt e) 'status) "0x0")))
+      (check-equal? (receipt-status (exn:fail:web3:transaction-receipt e)) 0)))
 
   (define (berlin-cases)
     (test-case "N6: before London a fill is legacy, or EIP-2930 with an access list"
@@ -207,10 +207,9 @@
       (check-equal? (transaction-type listed) 1)
       (check-equal?
        (for/list ([access-list (list #f (list (list anvil-bob slot-1)))])
-         (hash-ref (send-signed-transaction/receipt signer (fresh-address) #:value 1
-                                                    #:access-list access-list)
-                   'type))
-       '("0x0" "0x1"))
+         (receipt-type (send-signed-transaction/receipt signer (fresh-address) #:value 1
+                                                        #:access-list access-list)))
+       '(0 1))
       (define nonce (pending sender))
       (define e
         (with-handlers ([exn:fail:web3:fill? values])

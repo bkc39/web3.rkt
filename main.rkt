@@ -22,6 +22,7 @@
 ;;   web3/event           event logs: filters, get-logs, receipt-logs
 ;;   web3/abi/event       event topics and log decoding
 ;;   web3/eth/log         logs as structs
+;;   web3/eth/receipt     receipts as structs
 ;;   web3/anvil           anvil_* / evm_* / debug_* endpoints, managing anvil processes
 ;;
 ;; `(require web3)` provides all of them.

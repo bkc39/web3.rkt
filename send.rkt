@@ -1,7 +1,8 @@
 #lang racket/base
 
 (require racket/contract/base
-         (only-in "private/contracts.rkt" receipt/c sender/c)
+         (only-in "eth/receipt.rkt" receipt?)
+         (only-in "private/contracts.rkt" sender/c)
          "private/exn.rkt"
          (only-in "private/send.rkt"
                   fill-transaction
@@ -16,4 +17,4 @@
          (contract-out
           [fill-transaction (filling-> sender/c transaction?)]
           [send-signed-transaction (filling-> signer/c transaction-hash/c)]
-          [send-signed-transaction/receipt (filling-> signer/c receipt/c)]))
+          [send-signed-transaction/receipt (filling-> signer/c receipt?)]))

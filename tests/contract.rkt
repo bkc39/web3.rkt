@@ -82,7 +82,7 @@
       (run-mock (sending)
                 (lambda () (contract-send token "transfer(address,uint256)" anvil-bob 10
                                           #:from anvil-alice))))
-    (check-eq? (first result) mined)
+    (check-eq? (receipt->jsexpr (first result)) mined)
     (define with-gas (hash-set transfer-tx 'gas "0x5208"))
     (check-equal? calls
                   (list (list "eth_estimateGas" transfer-tx)
@@ -125,7 +125,7 @@
       (check-equal? calls '() who)))
 
   (test-case "a deploy sends the init code and the encoded arguments, with no to"
-    (define created (hasheq 'status "0x1" 'blockNumber "0x1" 'contractAddress (string-downcase token)))
+    (define created (hash-set mined 'contractAddress (string-downcase token)))
     (define (deploy-traffic thunk)
       (run-mock (sending #:receipt created) thunk))
     (define-values (result calls)
@@ -142,7 +142,7 @@
       (check-equal? hex-calls default-calls)
       (define-values (pair _pair-calls) (deploy-traffic (lambda () (deploy-contract/receipt "0x6080"))))
       (check-equal? (first pair) token)
-      (check-eq? (second pair) created)))
+      (check-eq? (receipt->jsexpr (second pair)) created)))
 
   (test-case "a call that reverts raises its revert, decoded against #:errors"
     (define-values (e calls)
@@ -182,7 +182,7 @@
                                           #:from anvil-alice #:gas 100000 #:errors errors))))
     (define-values (e calls) (mined-failure (reverting "eth_call")))
     (check-pred exn:fail:web3:transaction? e)
-    (check-eq? (exn:fail:web3:transaction-receipt e) failed)
+    (check-eq? (receipt->jsexpr (exn:fail:web3:transaction-receipt e)) failed)
     (check-equal? (exn:fail:web3:transaction-revert e) insufficient-revert)
     (check-equal? (exn-message e)
                   (format "contract-send: transaction ~a failed in block 5: reverted with InsufficientBalance(0, 5000)"
@@ -207,7 +207,7 @@
       (match-define (list replay message) row)
       (define-values (e _calls) (mined-failure replay))
       (check-pred exn:fail:web3:transaction? e message)
-      (check-eq? (exn:fail:web3:transaction-receipt e) failed message)
+      (check-eq? (receipt->jsexpr (exn:fail:web3:transaction-receipt e)) failed message)
       (check-false (exn:fail:web3:transaction-revert e) message)
       (check-equal? (exn-message e)
                     (format "contract-send: transaction ~a failed in block 5: replaying it raised: ~a"
@@ -294,7 +294,7 @@
 
   (test-case "a deploy mined with status 0 raises even when the receipt has an address"
     (define receipt
-      (hasheq 'status "0x0" 'blockNumber "0x3" 'contractAddress (string-downcase token)))
+      (hash-set* failed 'blockNumber "0x3" 'contractAddress (string-downcase token)))
     (define-values (e calls)
       (run-mock (sending #:receipt receipt #:replay (reverting "eth_call"))
                 (lambda () (deploy-contract #"\x60\x80" #:from anvil-alice #:gas 100000))))
@@ -315,34 +315,56 @@
     (define (deploy) (deploy-contract #"\x60\x80" #:from anvil-alice))
     (check-malformed (hash "eth_call" "0x123") call 'contract-call)
     (check-malformed (hash "eth_call" "0xzz") call 'contract-call #rx"^eth_call: unexpected result")
-    (for ([receipt (list (hash-set mined 'status "0x2") (hash-remove mined 'status) (hash-set mined 'status 1))])
-      (check-malformed (sending #:receipt receipt) send 'contract-send))
+    (define (of-transaction what)
+      (format "^~a of transaction ~a from the node" what tx-hash))
+    (for ([receipt (list (hash-set mined 'status "0x2") (hash-set mined 'status 1)
+                         (hash-remove mined 'status)
+                         (hash-set (hash-remove mined 'status) 'root (filled-hash #\c)))])
+      (check-malformed (sending #:receipt receipt) send 'contract-send
+                       (of-transaction "contract-send: malformed receipt status")))
+    (check-malformed (sending #:receipt (hash-set mined 'transactionHash (filled-hash #\b))) send
+                     'contract-send
+                     (of-transaction "contract-send: malformed receipt transaction hash"))
     (for ([address (list 'null "0x1234")])
-      (check-malformed (sending #:receipt (hasheq 'status "0x1" 'contractAddress address))
+      (check-malformed (sending #:receipt (hash-set mined 'contractAddress address))
                        deploy 'deploy-contract
-                       (format "^deploy-contract: malformed contract address of transaction ~a from the node"
-                               tx-hash)))
-    (check-malformed (sending #:receipt (hash-remove mined 'status)) send 'contract-send
-                     (format "^contract-send: malformed receipt status of transaction ~a from the node"
-                             tx-hash))
+                       (of-transaction "deploy-contract: malformed receipt contract address")))
     (for ([receipt (list (hash-set failed 'blockNumber "zz") (hash-remove failed 'blockNumber))])
       (check-malformed (sending #:receipt receipt) send 'contract-send
-                       (format "^contract-send: malformed block number of transaction ~a from the node"
-                               tx-hash))))
+                       (of-transaction "contract-send: malformed receipt block number")))
+    (check-malformed (sending #:receipt 42) send 'contract-send
+                     (of-transaction "contract-send: malformed receipt"))
+    (define bad-log (hash-set (first (hash-ref mined 'logs)) 'data "0x1"))
+    (check-malformed (sending #:receipt (hash-set mined 'logs (list bad-log))) send 'contract-send
+                     (format "^contract-send: malformed log data in receipt logs 0 of transaction ~a"
+                             tx-hash)))
 
-  (test-case "receipt-succeeded? reads status 0x1 and 0x0 and raises on anything else"
-    (check-true (receipt-succeeded? mined))
-    (check-false (receipt-succeeded? failed))
-    (for ([receipt (list (hash-set mined 'status "0x2") (hash-remove mined 'status) (hash-set mined 'status 1))])
-      (check-exn (lambda (e)
-                   (and (exn:fail:web3? e)
-                        (regexp-match? #rx"^receipt-succeeded[?]: malformed receipt status: "
-                                       (exn-message e))))
-                 (lambda () (receipt-succeeded? receipt)))))
+  (test-case "a send returns its receipt when fields it does not use are legacy or anvil's"
+    (define mined-log (first (hash-ref mined 'logs)))
+    (for ([receipt (list (hash-remove mined 'effectiveGasPrice)
+                         (hash-set mined 'logs (list (hash-set mined-log 'blockTimestamp 1795291989))))])
+      (define-values (result _calls)
+        (run-mock (sending #:receipt receipt)
+                  (lambda () (contract-send token "transfer(address,uint256)" anvil-bob 1
+                                            #:from anvil-alice))))
+      (check-pred list? result (format "~s" result))
+      (when (list? result)
+        (check-eq? (receipt->jsexpr (first result)) receipt))))
+
+  (test-case "receipt-succeeded? reads the status, and a receipt with only a root has none"
+    (check-true (receipt-succeeded? (jsexpr->receipt mined)))
+    (check-false (receipt-succeeded? (jsexpr->receipt failed)))
+    (check-exn (lambda (e)
+                 (and (exn:fail:web3? e)
+                      (equal? (exn-message e)
+                              "receipt-succeeded?: the receipt has a root, not a status")))
+               (lambda ()
+                 (receipt-succeeded?
+                  (jsexpr->receipt (hash-set (hash-remove mined 'status) 'root (filled-hash #\c)))))))
 
   (test-case "receipt-succeeded? and the receipt waits blame a caller passing the wrong shape"
     (check-blames-here (receipt-succeeded? 5))
-    (check-blames-here (receipt-succeeded? '("0x1")))
+    (check-blames-here (receipt-succeeded? mined))
     (check-blames-here (wait-for-receipt 'hash))
     (check-blames-here (wait-for-receipt tx-hash #:timeout "1"))
     (check-blames-here (wait-for-receipt tx-hash #:provider 'node))
@@ -409,7 +431,7 @@
     (check-blames-here (current-account "0x12")))
 
   (test-case "passing every keyword at its default sends what passing none does"
-    (define created (hasheq 'status "0x1" 'blockNumber "0x1" 'contractAddress (string-downcase token)))
+    (define created (hash-set mined 'contractAddress (string-downcase token)))
     (define handler (hash-set (sending #:receipt created) "eth_call" (hex-word 1)))
     (define (traffic thunk)
       (define-values (result calls)
@@ -472,7 +494,7 @@
       (run-mock (sending)
                 (lambda () (contract-send/who 'token-transfer token "transfer(address,uint256)" anvil-bob 1
                                               #:from anvil-alice))))
-    (check-eq? (first sent) mined)
+    (check-eq? (receipt->jsexpr (first sent)) mined)
     (define-values (refused _deploy-calls)
       (run-mock (sending)
                 (lambda () (deploy-contract/who 'deploy-contract-instance #"" "constructor(uint8)" 256

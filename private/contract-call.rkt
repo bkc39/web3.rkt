@@ -5,6 +5,7 @@
          (submod "../abi.rkt" internal)
          (only-in (submod "../abi/type.rkt" private) raise-abi-type-error)
          (only-in "../eth.rkt" eth-call)
+         (only-in "../eth/receipt.rkt" receipt-contract-address)
          "../rpc.rkt"
          "exn.rkt"
          "node.rkt"
@@ -89,7 +90,6 @@
   (define-values (tx-hash receipt)
     (submit who (required-sender who from)
             #:to #f #:data data #:value value #:gas gas #:errors errors #:provider provider))
-  (values (node-address->string who
-                                (of-transaction "contract address" tx-hash)
-                                (hash-ref receipt 'contractAddress #f))
+  (values (or (receipt-contract-address receipt)
+              (raise-node-missing who (of-transaction "receipt contract address" tx-hash)))
           receipt))

@@ -24,9 +24,6 @@
     (define tx-hash (send-to stranger "0x"))
     (list tx-hash (wait-for-receipt tx-hash)))
 
-  (define (receipt-height receipt)
-    (hex-string->number (hash-ref receipt 'blockNumber)))
-
   (cond
     [(not (current-anvil-path))
      (displayln "skipping eth anvil tests: anvil not found (set WEB3_ANVIL or use `nix develop`)")]
@@ -42,22 +39,22 @@
        (with-anvil ()
          (match-define (list _ receipt) (mined-transfer))
          (for ([full? (in-list '(#f #t))])
-           (check-equal? (eth-get-block-by-hash (hash-ref receipt 'blockHash) full?)
-                         (eth-get-block-by-number (receipt-height receipt) full?)))
+           (check-equal? (eth-get-block-by-hash (receipt-block-hash receipt) full?)
+                         (eth-get-block-by-number (receipt-block-number receipt) full?)))
          (check-equal? (eth-get-block-by-hash (filled-hash #\a) #f) 'null)))
 
      (test-case "A3: block receipts are the transactions' receipts"
        (with-anvil ()
          (match-define (list tx-hash receipt) (mined-transfer))
-         (check-equal? (eth-get-block-receipts (receipt-height receipt))
+         (check-equal? (eth-get-block-receipts (receipt-block-number receipt))
                        (list (eth-get-transaction-receipt tx-hash)))
-         (check-equal? (eth-get-block-receipts (+ (eth-block-number) 10)) 'null)))
+         (check-false (eth-get-block-receipts (+ (eth-block-number) 10)))))
 
      (test-case "A4: a transaction by block and index is the transaction by hash"
        (with-anvil ()
          (match-define (list tx-hash receipt) (mined-transfer))
-         (define block-hash (hash-ref receipt 'blockHash))
-         (define height (receipt-height receipt))
+         (define block-hash (receipt-block-hash receipt))
+         (define height (receipt-block-number receipt))
          (define transaction (eth-get-transaction-by-hash tx-hash))
          (check-equal? (eth-get-transaction-by-block-hash-and-index block-hash 0) transaction)
          (check-equal? (eth-get-transaction-by-block-number-and-index height 0) transaction)

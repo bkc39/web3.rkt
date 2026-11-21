@@ -36,7 +36,8 @@
     (define-values (result calls)
       (run-mock node (lambda () (contract-send token "transfer(address,uint256)" anvil-bob 10
                                                #:from signer0))))
-    (check-eq? (first result) deployed)
+    (check-equal? (receipt->jsexpr (first result))
+                  (hash-set deployed 'transactionHash (call-param calls "eth_getTransactionReceipt")))
     (check-equal? (method-names calls)
                   '("eth_chainId" "eth_estimateGas" "eth_getTransactionCount"
                     "eth_getBlockByNumber" "eth_maxPriorityFeePerGas" "eth_sendRawTransaction"

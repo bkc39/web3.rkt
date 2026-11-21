@@ -376,7 +376,8 @@
 ;; contract refuses is the node's fault, not the caller's.
 (define (call-endpoint method params provider transform ok?)
   (define raw (rpc-call method params #:provider provider))
-  (match (with-handlers ([exn:fail? (lambda (_) #f)])
+  (match (with-handlers ([exn:fail:web3? raise]
+                         [exn:fail? (lambda (_) #f)])
            (list (transform raw)))
     [(list (? ok? result)) result]
     [_ (raise-web3-error method "unexpected result ~e" raw)]))

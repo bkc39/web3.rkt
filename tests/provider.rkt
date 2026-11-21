@@ -196,6 +196,22 @@
                   '(("eth_getUncleCountByBlockNumber" "0x10")
                     ("eth_getUncleCountByBlockNumber" "0x0"))))
 
+  (define named-failure (exn:fail:web3 "eth_getUncleCountByBlockHash: malformed count"
+                                       (current-continuation-marks)))
+
+  (define-jsonrpc-endpoint eth_getUncleCountByBlockHash
+    (-> hex-string? exact-nonnegative-integer?)
+    #:result-transform (lambda (v) (if (equal? v "0x") (raise named-failure) (hex-string->number v))))
+
+  (test-case "a transform's exn:fail:web3 stands, and any other failure is an unexpected result"
+    (define (failure answer)
+      (define node (mock-provider (hash "eth_getUncleCountByBlockHash" answer)))
+      (raised (lambda () (eth-get-uncle-count-by-block-hash "0xbb" #:provider node))))
+    (check-eq? (failure "0x") named-failure)
+    (define unexpected (failure 'null))
+    (check-pred exn:fail:web3? unexpected)
+    (check-equal? (exn-message unexpected) "eth_getUncleCountByBlockHash: unexpected result 'null"))
+
   (define endpoint-modules
     '((module endpoints racket/base
         (require web3)

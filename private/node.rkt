@@ -7,15 +7,18 @@
 (provide node-address->string
          node-data->bytes
          node-hash->string
-         node-optional
+         node-natural
          node-quantity->number
-         node-status->boolean
+         node-quantity?
          raise-node-malformed
-         receipt-status->boolean)
+         raise-node-missing)
 
 (define (raise-node-malformed who what v #:origin [origin " from the node"])
   (raise (exn:fail:web3 (format "~a: malformed ~a~a: ~e" who what origin v)
                         (current-continuation-marks))))
+
+(define (raise-node-missing who what)
+  (raise-node-malformed who what 'null))
 
 (define (node-string? rx v)
   (and (string? v) (regexp-match? rx v)))
@@ -26,11 +29,17 @@
     [else (raise-node-malformed who what v)]))
 
 ;; No Ethereum quantity has more than 64 significant hex digits; a longer one is refused unread.
+(define (node-quantity? v)
+  (node-string? #px"^0x(?=[0-9a-fA-F])(?>0*)[0-9a-fA-F]{0,64}$" v))
+
 (define (node-quantity->number who what v)
   (cond
-    [(node-string? #px"^0x(?=[0-9a-fA-F])(?>0*)[0-9a-fA-F]{0,64}$" v)
-     (string->number (regexp-replace #px"^0x0*(?=.)" v "") 16)]
+    [(node-quantity? v) (string->number (regexp-replace #px"^0x0*(?=.)" v "") 16)]
     [else (raise-node-malformed who what v)]))
+
+(define (node-natural who what v bits)
+  (define n (node-quantity->number who what v))
+  (if (< n (expt 2 bits)) n (raise-node-malformed who what v)))
 
 (define (node-address->string who what v)
   (cond
@@ -41,19 +50,3 @@
   (cond
     [(node-string? #px"^0x[0-9a-fA-F]{64}$" v) (string-downcase v)]
     [else (raise-node-malformed who what v)]))
-
-;; A field the node leaves out is read as 'null.
-(define (node-optional reader who what v)
-  (if (eq? v 'null) #f (reader who what v)))
-
-(define (status->boolean v malformed)
-  (cond
-    [(equal? v "0x1") #t]
-    [(equal? v "0x0") #f]
-    [else (malformed v)]))
-
-(define (node-status->boolean who what v)
-  (status->boolean v (lambda (v) (raise-node-malformed who what v))))
-
-(define (receipt-status->boolean who v)
-  (status->boolean v (lambda (v) (raise-node-malformed who "receipt status" v #:origin ""))))
