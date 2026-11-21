@@ -1,0 +1,86 @@
+#lang racket/base
+
+(module+ test
+  (require rackunit
+           "helpers/manual.rkt")
+
+  (define blocks
+    `(([(define key
+          (hex-string->secret-key
+           "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"))
+        (void)]
+       [(define recipient "0x70997970C51812dc3A010C7d01b50e0d17dc79C8") (void)]
+       [(define tx
+          (eip1559-transaction #:chain-id 31337
+                               #:nonce 0
+                               #:max-priority-fee-per-gas (gwei->wei 2)
+                               #:max-fee-per-gas (gwei->wei 30)
+                               #:gas-limit 21000
+                               #:to recipient
+                               #:value (ether->wei "1.5")))
+        (void)]
+       [(define signed (sign-transaction key tx)) (void)]
+       [(bytes->hex-string (signed-transaction->bytes signed))
+        (value ,(string-append
+                 "0x02f875827a698084773594008506fc23ac008252089470997970c51812dc3a010c7d01b50e0d"
+                 "17dc79c88814d1120d7b16000080c001a0e4283c98410a9ee00d296ef6d31b47e6326541bf89e1"
+                 "4640e3ff09b145517165a070e1e6a5e2a7b71af2ff6278becbe8de276a30f350ea156b43867875"
+                 "1338171f"))]
+       [(signed-transaction-hash signed)
+        (value "0x6e6196f107bb02ceffd0db99a2c3be3053f8d1917061e67f88c7843aa77833e2")])
+      ([(define parsed (bytes->signed-transaction (signed-transaction->bytes signed))) (void)]
+       [(signed-transaction-sender parsed) (value "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")]
+       [(equal? parsed signed) (value #t)]
+       [(transaction-value (signed-transaction-transaction parsed)) (value 1500000000000000000)]
+       [(bytes->signed-transaction (bytes 3))
+        (raises "bytes->signed-transaction: not a transaction: type 3 is not supported")])
+      ([(define eip-155
+          (legacy-transaction #:chain-id 1
+                              #:nonce 9
+                              #:gas-price (gwei->wei 20)
+                              #:gas-limit 21000
+                              #:to "0x3535353535353535353535353535353535353535"
+                              #:value (ether->wei 1)))
+        (void)]
+       [eip-155 (prints "#<legacy-transaction chain-id 1 nonce 9>")])
+      ([(eip1559-transaction #:chain-id 1 #:nonce 0
+                             #:max-priority-fee-per-gas 2 #:max-fee-per-gas 1
+                             #:gas-limit 21000 #:to #f)
+        (blames eip1559-transaction)])
+      ([(transaction-to eip-155) (value "0x3535353535353535353535353535353535353535")]
+       [(transaction-chain-id eip-155) (value 1)])
+      ([(bytes->hex-string (transaction->bytes eip-155))
+        (value ,(string-append
+                 "0xec098504a817c800825208943535353535353535353535353535353535353535880de0b6b3a7"
+                 "64000080018080"))]
+       [(bytes->hex-string
+         (transaction->bytes
+          (legacy-transaction #:chain-id #f #:nonce 9 #:gas-price (gwei->wei 20)
+                              #:gas-limit 21000 #:to #f)))
+        (value "0xcd098504a817c800825208808080")])
+      ([(bytes->hex-string (transaction-signing-hash eip-155))
+        (value "0xdaf5a779ae972f972197303d7b574746c7ef83eadac0f2791ad23db92e4c8e53")])
+      ([(define eip-155-key
+          (hex-string->secret-key
+           "0x4646464646464646464646464646464646464646464646464646464646464646"))
+        (void)]
+       [(define eip-155-signed (sign-transaction eip-155-key eip-155)) (void)]
+       [(signed-transaction-hash eip-155-signed)
+        (value "0x33469b22e9f636356c4160a87eb19df52b7412e8eac32a4a55ffe88ea8350788")])
+      ([(equal? (signed-transaction tx (sign-digest key (transaction-signing-hash tx)))
+                (sign-transaction key tx))
+        (value #t)])
+      ([(define raw (signed-transaction->bytes eip-155-signed)) (void)]
+       [(signed-transaction-sender (bytes->signed-transaction raw))
+        (value "0x9d8A62f656a8d1615C1294fd71e9CFb3E4855A4F")]
+       [(bytes->signed-transaction (bytes))
+        (raises "bytes->signed-transaction: not a transaction: no bytes")]
+       [(bytes->signed-transaction (bytes #xb8))
+        (raises ,(string-append "bytes->signed-transaction: not a transaction: "
+                                "first byte 0xb8 is neither a type nor a list"))]
+       [(bytes->signed-transaction (subbytes raw 0 100))
+        (raises ,(string-append "bytes->signed-transaction: input too short: "
+                                "110 bytes needed, 100 bytes left\n  offset: 0"))])))
+
+  (test-case "M1: the manual's transaction examples give what the manual shows"
+    (check-manual-blocks blocks)))

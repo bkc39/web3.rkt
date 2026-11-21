@@ -19,9 +19,9 @@
          "rpc.rkt"
          "private/abi-json.rkt"
          "private/bindings.rkt"
+         "private/contract-call.rkt"
          "private/exn.rkt"
          (only-in "private/hex.rkt" hex-data-string?)
-         "private/transaction.rkt"
          "private/who.rkt")
 
 (define-syntax-parse-rule (transaction->* (required:expr ...) (optional ...) result:expr)

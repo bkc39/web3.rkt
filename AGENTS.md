@@ -14,16 +14,17 @@ bezzle, which pin it as a flake input.
 | `eth.rkt` | `web3_*`, `net_*`, `eth_*` endpoints, receipts |
 | `abi.rkt` | the contract ABI: encoders, decoders, selectors, reverts; an `internal` submodule of entry points that take the caller's `who` |
 | `contract.rkt` | deploying, calls and sends, contract instances, define-contract, contract addresses; an `internal` submodule of entry points that take the caller's `who` |
-| `private/transaction.rkt` | the calls, sends, estimates and deploys `contract.rkt` and bound procedures run, under their caller's `who` |
+| `private/contract-call.rkt` | the calls, sends, estimates and deploys `contract.rkt` and bound procedures run, under their caller's `who` |
 | `private/bindings.rkt` | `define-contract` and `contract-bindings-out`, and the procedures they bind |
 | `private/define-contract.rkt` | define-contract's expansion-time half; reads JSON at phase 1, never keccak |
 | `private/binding-rules.rkt` | the keywords a bound procedure accepts and the messages for what it refuses, shared by the expansion-time checks and the procedures |
 | `private/abi-json.rkt` | reading JSON ABIs and artifacts from ports and files |
 | `address.rkt` | EIP-55 checksums; requires only `racket/base` libraries, `keccak` and `abi/type.rkt`; a `private` submodule, which also requires `private/hex.rkt`, holds `digest->address`, the address in the last 20 bytes of a hash |
-| `account.rkt` | secret keys (libsecp256k1's), addresses, `sign-digest`, `recover-address`, signatures and their 65 bytes; every procedure under `opaque->`, the constructor too: `signature` is a match expander that, as an expression, is the checked constructor, so the struct cannot be extended or copied around it; no network, JSON or node modules; a `private` submodule holds `recoverable->signature` |
+| `account.rkt` | secret keys (libsecp256k1's), addresses, `sign-digest`, `recover-address`, signatures and their 65 bytes; every procedure under `opaque->`, the constructor too: `signature` is a match expander that, as an expression, is the checked constructor, so the struct cannot be extended or copied around it; no network, JSON or node modules; a `private` submodule holds `recoverable->signature` and `sign-digest/who` |
 | `rlp.rkt` | RLP: `rlp-encode`, strict `rlp-decode`, scalars; an `internal` submodule of entry points that take the caller's `who`; requires only `racket/base` libraries and `private/exn`, `hex`, `who` |
 | `units.rkt` | amounts: decimal strings and exact numbers in wei, gwei, ether or a token's decimals, and back; requires only `racket/base` libraries and `private/exn.rkt` |
-| `private/opaque.rkt` | `opaque/c` and `opaque->`, contracts whose errors name the kind of value, never the value; copied from libsecp256k1, which does not export them, except `web3-kinds`, the kinds only web3 has |
+| `transaction.rkt` | legacy, EIP-2930 and EIP-1559 transactions: values, encodings, signing, strict parsing; an `internal` submodule holds the parser under the caller's `who`, its reasons and the wire field table, none of them public names; no network or JSON modules |
+| `private/opaque.rkt` | `opaque/c` and `opaque->`, contracts whose errors name the kind of value, never the value; copied from libsecp256k1, which does not export them, except `web3-kinds`, the kinds only web3 has, and `secret-key/c`, shared by `account.rkt` and `transaction.rkt` |
 | `private/signature.rkt` | the unchecked `signature` struct, its printer and its 65 bytes, shared by `account.rkt`, which exports it under contracts, and `private/opaque.rkt` |
 | `abi/type.rkt` | ABI types, signatures and value checks; phase-1 safe, so it requires only `racket/base` libraries and `private/exn.rkt`; a `private` submodule holds the reader and contracts other modules share |
 | `abi/event-type.rkt` | event descriptions (`abi-event`, string and s-expression forms); phase-1 safe like `abi/type.rkt`, plus `private/who.rkt`; a `private` submodule holds the readers under their caller's `who` |
@@ -35,7 +36,7 @@ bezzle, which pin it as a flake input.
 | `private/abi-decode.rkt` | the decoder core and its reasons; `abi.rkt` puts contracts on it |
 | `private/abi-item.rkt` | ABI item structs and their string and s-expression readers under the caller's `who`; phase-1 safe; `abi/description.rkt` puts contracts on it |
 | `private/hex.rkt` | unchecked conversions between bytes, hex strings and naturals; callers check their input |
-| `private/exn.rkt` | the exception structs (`exn:fail:web3`, `…:rpc`, `…:rpc:revert`, `…:transaction`, `…:abi`, `…:abi:type`, `…:abi:value`, `…:abi:decode`, `…:key`, `…:rlp`, `…:signature`, `…:units`); racket/base only |
+| `private/exn.rkt` | the exception structs (`exn:fail:web3`, `…:rpc`, `…:rpc:revert`, `…:transaction`, `…:abi`, `…:abi:type`, `…:abi:value`, `…:abi:decode`, `…:key`, `…:rlp`, `…:raw-transaction`, `…:signature`, `…:units`); racket/base only |
 | `private/node.rkt` | checked conversions of node data (hex, quantities, addresses, hashes, receipt status, optional fields); no JSON or transport modules |
 | `private/who.rkt` | `define/who`, which defines `name` and `name/who`, the same procedure taking the `who` its messages start with |
 | `anvil.rkt` | anvil's methods and process management |

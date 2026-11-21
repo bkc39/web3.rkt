@@ -27,8 +27,9 @@ node.  `(show expr)` prints an expression and its value.
 | `09-accounts.rkt` | a random key, its address, signing a digest, recovering the signer |
 | `10-rlp.rkt` | encoding and decoding RLP, scalars, the RLP behind CREATE addresses, refusing non-canonical input |
 | `11-units.rkt` | wei, gwei and ether amounts from decimal strings and back, a token's decimals, refused amounts |
+| `12-transactions.rkt` | legacy, EIP-2930 and EIP-1559 transactions signed offline, their raw bytes, hashes and recovered senders, a refused truncation |
 
-09, 10 and 11 are programs: `racket examples/NN-name.rkt` runs its `main` and needs no node.
+09, 10, 11 and 12 are programs: `racket examples/NN-name.rkt` runs its `main` and needs no node.
 
 `contracts/` holds the Solidity the examples deploy (`Token.sol`,
 `Counter.sol`, `Events.sol`); `contracts/out/` is its compiled form,
