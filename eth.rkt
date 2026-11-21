@@ -2,6 +2,8 @@
 
 (require racket/contract
          (only-in racket/match match)
+         "eth/block.rkt"
+         (only-in (submod "eth/block.rkt" internal) jsexpr->block-of)
          "eth/log.rkt"
          "eth/receipt.rkt"
          "eth/transaction-info.rkt"
@@ -24,7 +26,7 @@
          "private/who.rkt"
          "rpc.rkt")
 
-(provide (all-from-out "eth/log.rkt" "eth/receipt.rkt" "eth/transaction-info.rkt")
+(provide (all-from-out "eth/block.rkt" "eth/log.rkt" "eth/receipt.rkt" "eth/transaction-info.rkt")
          block-param/c
          block-param->string
          reward-percentiles/c
@@ -159,8 +161,10 @@
 (define-jsonrpc-endpoint eth_getCode
   (-> string? [block-param/c block-param->string] hex-string?))
 (define-jsonrpc-endpoint eth_getBlockByNumber
-  (-> [block-param/c block-param->string] boolean? (or/c 'null hash?)))
-(define-jsonrpc-endpoint eth_getBlockByHash (-> hex-string? boolean? (or/c 'null hash?)))
+  (-> [block-param/c block-param->string] boolean? (or/c #f block?))
+  #:result-transform/arguments (nullable jsexpr->block-of "eth_getBlockByNumber" hash?))
+(define-jsonrpc-endpoint eth_getBlockByHash (-> hex-string? boolean? (or/c #f block?))
+  #:result-transform/arguments (nullable jsexpr->block-of "eth_getBlockByHash" hash?))
 (define-jsonrpc-endpoint eth_getBlockReceipts
   (-> [block-param/c block-param->string] (or/c #f (listof receipt?)))
   #:result-transform (nullable read-receipts "eth_getBlockReceipts" list?))

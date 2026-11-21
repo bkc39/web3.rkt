@@ -7,10 +7,12 @@
            (only-in racket/string string-join)
            rackunit
            (only-in web3/address checksum-address?)
+           (only-in web3/eth/block jsexpr->block jsexpr->withdrawal withdrawal->jsexpr)
+           (only-in (submod web3/eth/block internal) block-fields withdrawal-fields)
            (only-in web3/eth/log jsexpr->log log->jsexpr)
            (only-in (submod web3/eth/log internal) log-fields)
            (only-in web3/eth/receipt jsexpr->receipt)
-           (only-in web3/eth/transaction-info jsexpr->transaction-info)
+           (only-in web3/eth/transaction-info jsexpr->transaction-info transaction-info->jsexpr)
            (only-in (submod web3/eth/transaction-info internal) transaction-info-fields)
            (only-in (submod web3/eth/receipt internal) receipt-fields)
            (only-in web3/rpc exn:fail:web3?)
@@ -90,6 +92,17 @@
     (define json (make-list (random 4 prng) log-json))
     (list json (lambda (v) (equal? (map log->jsexpr v) json))))
 
+  (define (withdrawals-sample prng)
+    (define json (make-list (random 4 prng) withdrawal-json))
+    (list json (lambda (v) (equal? (map withdrawal->jsexpr v) json))))
+
+  (define (block-transactions-sample prng)
+    (define size (random 4 prng))
+    (if (zero? (random 2 prng))
+        ((hashes-sample size) prng)
+        (let ([json (make-list size transaction-info-json/0)])
+          (list json (lambda (v) (equal? (map transaction-info->jsexpr v) json))))))
+
   (define samples
     (hash 'uint64 (natural-sample 64)
           'lenient-uint64 lenient-sample
@@ -104,6 +117,9 @@
           '(list hash 4) (hashes-sample 4)
           '(list hash +inf.0) (hashes-sample 6)
           'access-list access-list-sample
+          '(fixed-data 8) (data-sample 8)
+          'block-transactions block-transactions-sample
+          '(list (record withdrawal?) +inf.0) withdrawals-sample
           '(list (record log?) +inf.0) logs-sample))
 
   (define hostiles
@@ -124,7 +140,13 @@
                             (,(hasheq 'address "0x12" 'storageKeys '()))
                             (,(hasheq 'address (hex (make-bytes 20 1)) 'storageKeys '("0x12"))))
           '(list (record log?) +inf.0) `(42 "0xzz" (1) "0x" #t (,log-json 42)
-                                            (,(hash-set log-json 'data "0x1")))))
+                                            (,(hash-set log-json 'data "0x1")))
+          '(fixed-data 8) `(42 "0xzz" (1) "0x" #t ,(hex (make-bytes 7 0)) ,(hex (make-bytes 9 0)))
+          'block-transactions `(42 "0xzz" (1) "0x" #t ("0x12") (42)
+                                   (,(hex (make-bytes 32 0)) ,transaction-info-json/0)
+                                   (,(hash-set transaction-info-json/0 'gas "zz")))
+          '(list (record withdrawal?) +inf.0) `(42 "0xzz" (1) "0x" #t (,withdrawal-json 42)
+                                                   (,(hash-set withdrawal-json 'amount "zz")))))
 
   (define (kind-entry table kind)
     (hash-ref table (field-kind-name kind)
@@ -138,7 +160,9 @@
                ,(hash-set receipt-json 'root (hash-ref root-receipt-json 'root))]
       [log ,jsexpr->log ,log-fields ,log-json]
       [transaction-info ,jsexpr->transaction-info ,transaction-info-fields
-                        ,transaction-info-json/1]))
+                        ,transaction-info-json/1]
+      [block ,jsexpr->block ,block-fields ,block-json]
+      [withdrawal ,jsexpr->withdrawal ,withdrawal-fields ,withdrawal-json]))
 
   (define nouns
     (hasheq 'transaction-info "transaction"))
@@ -206,7 +230,40 @@
        (v "transaction v")
        (y-parity "transaction y parity")
        (r "transaction r")
-       (s "transaction s"))))
+       (s "transaction s"))
+     'block
+     '((hash "block hash")
+       (parent-hash "block parent hash")
+       (sha3-uncles "block sha3 uncles")
+       (miner "block miner")
+       (state-root "block state root")
+       (transactions-root "block transactions root")
+       (receipts-root "block receipts root")
+       (logs-bloom "block logs bloom")
+       (difficulty "block difficulty")
+       (number "block number")
+       (gas-limit "block gas limit")
+       (gas-used "block gas used")
+       (timestamp "block timestamp")
+       (extra-data "block extra data")
+       (mix-hash "block mix hash")
+       (nonce "block nonce")
+       (size "block size")
+       (base-fee-per-gas "block base fee per gas")
+       (withdrawals-root "block withdrawals root")
+       (withdrawals "block withdrawals|withdrawal(?: [a-z ]+)? in block withdrawals [0-9]+")
+       (blob-gas-used "block blob gas used")
+       (excess-blob-gas "block excess blob gas")
+       (parent-beacon-block-root "block parent beacon block root")
+       (requests-hash "block requests hash")
+       (uncles "block uncles(?: [0-9]+)?")
+       (transactions
+        "block transactions(?: [0-9]+)?|transaction(?: [a-z ]+)? in block transactions [0-9]+"))
+     'withdrawal
+     '((index "withdrawal index")
+       (validator-index "withdrawal validator index")
+       (address "withdrawal address")
+       (amount "withdrawal amount"))))
 
   (define (field-message noun field)
     (match (assq field (hash-ref messages noun))

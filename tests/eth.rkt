@@ -6,11 +6,11 @@
            (only-in racket/match match-define)
            rackunit
            web3
-           (only-in "helpers/results.rkt" receipt-json transaction-info-json/0)
+           (only-in "helpers/results.rkt" full-block-json receipt-json transaction-info-json/0)
            (only-in "util.rkt" check-blames-here filled-hash max-word raised))
 
   (define addr "0x00000000000000000000000000000000000c0de0")
-  (define a-block (hasheq 'number "0x10" 'hash (filled-hash #\b) 'transactions '()))
+  (define a-block (jsexpr->block full-block-json))
   (define a-transaction (jsexpr->transaction-info transaction-info-json/0))
   (define a-receipt (jsexpr->receipt receipt-json))
   (define receipt-hash (hash-ref receipt-json 'transactionHash))
@@ -32,7 +32,7 @@
       [,eth-fee-history (1 "latest" ()) "eth_feeHistory" ("0x1" "latest" ()) ,history ,history]
       [,eth-get-proof (,addr (0 255) "latest")
                       "eth_getProof" (,addr (,zero-word ,word-255) "latest") ,a-proof ,a-proof]
-      [,eth-get-block-by-hash ("0xbb" #t) "eth_getBlockByHash" ("0xbb" #t) ,a-block ,a-block]
+      [,eth-get-block-by-hash ("0xbb" #t) "eth_getBlockByHash" ("0xbb" #t) ,full-block-json ,a-block]
       [,eth-get-block-receipts (16) "eth_getBlockReceipts" ("0x10") (,receipt-json) (,a-receipt)]
       [,eth-get-transaction-receipt (,receipt-hash) "eth_getTransactionReceipt" (,receipt-hash)
                                     ,receipt-json ,a-receipt]
@@ -80,19 +80,20 @@
       (match-define (list result _) (call-mocked procedure arguments method answer))
       (check-equal? result expected method)))
 
-  (test-case "E3: a missing typed object is #f, and any other missing object 'null"
+  (test-case "E3: a missing typed object is #f, and a missing raw transaction 'null"
     (for ([row (in-list `([,eth-get-block-receipts ("latest") "eth_getBlockReceipts" null]
                           [,eth-get-transaction-receipt ("0xaa") "eth_getTransactionReceipt" null]
                           [,eth-get-transaction-by-hash ("0xaa") "eth_getTransactionByHash" null]
                           [,eth-get-transaction-by-block-hash-and-index
                            ("0xbb" 0) "eth_getTransactionByBlockHashAndIndex" null]
                           [,eth-get-transaction-by-block-number-and-index
-                           (16 0) "eth_getTransactionByBlockNumberAndIndex" null]))])
+                           (16 0) "eth_getTransactionByBlockNumberAndIndex" null]
+                          [,eth-get-block-by-hash ("0xbb" #f) "eth_getBlockByHash" null]
+                          [,eth-get-block-by-number ("latest" #t) "eth_getBlockByNumber" null]))])
       (match-define (list procedure arguments method answer) row)
       (match-define (list result _) (call-mocked procedure arguments method answer))
       (check-false result method))
-    (for ([row (in-list `([,eth-get-block-by-hash ("0xbb" #f) "eth_getBlockByHash" null]
-                          [,eth-get-raw-transaction-by-hash ("0xaa") "eth_getRawTransactionByHash"
+    (for ([row (in-list `([,eth-get-raw-transaction-by-hash ("0xaa") "eth_getRawTransactionByHash"
                                                             null]
                           [,eth-get-raw-transaction-by-hash ("0xaa") "eth_getRawTransactionByHash"
                                                             "0x"]))])

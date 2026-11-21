@@ -203,5 +203,6 @@
                                    transaction-info->jsexpr
                                    transaction-info->signed-transaction)))])
       (check-not-false (memq name names) (~a name))
-      (check-regexp-match (regexp (~a "@defproc\\[\\(" (regexp-quote (~a name)) " ")) manual
-                          (~a name)))))
+      (check-not-false (regexp-match? (regexp (~a "@defproc\\[\\(" (regexp-quote (~a name)) " "))
+                                      manual)
+                       (~a name)))))
