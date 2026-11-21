@@ -36,7 +36,9 @@ bezzle, which pin it as a flake input.
 | `abi/event-type.rkt` | event descriptions (`abi-event`, string and s-expression forms); phase-1 safe like `abi/type.rkt`, plus `private/who.rkt`; a `private` submodule holds the readers under their caller's `who` |
 | `abi/description.rkt` | ABI items and contract descriptions from strings, s-expressions and JSON; phase-1 safe, as abi/type.rkt |
 | `abi/event.rkt` | event topics, `event-topics`, decoding logs into `event-log`s; an `internal` submodule of entry points that take the caller's `who` |
-| `eth/log.rkt` | the `log` struct, read from and printed like the node's JSON |
+| `eth/log.rkt` | logs, a `define-node-record` table (the struct is `log-struct`; nothing binds `log`); an `internal` submodule holds the reader under the caller's `who`, the table and what `abi/event.rkt` extends |
+| `private/record.rkt` | `define-node-record`: one field table per node object, from which its struct, accessors, contracts, reader, printer hook and `T-fields` come; the field kinds, each a reader under the caller's `who` and a contract |
+| `private/field-contracts.rkt` | the field contracts records and transactions share: hashes, `to`, `uint64/c`, `uint256/c`, 32 bytes, access lists |
 | `event.rkt` | `log-filter`, `get-logs` (chunks, halving on a refused range), `receipt-logs` |
 | `abi/vectors.rkt` | conformance vectors, data in `abi/vectors/encode.rktd` (regenerate with `racket tests/generate-abi-vectors.rkt`) and the hand-written `abi/vectors/decode.rktd` |
 | `private/abi-decode.rkt` | the decoder core and its reasons; `abi.rkt` puts contracts on it |

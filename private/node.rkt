@@ -7,8 +7,10 @@
 (provide node-address->string
          node-data->bytes
          node-hash->string
+         node-natural
          node-optional
          node-quantity->number
+         node-quantity?
          node-status->boolean
          raise-node-malformed
          receipt-status->boolean)
@@ -26,11 +28,17 @@
     [else (raise-node-malformed who what v)]))
 
 ;; No Ethereum quantity has more than 64 significant hex digits; a longer one is refused unread.
+(define (node-quantity? v)
+  (node-string? #px"^0x(?=[0-9a-fA-F])(?>0*)[0-9a-fA-F]{0,64}$" v))
+
 (define (node-quantity->number who what v)
   (cond
-    [(node-string? #px"^0x(?=[0-9a-fA-F])(?>0*)[0-9a-fA-F]{0,64}$" v)
-     (string->number (regexp-replace #px"^0x0*(?=.)" v "") 16)]
+    [(node-quantity? v) (string->number (regexp-replace #px"^0x0*(?=.)" v "") 16)]
     [else (raise-node-malformed who what v)]))
+
+(define (node-natural who what v bits)
+  (define n (node-quantity->number who what v))
+  (if (< n (expt 2 bits)) n (raise-node-malformed who what v)))
 
 (define (node-address->string who what v)
   (cond

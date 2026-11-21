@@ -2787,18 +2787,22 @@ Reading the logs contracts emit.  Also provides everything in
 Recognizes logs.  A log prints with its address, position and
 abbreviated topics.}
 
-@deftogether[(@defproc[(log-address [l log?]) string?]
-              @defproc[(log-topics [l log?]) (listof string?)]
+@deftogether[(@defproc[(log-address [l log?]) checksum-address?]
+              @defproc[(log-topics [l log?])
+                       (and/c (listof (and/c string? #px"^0x[0-9a-f]{64}$"))
+                              (property/c length (<=/c 4)))]
               @defproc[(log-data [l log?]) bytes?]
-              @defproc[(log-block-number [l log?]) (or/c #f exact-nonnegative-integer?)]
-              @defproc[(log-block-hash [l log?]) (or/c #f string?)]
-              @defproc[(log-block-timestamp [l log?]) (or/c #f exact-nonnegative-integer?)]
-              @defproc[(log-transaction-hash [l log?]) (or/c #f string?)]
-              @defproc[(log-transaction-index [l log?]) (or/c #f exact-nonnegative-integer?)]
-              @defproc[(log-index [l log?]) (or/c #f exact-nonnegative-integer?)]
+              @defproc[(log-block-number [l log?]) (or/c #f uint64/c)]
+              @defproc[(log-block-hash [l log?]) (or/c #f (and/c string? #px"^0x[0-9a-f]{64}$"))]
+              @defproc[(log-block-timestamp [l log?]) (or/c #f uint64/c)]
+              @defproc[(log-transaction-hash [l log?])
+                       (or/c #f (and/c string? #px"^0x[0-9a-f]{64}$"))]
+              @defproc[(log-transaction-index [l log?]) (or/c #f uint64/c)]
+              @defproc[(log-index [l log?]) (or/c #f uint64/c)]
               @defproc[(log-removed? [l log?]) boolean?])]{
-The fields of a log: a checksummed address, up to four lowercase
-topics, the data, and its place in the chain, @racket[#f] while pending.
+The fields of a log, each the node's field of the same name in camelCase, except that
+@racket[log-index] reads @tt{logIndex}: a checksummed address, up to four lowercase topics, the
+data, and its place in the chain, @racket[#f] while pending or when the node leaves it out.
 @racket[log-removed?] is true for a log undone by a reorg.}
 
 @defproc[(jsexpr->log [v any/c]) log?]{

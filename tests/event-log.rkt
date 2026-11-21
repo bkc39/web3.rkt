@@ -9,6 +9,7 @@
            web3/eth/log
            (only-in web3/rpc exn:fail:web3?)
            (only-in web3/abi exn:fail:web3:abi?)
+           "modules.rkt"
            "util.rkt")
 
   (define address "0x5fbdb2315678afecb367f032d93f642f64180aa3")
@@ -103,6 +104,11 @@
      (format "~a" (jsexpr->log (hash-set* anvil-object 'blockNumber 'null 'logIndex 'null 'removed #t
                                           'topics '() 'data "0x01")))
      "#<log 0x5FbDB2315678afecb367f032d93F642f64180aa3 block pending index pending topics [] data 1 byte removed>"))
+
+  (test-case "no module binds log"
+    (check-not-false (memq 'log-address (exported-names 'web3/eth/log)))
+    (check-false (memq 'log (exported-names 'web3/eth/log)))
+    (check-false (memq 'log (exported-names 'web3))))
 
   (test-case "log accessors blame their caller"
     (check-blames-here (log-address 42))

@@ -11,7 +11,7 @@
          "type.rkt"
          (submod "type.rkt" private)
          "../eth/log.rkt"
-         (submod "../eth/log.rkt" internal)
+         (only-in (submod "../eth/log.rkt" internal) log->list log-struct log-tail)
          (only-in "../private/abi-decode.rkt" raise-abi-decode-error)
          "../private/exn.rkt"
          (only-in "../private/hex.rkt" bytes->hex hex->bytes)
@@ -174,7 +174,7 @@
            (string-join (map argument->string (abi-event-parameters event) arguments) ", ")
            (log-tail el)))
 
-(struct event-log log (event arguments)
+(struct event-log log-struct (event arguments)
   #:transparent
   #:property prop:custom-write write-event-log)
 
@@ -201,12 +201,7 @@
 ;; Offsets count bytes in the topics followed by the data.
 (define (decode-as who event l)
   (match-define (struct* abi-event ([parameters ps] [anonymous? anonymous?])) event)
-  (match-define (struct* log ([address address] [topics topics] [data data] [block-number block-number]
-                              [block-hash block-hash] [block-timestamp block-timestamp]
-                              [transaction-hash transaction-hash]
-                              [transaction-index transaction-index] [index index]
-                              [removed? removed?] [raw raw]))
-    l)
+  (match-define (struct* log-struct ([topics topics] [data data])) l)
   (define indexed (filter abi-event-parameter-indexed? ps))
   (define plain (filter-not abi-event-parameter-indexed? ps))
   (define bs (apply bytes-append (append (map hex->bytes topics) (list data))))
@@ -225,9 +220,8 @@
          (indexed-value p i)))
      (define plain-values
        (abi-decode/who who (map abi-event-parameter-type plain) bs (* 32 (length topics))))
-     (event-log address topics data block-number block-hash block-timestamp transaction-hash
-                transaction-index index removed? raw
-                event (interleave ps indexed-values plain-values))]))
+     (apply event-log
+            (append (log->list l) (list event (interleave ps indexed-values plain-values))))]))
 
 (define/who (decode-log who spec l)
   (decode-as who (spec->abi-event/who who spec) l))
