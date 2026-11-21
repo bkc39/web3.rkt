@@ -225,7 +225,7 @@ contracts on its arguments and a conversion of its result.  An error response ra
 @racketblock[
 (define-jsonrpc-endpoint eth_getUncleCountByBlockNumber
   (-> [exact-nonnegative-integer? number->hex-string] exact-nonnegative-integer?)
-  #:result-transform hex-string->number)
+  #:result-transform (lambda (_method result) (hex-string->number result)))
 
 (define (print-rpc-error e)
   (printf "refused ~a: ~a\n" (exn:fail:web3:rpc-code e) (exn:fail:web3:rpc-rpc-message e)))]
@@ -832,20 +832,20 @@ stands for the function wherever it appears, so it cannot be @racket[set!].
 
 Each argument is checked against its @racket[contract-expr], which blames the
 module of the call, and, when the spec gives a @racket[->param-expr], converted by it into
-the JSON parameter.  The response's @tt{result} goes through
-@racket[transform-expr] (default @racket[values]) and is checked against
-@racket[result-contract-expr], a flat contract.  A result that
+the JSON parameter.  @racket[transform-expr] is applied to the method's name, a string, and the
+response's @tt{result}; without one, the result is kept as it is.  The transformed result is
+checked against @racket[result-contract-expr], a flat contract.  A result that
 @racket[transform-expr] raises on or that fails the contract raises
 @racket[exn:fail:web3] with the message
 @racket["method: unexpected result value"], unless @racket[transform-expr] raises
 @racket[exn:fail:web3] itself, which is raised as it is.  With
-@racket[#:result-transform/arguments], @racket[transform-expr] is applied to the result and the
-function's positional arguments, before their conversion.
+@racket[#:result-transform/arguments], @racket[transform-expr] is also applied to the
+function's positional arguments, after the result and before their conversion.
 
 @racketblock[
 (define-jsonrpc-endpoint eth_getBalance
   (-> string? [block-param/c block-param->string] exact-nonnegative-integer?)
-  #:result-transform hex-string->number)
+  #:result-transform (lambda (_method result) (hex-string->number result)))
 ]}
 
 @subsection{HTTP Providers}
@@ -1059,7 +1059,8 @@ the node reports it, a decimal string.}
                           [#:provider provider (or/c #f provider?) (current-provider)])
          fee-history?]{
 Base fees and gas used ratios of the @racket[block-count] blocks ending at @racket[newest-block],
-and the priority fee paid at each of @racket[reward-percentiles]; see @racket[fee-history?].
+and the priority fee paid at each of @racket[reward-percentiles]; see @racket[fee-history?].  A
+reward row without one fee per percentile raises @racket[exn:fail:web3].
 
 @examples[#:eval eth-eval
           (define node
@@ -1139,7 +1140,8 @@ without code.}
          (or/c #f block?)])]{
 The block, or @racket[#f] for an unknown one.  Its @racket[block-transactions] are
 @racket[transaction-info?] values when @racket[full-transactions?] is true and hashes otherwise; a
-node that answers with the other form raises @racket[exn:fail:web3].}
+node that answers with the other form, or with a block whose number or hash is not the one asked
+for, raises @racket[exn:fail:web3].}
 
 @defproc[(eth-get-block-receipts [block block-param/c]
                                  [#:provider provider (or/c #f provider?) (current-provider)])
@@ -1158,7 +1160,8 @@ receipt the node gets wrong raises @racket[exn:fail:web3] naming its index and t
           [index exact-nonnegative-integer?]
           [#:provider provider (or/c #f provider?) (current-provider)])
          (or/c #f transaction-info?)])]{
-The transaction at @racket[index] in a block, or @racket[#f].}
+The transaction at @racket[index] in a block, or @racket[#f].  A transaction whose block hash,
+block number or index is not the one asked for raises @racket[exn:fail:web3].}
 
 @deftogether[(
 @defproc[(eth-get-block-transaction-count-by-hash
@@ -1419,12 +1422,13 @@ creation, the fields other types of transaction lack, and the type and signature
 send none.}
 
 @defproc[(transaction-info->signed-transaction [t transaction-info?]) signed-transaction?]{
-The signed transaction @racket[t] describes, for types 0, 1 and 2.  A legacy transaction's chain
-id comes from @tt{v}, and must agree with @tt{chainId} when the node sends both.  Raises
+The signed transaction @racket[t] describes, for types 0, 1 and 2.  A transaction without a type
+is legacy unless it has a field only typed transactions have.  A legacy transaction's chain id
+comes from @tt{v}, and must agree with @tt{chainId} when the node sends both.  Raises
 @racket[exn:fail:web3] for another type, for a field the type needs that is missing or out of
 range, and when the transaction's hash is not @racket[(transaction-info-hash t)] or its
-signature's sender is not @racket[(transaction-info-from t)]; a high @racket[s] raises
-@racket[exn:fail:web3:signature].
+signature's sender is not @racket[(transaction-info-from t)]; a high @racket[s] or a signature
+that recovers no address raises @racket[exn:fail:web3:signature].
 
 @examples[#:eval results-eval
           (define stx
@@ -1466,7 +1470,7 @@ Recognizes blocks.  A block prints with its number, hash and number of transacti
               @defproc[(block-transactions-root [b block?]) #,hash-string-contract]
               @defproc[(block-receipts-root [b block?]) #,hash-string-contract]
               @defproc[(block-logs-bloom [b block?])
-                       (and/c bytes? (property/c bytes-length (=/c 256)))]
+                       (or/c #f (and/c bytes? (property/c bytes-length (=/c 256))))]
               @defproc[(block-difficulty [b block?]) (or/c #f uint256/c)]
               @defproc[(block-number [b block?]) uint64/c]
               @defproc[(block-gas-limit [b block?]) uint64/c]
@@ -1489,9 +1493,9 @@ Recognizes blocks.  A block prints with its number, hash and number of transacti
               @defproc[(block-transactions [b block?])
                        (or/c (listof #,hash-string-contract) (listof transaction-info?))])]{
 The fields of a block, each the node's field of the same name in camelCase.  @racket[#f] is a
-field the node leaves out or sends as @tt{null}: the hash, miner and nonce of a pending block, the
-fields of forks after the block's, and fields some nodes do not send.  The transactions are
-hashes or @racket[transaction-info?] values, never both.}
+field the node leaves out or sends as @tt{null}: the hash, miner, nonce and logs bloom of a pending
+block, the fields of forks after the block's, and fields some nodes do not send.  A block without a
+number is refused.  The transactions are hashes or @racket[transaction-info?] values, never both.}
 
 @defproc[(block-transaction-hashes [b block?]) (listof #,hash-string-contract)]{
 The hashes of the block's transactions, in either form.}
@@ -1546,12 +1550,14 @@ covers.}
                        (or/c #f (listof (real-in 0 1)))])]{
 The fields of a fee history, each the node's field of the same name in camelCase: per block from
 the oldest, with one more base fee, for the block after the newest.  The rewards are the
-priority fees at each percentile asked for; @racket[#f] when none were asked for, and the blob
-fields @racket[#f] from nodes without blobs.}
+priority fees at each percentile asked for.  With no percentiles they are @racket['()] from anvil
+and @racket[#f] from a node that leaves them out; the blob fields are @racket[#f] from nodes
+without blobs.}
 
 @defproc[(jsexpr->fee-history [v any/c]) fee-history?]{
 A fee history from the node's JSON.  Raises @racket[exn:fail:web3], naming the field, for
-anything else, and for a number of base fees that is not one more than the number of blocks.}
+anything else, and for lists of the wrong length: one more base fee and blob base fee than there
+are blocks, and one reward row and blob gas ratio per block, or no rewards.}
 
 @defproc[(fee-history->jsexpr [h fee-history?]) hash?]{
 The node's object @racket[h] was read from.}

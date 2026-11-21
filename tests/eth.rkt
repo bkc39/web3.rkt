@@ -10,6 +10,7 @@
            (only-in "util.rkt" check-blames-here filled-hash max-word raised))
 
   (define addr "0x00000000000000000000000000000000000c0de0")
+  (define mined-hash (hash-ref full-block-json 'hash))
   (define a-block (jsexpr->block full-block-json))
   (define a-transaction (jsexpr->transaction-info transaction-info-json/0))
   (define a-receipt (jsexpr->receipt receipt-json))
@@ -19,8 +20,9 @@
   (define a-tx (hasheq 'from addr 'to addr 'data "0x"))
   (define a-query (hasheq 'address addr 'fromBlock "earliest"))
   (define history (hasheq 'oldestBlock "0x10" 'baseFeePerGas '("0x7" "0x7")
-                          'gasUsedRatio '(0.5) 'reward '(("0x1" "0x2"))))
+                          'gasUsedRatio '(0.5) 'reward '(("0x1" "0x2" "0x3"))))
   (define a-history (jsexpr->fee-history history))
+  (define unrewarded (hash-remove history 'reward))
   (define a-proof (hasheq 'address addr 'accountProof '("0xf8") 'storageProof '()))
   (define an-access-list (hasheq 'accessList '() 'gasUsed "0x5208"))
   (define zero-word (filled-hash #\0))
@@ -30,16 +32,18 @@
     `([,eth-blob-base-fee () "eth_blobBaseFee" () "0x1" 1]
       [,eth-fee-history (4 16 (1/2 25 75.5)) "eth_feeHistory" ("0x4" "0x10" (0.5 25 75.5))
                         ,history ,a-history]
-      [,eth-fee-history (1 "latest" ()) "eth_feeHistory" ("0x1" "latest" ()) ,history ,a-history]
+      [,eth-fee-history (1 "latest" ()) "eth_feeHistory" ("0x1" "latest" ()) ,unrewarded
+                        ,(jsexpr->fee-history unrewarded)]
       [,eth-get-proof (,addr (0 255) "latest")
                       "eth_getProof" (,addr (,zero-word ,word-255) "latest") ,a-proof ,a-proof]
-      [,eth-get-block-by-hash ("0xbb" #t) "eth_getBlockByHash" ("0xbb" #t) ,full-block-json ,a-block]
+      [,eth-get-block-by-hash (,mined-hash #t) "eth_getBlockByHash" (,mined-hash #t)
+                              ,full-block-json ,a-block]
       [,eth-get-block-receipts (16) "eth_getBlockReceipts" ("0x10") (,receipt-json) (,a-receipt)]
       [,eth-get-transaction-receipt (,receipt-hash) "eth_getTransactionReceipt" (,receipt-hash)
                                     ,receipt-json ,a-receipt]
       [,eth-get-block-receipts ("safe") "eth_getBlockReceipts" ("safe") () ()]
       [,eth-get-transaction-by-block-hash-and-index
-       ("0xbb" 2) "eth_getTransactionByBlockHashAndIndex" ("0xbb" "0x2")
+       (,mined-hash 0) "eth_getTransactionByBlockHashAndIndex" (,mined-hash "0x0")
        ,transaction-info-json/0 ,a-transaction]
       [,eth-get-transaction-by-block-number-and-index
        ("latest" 0) "eth_getTransactionByBlockNumberAndIndex" ("latest" "0x0")

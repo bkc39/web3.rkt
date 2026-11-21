@@ -341,40 +341,43 @@
 (define (quantity text)
   (hex-string->number text))
 
-(define (check-node-fields stx info)
-  (define tx (signed-transaction-transaction stx))
-  (match-define (signature r s y-parity) (signed-transaction-signature stx))
-  (define name (format "~s" stx))
-  (check-equal? (transaction-info->signed-transaction info) stx name)
-  (check-equal? (list (transaction-info-from info) (transaction-info-hash info)
-                      (transaction-info-type info) (transaction-info-nonce info)
-                      (transaction-info-chain-id info) (transaction-info-to info)
-                      (transaction-info-value info) (transaction-info-data info)
-                      (transaction-info-gas-limit info) (transaction-info-r info)
-                      (transaction-info-s info))
-                (list (signed-transaction-sender stx) (signed-transaction-hash stx)
-                      (transaction-type tx) (transaction-nonce tx) (transaction-chain-id tx)
-                      (transaction-to tx) (transaction-value tx) (transaction-data tx)
-                      (transaction-gas-limit tx) r s)
-                name)
-  (match (transaction-type tx)
-    [0
-     (check-equal? (transaction-info-gas-price info) (transaction-gas-price tx) name)
-     (check-equal? (transaction-info-v info)
-                   (match (transaction-chain-id tx)
-                     [#f (+ 27 y-parity)]
-                     [chain-id (+ 35 (* 2 chain-id) y-parity)])
-                   name)]
-    [type
-     (check-equal? (transaction-info-y-parity info) y-parity name)
-     (check-equal? (transaction-info-access-list info) (transaction-access-list tx) name)
-     (if (= type 1)
-         (check-equal? (transaction-info-gas-price info) (transaction-gas-price tx) name)
-         (check-equal? (list (transaction-info-max-fee-per-gas info)
-                             (transaction-info-max-priority-fee-per-gas info))
-                       (list (transaction-max-fee-per-gas tx)
-                             (transaction-max-priority-fee-per-gas tx))
-                       name))]))
+(define (legacy-v transaction y-parity)
+  (match (transaction-chain-id transaction)
+    [#f (+ 27 y-parity)]
+    [chain-id (+ 35 (* 2 chain-id) y-parity)]))
+
+(define (type-node-fields transaction y-parity)
+  (match (transaction-type transaction)
+    [0 `([,transaction-info-gas-price ,(transaction-gas-price transaction)]
+         [,transaction-info-v ,(legacy-v transaction y-parity)])]
+    [1 `([,transaction-info-gas-price ,(transaction-gas-price transaction)]
+         [,transaction-info-y-parity ,y-parity]
+         [,transaction-info-access-list ,(transaction-access-list transaction)])]
+    [2 `([,transaction-info-max-fee-per-gas ,(transaction-max-fee-per-gas transaction)]
+         [,transaction-info-max-priority-fee-per-gas
+          ,(transaction-max-priority-fee-per-gas transaction)]
+         [,transaction-info-y-parity ,y-parity]
+         [,transaction-info-access-list ,(transaction-access-list transaction)])]))
+
+(define (check-node-fields signed info)
+  (define transaction (signed-transaction-transaction signed))
+  (match-define (signature signature-r signature-s y-parity) (signed-transaction-signature signed))
+  (define name (format "~s" signed))
+  (check-equal? (transaction-info->signed-transaction info) signed name)
+  (for ([row (in-list `([,transaction-info-from ,(signed-transaction-sender signed)]
+                        [,transaction-info-hash ,(signed-transaction-hash signed)]
+                        [,transaction-info-type ,(transaction-type transaction)]
+                        [,transaction-info-nonce ,(transaction-nonce transaction)]
+                        [,transaction-info-chain-id ,(transaction-chain-id transaction)]
+                        [,transaction-info-to ,(transaction-to transaction)]
+                        [,transaction-info-value ,(transaction-value transaction)]
+                        [,transaction-info-data ,(transaction-data transaction)]
+                        [,transaction-info-gas-limit ,(transaction-gas-limit transaction)]
+                        [,transaction-info-r ,signature-r]
+                        [,transaction-info-s ,signature-s]
+                        ,@(type-node-fields transaction y-parity)))])
+    (match-define (list accessor expected) row)
+    (check-equal? (accessor info) expected (format "~a ~a" (object-name accessor) name))))
 
 (define (maybe prng kw make)
   (if (zero? (random 2 prng)) '() (list kw (make))))

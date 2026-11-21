@@ -2,15 +2,20 @@
 
 (module+ test
   (require racket/format
-           (only-in racket/file file->string)
-           (only-in racket/match match match-define)
+           (only-in racket/match match-define)
            rackunit
-           (only-in web3/eth eth-get-block-by-hash eth-get-block-by-number)
+           (only-in web3/eth
+                    eth-fee-history
+                    eth-get-block-by-hash
+                    eth-get-block-by-number
+                    eth-get-transaction-by-block-hash-and-index
+                    eth-get-transaction-by-block-number-and-index)
            web3/eth/block
            (only-in (submod web3/eth/block internal) block-fields fee-history-fields withdrawal-fields)
            (only-in web3/eth/transaction-info jsexpr->transaction-info transaction-info->jsexpr)
-           (only-in web3/private/record field-row-field field-row-provided?)
-           (only-in web3/rpc exn:fail:web3? mock-provider)
+           (only-in web3/rpc mock-provider)
+           (only-in "helpers/records.rkt"
+                    check-fields check-in-web3-and-manual message-of provided-accessors)
            (only-in "helpers/results.rkt"
                     block-json
                     fee-history-json
@@ -25,12 +30,7 @@
   (define transaction-hashes (hash-ref block-json 'transactions))
   (match-define (list first-hash _ ...) transaction-hashes)
   (define zero-hash (filled-hash #\0))
-
-  (define (message-of thunk)
-    (define e (raised thunk))
-    (check-pred exn:fail:web3? e)
-    (check-false (exn:fail:contract? e))
-    (and e (exn-message e)))
+  (define other-hash (filled-hash #\c))
 
   (define expected-block
     `([hash ,mined-hash]
@@ -66,14 +66,6 @@
       [address "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"]
       [amount 1000000000]))
 
-  (define (check-fields record prefix rows expected)
-    (for ([row (in-list (filter field-row-provided? rows))])
-      (define name (string->symbol (~a prefix "-" (field-row-field row))))
-      (match (assq (field-row-field row) expected)
-        [(list _ value)
-         (check-equal? ((dynamic-require 'web3 name) record) value (~a name))]
-        [#f (fail (~a "no expected value for " name))])))
-
   (test-case "B1: a node's block and withdrawal read into their fields"
     (define block (jsexpr->block block-json))
     (check-fields block "block" block-fields expected-block)
@@ -85,11 +77,14 @@
                                                               (list withdrawal-json))))
                   (list entry)))
 
-  (test-case "B4: a pending block has no hash, miner or nonce"
-    (define pending (jsexpr->block pending-block-json))
-    (check-equal? (map (lambda (field) (field pending)) (list block-hash block-miner block-nonce))
-                  '(#f #f #f))
-    (check-equal? (~a pending) "#<block 1 pending 3 transactions>"))
+  (test-case "B4: a pending block has no hash, miner, nonce or logs bloom"
+    (define pending (jsexpr->block (hash-set pending-block-json 'logsBloom 'null)))
+    (check-equal? (map (lambda (field) (field pending))
+                       (list block-hash block-miner block-nonce block-logs-bloom))
+                  '(#f #f #f #f))
+    (check-equal? (~a pending) "#<block 1 pending 3 transactions>")
+    (check-equal? (message-of (lambda () (jsexpr->block (hash-set block-json 'number 'null))))
+                  "jsexpr->block: malformed block number from the node: 'null"))
 
   (test-case "B5: a block's transactions are hashes or transactions, never both"
     (define hashes (jsexpr->block block-json))
@@ -136,6 +131,55 @@
                                                                  (hash-set block-json 'transactions '())))
                   (jsexpr->block (hash-set block-json 'transactions '()))))
 
+  (test-case "B9: a block is the one asked for, by number or by hash"
+    (check-equal? (message-of (lambda ()
+                                (eth-get-block-by-hash
+                                 other-hash #f #:provider (answering "eth_getBlockByHash" block-json))))
+                  (~a "eth_getBlockByHash: malformed block hash from the node: " (~s mined-hash)))
+    (check-equal? (message-of (lambda ()
+                                (eth-get-block-by-number
+                                 7 #f #:provider (answering "eth_getBlockByNumber" block-json))))
+                  "eth_getBlockByNumber: malformed block number from the node: 1")
+    (define shouted (string-append "0x" (string-upcase (substring mined-hash 2))))
+    (check-equal? (eth-get-block-by-hash shouted #f
+                                         #:provider (answering "eth_getBlockByHash" block-json))
+                  (jsexpr->block block-json))
+    (for ([asked (in-list '("latest" "earliest" "pending" "safe" "finalized"))])
+      (check-equal? (eth-get-block-by-number asked #f
+                                             #:provider (answering "eth_getBlockByNumber" block-json))
+                    (jsexpr->block block-json)
+                    asked))
+    (check-equal? (eth-get-block-by-hash other-hash #f
+                                         #:provider (answering "eth_getBlockByHash"
+                                                               pending-block-json))
+                  (jsexpr->block pending-block-json)))
+
+  (define in-block-hash (hash-ref transaction-info-json/0 'blockHash))
+
+  (test-case "B10: a transaction by block and index is the one asked for"
+    (define by-hash "eth_getTransactionByBlockHashAndIndex")
+    (define by-number "eth_getTransactionByBlockNumberAndIndex")
+    (check-equal? (eth-get-transaction-by-block-hash-and-index
+                   in-block-hash 0 #:provider (answering by-hash transaction-info-json/0))
+                  (jsexpr->transaction-info transaction-info-json/0))
+    (check-equal? (eth-get-transaction-by-block-number-and-index
+                   1 0 #:provider (answering by-number transaction-info-json/0))
+                  (jsexpr->transaction-info transaction-info-json/0))
+    (check-false (eth-get-transaction-by-block-number-and-index
+                  1 9 #:provider (answering by-number 'null)))
+    (check-equal? (message-of (lambda ()
+                                (eth-get-transaction-by-block-hash-and-index
+                                 other-hash 0 #:provider (answering by-hash transaction-info-json/0))))
+                  (~a by-hash ": malformed transaction block hash from the node: " (~s in-block-hash)))
+    (check-equal? (message-of (lambda ()
+                                (eth-get-transaction-by-block-number-and-index
+                                 5 0 #:provider (answering by-number transaction-info-json/0))))
+                  (~a by-number ": malformed transaction block number from the node: 1"))
+    (check-equal? (message-of (lambda ()
+                                (eth-get-transaction-by-block-number-and-index
+                                 "latest" 3 #:provider (answering by-number transaction-info-json/0))))
+                  (~a by-number ": malformed transaction transaction index from the node: 0")))
+
   (test-case "B7: a bad withdrawal names the withdrawal"
     (check-equal? (message-of (lambda ()
                                 (jsexpr->block
@@ -144,7 +188,7 @@
                                                  (hash-set withdrawal-json 'amount "zz"))))))
                   "jsexpr->block: malformed withdrawal amount in block withdrawals 1 from the node: \"zz\""))
 
-  (test-case "T6: blocks and withdrawals print in every mode"
+  (test-case "T6: blocks, withdrawals and fee histories print in every mode"
     (for ([row (in-list `([,(jsexpr->block block-json)
                            ,(~a "#<block 1 " mined-hash " 3 transactions>")]
                           [,(jsexpr->block (hash-set block-json 'transactions (list zero-hash)))
@@ -160,7 +204,7 @@
         (check-equal? (mode value) text)
         (check-equal? (mode (list value)) (if (eq? mode ~v) (~a "(list " text ")") (~a "(" text ")"))))))
 
-  (test-case "T6: block procedures blame their caller"
+  (test-case "T6: block, withdrawal and fee history procedures blame their caller"
     (check-blames-here (block-number 42))
     (check-blames-here (block->jsexpr (hasheq)))
     (check-blames-here (block-transaction-hashes block-json))
@@ -178,15 +222,26 @@
                   '(0 (1000000000 1000000000 875560834) (0.0 0.0022433333333333333)
                       ((0 0) (2000000000 29000000000)) (1 1 1) (0.0 0.0)))
     (check-eq? (fee-history->jsexpr history) fee-history-json)
-    (check-false (fee-history-reward (jsexpr->fee-history (hash-remove fee-history-json 'reward)))))
+    (check-false (fee-history-reward (jsexpr->fee-history (hash-remove fee-history-json 'reward))))
+    (check-equal? (fee-history-reward (jsexpr->fee-history (hash-set fee-history-json 'reward '())))
+                  '()))
 
-  (test-case "B8: a fee history has one more base fee than it has blocks"
-    (for ([base-fees (in-list '(("0x1" "0x1") ("0x1" "0x1" "0x1" "0x1")))])
-      (check-equal? (message-of (lambda ()
-                                  (jsexpr->fee-history
-                                   (hash-set fee-history-json 'baseFeePerGas base-fees))))
-                    (~a "jsexpr->fee-history: malformed fee history base fee per gas from the node: "
-                        (~e base-fees))))
+  (define wrong-lengths
+    '([baseFeePerGas ("0x1" "0x1") "base fee per gas"]
+      [baseFeePerGas ("0x1" "0x1" "0x1" "0x1") "base fee per gas"]
+      [reward (("0x1")) "reward"]
+      [reward (("0x1") ("0x1") ("0x1")) "reward"]
+      [baseFeePerBlobGas ("0x1" "0x1") "base fee per blob gas"]
+      [baseFeePerBlobGas ("0x1" "0x1" "0x1" "0x1") "base fee per blob gas"]
+      [blobGasUsedRatio (0.0) "blob gas used ratio"]
+      [blobGasUsedRatio (0.0 0.0 0.0) "blob gas used ratio"]))
+
+  (test-case "B8: a fee history's lists have one entry per block, and base fees one more"
+    (for ([row (in-list wrong-lengths)])
+      (match-define (list key entries what) row)
+      (check-equal? (message-of (lambda () (jsexpr->fee-history (hash-set fee-history-json key entries))))
+                    (~a "jsexpr->fee-history: malformed fee history " what " from the node: "
+                        (~e entries))))
     (for ([ratio (in-list '(1.5 -0.1))])
       (check-regexp-match #rx"^jsexpr->fee-history: malformed fee history gas used ratio 1 from"
                           (message-of (lambda ()
@@ -194,21 +249,39 @@
                                          (hash-set fee-history-json 'gasUsedRatio
                                                    (list 0.0 ratio))))))))
 
-  (test-case "every accessor the field tables provide is in web3 and the manual"
-    (define manual (file->string (collection-file-path "scribblings/web3.scrbl" "web3")))
+  (define (fee-history-answering json)
+    (answering "eth_feeHistory" json))
+
+  (test-case "B8: eth-fee-history has one reward per block and percentile asked for"
+    (check-equal? (eth-fee-history 2 "latest" '(25 75)
+                                   #:provider (fee-history-answering fee-history-json))
+                  (jsexpr->fee-history fee-history-json))
+    (for ([json (in-list (list (hash-remove fee-history-json 'reward)
+                               (hash-set fee-history-json 'reward '())
+                               (hash-set fee-history-json 'reward '(() ()))))])
+      (check-equal? (eth-fee-history 2 "latest" '() #:provider (fee-history-answering json))
+                    (jsexpr->fee-history json)))
+    (for ([row (in-list `([(25 50 75) ,fee-history-json]
+                          [(25) ,fee-history-json]
+                          [() ,fee-history-json]
+                          [(25 75) ,(hash-remove fee-history-json 'reward)]
+                          [(25 75) ,(hash-set fee-history-json 'reward '())]))])
+      (match-define (list percentiles json) row)
+      (check-equal? (message-of (lambda ()
+                                  (eth-fee-history 2 "latest" percentiles
+                                                   #:provider (fee-history-answering json))))
+                    (~a "eth_feeHistory: malformed fee history reward from the node: "
+                        (~e (hash-ref json 'reward 'null)))
+                    (~a percentiles))))
+
+  (test-case "every accessor the block, withdrawal and fee history tables provide is documented"
+    (check-in-web3-and-manual
+     (append (provided-accessors "block" block-fields)
+             (provided-accessors "withdrawal" withdrawal-fields)
+             (provided-accessors "fee-history" fee-history-fields)
+             '(block? jsexpr->block block->jsexpr block-transaction-hashes
+               withdrawal? jsexpr->withdrawal withdrawal->jsexpr
+               fee-history? jsexpr->fee-history fee-history->jsexpr)))
     (define names (exported-names 'web3))
-    (define (accessors prefix rows)
-      (for/list ([row (in-list (filter field-row-provided? rows))])
-        (string->symbol (~a prefix "-" (field-row-field row)))))
-    (for ([name (in-list (append (accessors "block" block-fields)
-                                 (accessors "withdrawal" withdrawal-fields)
-                                 (accessors "fee-history" fee-history-fields)
-                                 '(block? jsexpr->block block->jsexpr block-transaction-hashes
-                                   withdrawal? jsexpr->withdrawal withdrawal->jsexpr
-                                   fee-history? jsexpr->fee-history fee-history->jsexpr)))])
-      (check-not-false (memq name names) (~a name))
-      (check-not-false (regexp-match? (regexp (~a "@defproc\\[\\(" (regexp-quote (~a name)) " "))
-                                      manual)
-                       (~a name)))
     (for ([name (in-list (exported-names 'web3/eth/block))])
       (check-not-false (memq name names) (~a name)))))

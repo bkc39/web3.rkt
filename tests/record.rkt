@@ -10,13 +10,19 @@
            (only-in web3/eth/block
                     jsexpr->block jsexpr->fee-history jsexpr->withdrawal withdrawal->jsexpr)
            (only-in (submod web3/eth/block internal)
-                    block-fields fee-history-fields withdrawal-fields)
+                    block-fields
+                    block-noun
+                    fee-history-fields
+                    fee-history-noun
+                    withdrawal-fields
+                    withdrawal-noun)
            (only-in web3/eth/log jsexpr->log log->jsexpr)
-           (only-in (submod web3/eth/log internal) log-fields)
+           (only-in (submod web3/eth/log internal) log-fields log-noun)
            (only-in web3/eth/receipt jsexpr->receipt)
            (only-in web3/eth/transaction-info jsexpr->transaction-info transaction-info->jsexpr)
-           (only-in (submod web3/eth/transaction-info internal) transaction-info-fields)
-           (only-in (submod web3/eth/receipt internal) receipt-fields)
+           (only-in (submod web3/eth/transaction-info internal)
+                    transaction-info-fields transaction-info-noun)
+           (only-in (submod web3/eth/receipt internal) receipt-fields receipt-noun)
            (only-in web3/rpc exn:fail:web3?)
            web3/private/record
            "helpers/results.rkt"
@@ -138,7 +144,7 @@
           '(list (record withdrawal?) +inf.0) withdrawals-sample
           '(list quantity +inf.0) (list-sample 3 (natural-sample 256))
           '(list ratio +inf.0) (list-sample 2 ratio-sample)
-          '(list (list quantity +inf.0) +inf.0) (list-sample #f (list-sample #f (natural-sample 256)))
+          '(list (list quantity +inf.0) +inf.0) (list-sample 2 (list-sample #f (natural-sample 256)))
           '(list (record log?) +inf.0) logs-sample))
 
   (define hostiles
@@ -178,20 +184,17 @@
     (vector-ref (struct->vector record) (add1 index)))
 
   (define tables
-    `([receipt ,jsexpr->receipt ,receipt-fields
+    `([receipt ,receipt-noun ,jsexpr->receipt ,receipt-fields
                ,(hash-set receipt-json 'root (hash-ref root-receipt-json 'root))]
-      [log ,jsexpr->log ,log-fields ,log-json]
-      [transaction-info ,jsexpr->transaction-info ,transaction-info-fields
+      [log ,log-noun ,jsexpr->log ,log-fields ,log-json]
+      [transaction-info ,transaction-info-noun ,jsexpr->transaction-info ,transaction-info-fields
                         ,transaction-info-json/1]
-      [block ,jsexpr->block ,block-fields ,block-json]
-      [withdrawal ,jsexpr->withdrawal ,withdrawal-fields ,withdrawal-json]
-      [fee-history ,jsexpr->fee-history ,fee-history-fields ,fee-history-json]))
-
-  (define nouns
-    (hasheq 'transaction-info "transaction" 'fee-history "fee history"))
+      [block ,block-noun ,jsexpr->block ,block-fields ,block-json]
+      [withdrawal ,withdrawal-noun ,jsexpr->withdrawal ,withdrawal-fields ,withdrawal-json]
+      [fee-history ,fee-history-noun ,jsexpr->fee-history ,fee-history-fields ,fee-history-json]))
 
   (define (table-rows table)
-    (match-define (list _ _ rows _) table)
+    (match-define (list _ _ _ rows _) table)
     rows)
 
   (define (indexed-rows rows)
@@ -199,118 +202,30 @@
                [index (in-naturals)])
       (cons index row)))
 
-  (define messages
-    (hasheq
-     'receipt
-     '((transaction-hash "receipt transaction hash")
-       (transaction-index "receipt transaction index")
-       (block-hash "receipt block hash")
-       (block-number "receipt block number")
-       (from "receipt from")
-       (to "receipt to")
-       (type "receipt type")
-       (status "receipt status")
-       (root "receipt root")
-       (cumulative-gas-used "receipt cumulative gas used")
-       (gas-used "receipt gas used")
-       (effective-gas-price "receipt effective gas price")
-       (contract-address "receipt contract address")
-       (logs "receipt logs|log (?:data )?in receipt logs [0-9]+")
-       (logs-bloom "receipt logs bloom")
-       (blob-gas-used "receipt blob gas used")
-       (blob-gas-price "receipt blob gas price"))
-     'log
-     '((address "log address")
-       (topics "log topics(?: [0-9]+)?")
-       (data "log data")
-       (block-number "log block number")
-       (block-hash "log block hash")
-       (block-timestamp "log block timestamp")
-       (transaction-hash "log transaction hash")
-       (transaction-index "log transaction index")
-       (index "log index")
-       (removed? "log removed"))
-     'transaction-info
-     '((hash "transaction hash")
-       (block-hash "transaction block hash")
-       (block-number "transaction block number")
-       (block-timestamp "transaction block timestamp")
-       (transaction-index "transaction transaction index")
-       (from "transaction from")
-       (type "transaction type")
-       (chain-id "transaction chain id")
-       (nonce "transaction nonce")
-       (to "transaction to")
-       (value "transaction value")
-       (data "transaction data")
-       (gas-limit "transaction gas limit")
-       (gas-price "transaction gas price")
-       (max-priority-fee-per-gas "transaction max priority fee per gas")
-       (max-fee-per-gas "transaction max fee per gas")
-       (max-fee-per-blob-gas "transaction max fee per blob gas")
-       (access-list "transaction access list(?: [0-9]+(?: address| storage keys(?: [0-9]+)?)?)?")
-       (blob-versioned-hashes "transaction blob versioned hashes(?: [0-9]+)?")
-       (v "transaction v")
-       (y-parity "transaction y parity")
-       (r "transaction r")
-       (s "transaction s"))
-     'block
-     '((hash "block hash")
-       (parent-hash "block parent hash")
-       (sha3-uncles "block sha3 uncles")
-       (miner "block miner")
-       (state-root "block state root")
-       (transactions-root "block transactions root")
-       (receipts-root "block receipts root")
-       (logs-bloom "block logs bloom")
-       (difficulty "block difficulty")
-       (number "block number")
-       (gas-limit "block gas limit")
-       (gas-used "block gas used")
-       (timestamp "block timestamp")
-       (extra-data "block extra data")
-       (mix-hash "block mix hash")
-       (nonce "block nonce")
-       (size "block size")
-       (base-fee-per-gas "block base fee per gas")
-       (withdrawals-root "block withdrawals root")
-       (withdrawals "block withdrawals|withdrawal(?: [a-z ]+)? in block withdrawals [0-9]+")
-       (blob-gas-used "block blob gas used")
-       (excess-blob-gas "block excess blob gas")
-       (parent-beacon-block-root "block parent beacon block root")
-       (requests-hash "block requests hash")
-       (uncles "block uncles(?: [0-9]+)?")
-       (transactions
-        "block transactions(?: [0-9]+)?|transaction(?: [a-z ]+)? in block transactions [0-9]+"))
-     'withdrawal
-     '((index "withdrawal index")
-       (validator-index "withdrawal validator index")
-       (address "withdrawal address")
-       (amount "withdrawal amount"))
-     'fee-history
-     '((oldest-block "fee history oldest block")
-       (base-fee-per-gas "fee history base fee per gas(?: [0-9]+)?")
-       (gas-used-ratio "fee history gas used ratio(?: [0-9]+)?")
-       (reward "fee history reward(?: [0-9]+(?: [0-9]+)?)?")
-       (base-fee-per-blob-gas "fee history base fee per blob gas(?: [0-9]+)?")
-       (blob-gas-used-ratio "fee history blob gas used ratio(?: [0-9]+)?"))))
+  (define (field-words noun field)
+    (~a noun " " (regexp-replace* #rx"-" (regexp-replace #rx"[?]$" (~a field) "") " ")))
 
-  (define (field-message noun field)
-    (match (assq field (hash-ref messages noun))
-      [(list _ words) words]
-      [#f (error 'record "no message for ~a ~a" noun field)]))
+  (define (field-message noun row)
+    (define words (field-words noun (field-row-field row)))
+    (define within (~a "|[a-z ]+ in " words " [0-9]+"))
+    (match (field-kind-name (field-row-kind row))
+      [(list 'list (list 'record _) _) (~a words within)]
+      [(list 'list _ _) (~a words "(?: [0-9]+)*")]
+      ['block-transactions (~a words "(?: [0-9]+)?" within)]
+      ['access-list (~a words "(?: [0-9]+(?: address| storage keys(?: [0-9]+)?)?)?")]
+      [_ words]))
 
   (test-case "R2: every row reads its key with its kind"
     (define prng (seeded 41 42 43 44 45 46))
     (for* ([table (in-list tables)]
            [indexed (in-list (indexed-rows (table-rows table)))]
            [_ (in-range 20)])
-      (match-define (list noun reader _ base) table)
+      (match-define (list name _ reader _ base) table)
       (match-define (cons index (field-row field key kind mode _)) indexed)
-      (check-not-false (memq mode '(required optional default)) (~a noun " " field))
+      (check-not-false (memq mode '(required optional default)) (~a name " " field))
       (match-define (list json good?) ((kind-entry samples kind) prng))
       (define record (reader (hash-set base key json)))
-      (check-true (good? (field-value record index)) (~a noun " " field " " (~e json)))
+      (check-true (good? (field-value record index)) (~a name " " field " " (~e json)))
       (when (eq? mode 'optional)
         (check-false (field-value (reader (hash-remove base key)) index) (~a field))
         (check-false (field-value (reader (hash-set base key 'null)) index) (~a field)))))
@@ -325,26 +240,25 @@
   (test-case "R3: hostile fields raise exn:fail:web3 naming the field"
     (for* ([table (in-list tables)]
            [row (in-list (table-rows table))])
-      (match-define (list noun reader _ base) table)
+      (match-define (list name noun reader _ base) table)
       (match-define (field-row field key kind mode _) row)
       (define pattern
         (pregexp (format "^jsexpr->~a: malformed (?:~a) from the node: "
-                         noun (field-message noun field))))
+                         name (field-message noun row))))
       (define nulls (if (eq? mode 'optional) '() '(null)))
       (define removed (if (eq? mode 'required) (list (hash-remove base key)) '()))
       (for ([bad (in-list (append (for/list ([v (in-list (append (kind-entry hostiles kind) nulls))])
                                     (hash-set base key v))
                                   removed))])
-        (check-malformed (lambda () (reader bad)) pattern (~a noun " " field " " (~e bad))))))
+        (check-malformed (lambda () (reader bad)) pattern (~a name " " field " " (~e bad))))))
 
   (test-case "R3: a record is a JSON object"
     (for* ([table (in-list tables)]
            [v (in-list '(42 null ()))])
-      (match-define (list noun reader _ _) table)
+      (match-define (list name noun reader _ _) table)
       (check-malformed (lambda () (reader v))
-                       (pregexp (format "^jsexpr->~a: malformed ~a from the node: "
-                                        noun (hash-ref nouns noun noun)))
-                       (~a noun " " (~e v)))))
+                       (pregexp (format "^jsexpr->~a: malformed ~a from the node: " name noun))
+                       (~a name " " (~e v)))))
 
   (define storage-key (hex (make-bytes 32 7)))
   (define entry (hasheq 'address (hash-ref log-json 'address) 'storageKeys (list storage-key)))

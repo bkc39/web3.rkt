@@ -186,7 +186,7 @@
 
   (define-jsonrpc-endpoint eth_getUncleCountByBlockNumber
     (-> [exact-nonnegative-integer? number->hex-string] exact-nonnegative-integer?)
-    #:result-transform hex-string->number)
+    #:result-transform (lambda (_method result) (hex-string->number result)))
 
   (test-case "a defined endpoint converts its arguments and its result"
     (define p (mock-provider (hash "eth_getUncleCountByBlockNumber" "0x2")))
@@ -201,7 +201,8 @@
 
   (define-jsonrpc-endpoint eth_getUncleCountByBlockHash
     (-> hex-string? exact-nonnegative-integer?)
-    #:result-transform (lambda (v) (if (equal? v "0x") (raise named-failure) (hex-string->number v))))
+    #:result-transform
+    (lambda (_method v) (if (equal? v "0x") (raise named-failure) (hex-string->number v))))
 
   (test-case "a transform's exn:fail:web3 stands, and any other failure is an unexpected result"
     (define (failure answer)
@@ -214,13 +215,23 @@
 
   (define-jsonrpc-endpoint eth_getUncleByBlockNumberAndIndex
     (-> [exact-nonnegative-integer? number->hex-string] [exact-nonnegative-integer? number->hex-string]
-        (list/c string? exact-nonnegative-integer? exact-nonnegative-integer?))
+        (list/c string? string? exact-nonnegative-integer? exact-nonnegative-integer?))
     #:result-transform/arguments list)
 
-  (test-case "a transform by arguments sees the result and the arguments before conversion"
+  (define-jsonrpc-endpoint eth_getUncleByBlockHashAndIndex
+    (-> hex-string? [exact-nonnegative-integer? number->hex-string] (list/c string? string?))
+    #:result-transform list)
+
+  (test-case "a transform by arguments sees the method, the result and the arguments unconverted"
     (define p (mock-provider (hash "eth_getUncleByBlockNumberAndIndex" "0xaa")))
-    (check-equal? (eth-get-uncle-by-block-number-and-index 16 3 #:provider p) '("0xaa" 16 3))
+    (check-equal? (eth-get-uncle-by-block-number-and-index 16 3 #:provider p)
+                  '("eth_getUncleByBlockNumberAndIndex" "0xaa" 16 3))
     (check-equal? (mock-provider-calls p) '(("eth_getUncleByBlockNumberAndIndex" "0x10" "0x3"))))
+
+  (test-case "a transform sees the method and the result"
+    (define p (mock-provider (hash "eth_getUncleByBlockHashAndIndex" "0xaa")))
+    (check-equal? (eth-get-uncle-by-block-hash-and-index "0xbb" 1 #:provider p)
+                  '("eth_getUncleByBlockHashAndIndex" "0xaa")))
 
   (test-case "an endpoint takes one result transform"
     (check-exn exn:fail:syntax?
@@ -240,13 +251,13 @@
         (define (forward) (eth-get-uncle-count-by-block-number 1 #:provider node))
         (define-jsonrpc-endpoint eth_getUncleCountByBlockNumber
           (-> [exact-nonnegative-integer? number->hex-string] exact-nonnegative-integer?)
-          #:result-transform hex-string->number)
+          #:result-transform (lambda (_method result) (hex-string->number result)))
         (define immediate (eth-get-uncle-count-by-block-number 0 #:provider node))
         (define local
           (let ()
             (define-jsonrpc-endpoint eth_getUncleCountByBlockHash
               (-> hex-string? exact-nonnegative-integer?)
-              #:result-transform hex-string->number)
+              #:result-transform (lambda (_method result) (hex-string->number result)))
             (list (eth-get-uncle-count-by-block-hash "0xbb" #:provider node)
                   (map (lambda (hash) (eth-get-uncle-count-by-block-hash hash #:provider node))
                        '("0x01" "0x02"))))))

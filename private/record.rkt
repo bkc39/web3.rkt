@@ -25,6 +25,8 @@
          bit-field
          boolean-field
          byte-field
+         check-asked
+         check-block-asked
          data-field
          define-node-record
          (struct-out field-kind)
@@ -47,12 +49,20 @@
 (define (hash-abbreviation digest)
   (string-append (substring digest 0 10) "…"))
 
-(define ((asked-reader reader/who record-hash what) who asked v [detail ""])
+(define (check-asked who what asked received)
+  (unless (or (not received) (equal? received (if (string? asked) (string-downcase asked) asked)))
+    (raise-node-malformed who what received)))
+
+(define (check-block-asked who noun asked number hash)
+  (match asked
+    [(? exact-integer?) (check-asked who (string-append noun " number") asked number)]
+    [(regexp #rx"^0x") (check-asked who (string-append noun " hash") asked hash)]
+    [_ (void)]))
+
+(define ((asked-reader reader/who record-hash what) who v asked [detail ""])
   (define record (reader/who who v detail))
-  (define received (record-hash record))
-  (if (equal? received (string-downcase asked))
-      record
-      (raise-node-malformed who (string-append what detail) received)))
+  (check-asked who (string-append what detail) asked (record-hash record))
+  record)
 
 (define (read-field kind who what v)
   ((field-kind-reader kind) who what "" v))
@@ -176,6 +186,7 @@
   #:with name? (format-id #'name "~a?" #'name)
   #:with name-raw (format-id #'name "~a-raw" #'name)
   #:with name-fields (format-id #'name "~a-fields" #'name)
+  #:with name-noun (format-id #'name "~a-noun" #'name)
   #:with jsexpr->name (format-id #'name "jsexpr->~a" #'name)
   #:with name->jsexpr (format-id #'name "~a->jsexpr" #'name)
   #:with name->list (format-id #'name "~a->list" #'name)
@@ -202,6 +213,7 @@
       (name-raw record))
     (define (name->list record . more)
       (list* (row.accessor record) ... (name-raw record) more))
+    (define name-noun noun)
     (define name-fields
       (list (field-row 'row.field 'row.key row.kind-id row.mode (pair? '(row.exported ...))) ...))
     (provide (contract-out

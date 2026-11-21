@@ -1,7 +1,7 @@
 #lang racket/base
 
 (require racket/contract/base
-         (only-in racket/match match)
+         (only-in racket/match match match-define)
          (only-in "../private/field-contracts.rkt" hash-string/c)
          (only-in "../private/node.rkt" raise-node-malformed)
          "../private/record.rkt"
@@ -28,10 +28,16 @@
 (define read-transaction-infos
   (field-kind-reader (list-field (record-field jsexpr->transaction-info/who transaction-info?))))
 
+(define (hash-strings? v)
+  (and (list? v) (andmap string? v)))
+
+(define (transaction-objects? v)
+  (and (list? v) (andmap hash? v)))
+
 (define (read-block-transactions who what detail v)
   (cond
-    [(and (list? v) (andmap string? v)) (read-hashes who what detail v)]
-    [(and (list? v) (andmap hash? v)) (read-transaction-infos who what detail v)]
+    [(hash-strings? v) (read-hashes who what detail v)]
+    [(transaction-objects? v) (read-transaction-infos who what detail v)]
     [else (raise-node-malformed who (string-append what detail) v)]))
 
 (define block-transactions-field
@@ -39,11 +45,11 @@
               read-block-transactions
               (or/c (listof hash-string/c) (listof transaction-info?))))
 
-(define (write-block block port _mode)
-  (define total (length (block-transactions block)))
+(define (write-block record port _mode)
+  (define total (length (block-transactions record)))
   (fprintf port "#<block ~a ~a ~a transaction~a>"
-           (block-number block)
-           (or (block-hash block) "pending")
+           (block-number record)
+           (or (block-hash record) "pending")
            total
            (if (= total 1) "" "s")))
 
@@ -55,7 +61,7 @@
   [state-root hash-field #:key stateRoot]
   [transactions-root hash-field #:key transactionsRoot]
   [receipts-root hash-field #:key receiptsRoot]
-  [logs-bloom (fixed-data-field 256) #:key logsBloom]
+  [logs-bloom (fixed-data-field 256) #:key logsBloom #:optional]
   [difficulty quantity-field #:optional]
   [number uint64-field]
   [gas-limit uint64-field #:key gasLimit]
@@ -81,11 +87,18 @@
     [0 (write-string "#<fee-history no blocks>" port)]
     [blocks (fprintf port "#<fee-history blocks ~a to ~a>" oldest (+ oldest blocks -1))]))
 
+(define (entries-fit? entries blocks extra empty-allowed?)
+  (or (not entries)
+      (= (length entries) (+ blocks extra))
+      (and empty-allowed? (null? entries))))
+
 (define (check-fee-history who detail history)
-  (define base-fees (fee-history-base-fee-per-gas history))
-  (unless (= (length base-fees) (add1 (length (fee-history-gas-used-ratio history))))
-    (raise-node-malformed who (string-append "fee history base fee per gas" detail)
-                          (hash-ref (fee-history->jsexpr history) 'baseFeePerGas))))
+  (define blocks (length (fee-history-gas-used-ratio history)))
+  (for ([row (in-list fee-history-lengths)])
+    (match-define (list entries-of key what extra empty-allowed?) row)
+    (unless (entries-fit? (entries-of history) blocks extra empty-allowed?)
+      (raise-node-malformed who (string-append "fee history " what detail)
+                            (hash-ref (fee-history->jsexpr history) key)))))
 
 (define-node-record fee-history #:noun "fee history" #:printer write-fee-history
   #:check check-fee-history
@@ -96,21 +109,44 @@
   [base-fee-per-blob-gas (list-field quantity-field) #:key baseFeePerBlobGas #:optional]
   [blob-gas-used-ratio (list-field ratio-field) #:key blobGasUsedRatio #:optional])
 
-(define (block-transaction-hashes block)
-  (for/list ([entry (in-list (block-transactions block))])
+(define fee-history-lengths
+  `([,fee-history-base-fee-per-gas baseFeePerGas "base fee per gas" 1 #f]
+    [,fee-history-reward reward "reward" 0 #t]
+    [,fee-history-base-fee-per-blob-gas baseFeePerBlobGas "base fee per blob gas" 1 #f]
+    [,fee-history-blob-gas-used-ratio blobGasUsedRatio "blob gas used ratio" 0 #f]))
+
+(define (block-transaction-hashes record)
+  (for/list ([entry (in-list (block-transactions record))])
     (if (string? entry) entry (transaction-info-hash entry))))
 
-(define (jsexpr->block-of who _block full? v)
-  (define block (jsexpr->block/who who v))
-  (define entries (block-transactions block))
-  (if (andmap (if full? transaction-info? string?) entries)
-      block
+(define (jsexpr->block-of who v asked full?)
+  (define answer (jsexpr->block/who who v))
+  (check-block-asked who "block" asked (block-number answer) (block-hash answer))
+  (if (andmap (if full? transaction-info? string?) (block-transactions answer))
+      answer
       (raise-node-malformed who "block transactions" (hash-ref v 'transactions))))
+
+(define (rewards-fit? reward blocks percentiles)
+  (if (null? percentiles)
+      (or (not reward) (andmap null? reward))
+      (and reward
+           (= (length reward) blocks)
+           (andmap (lambda (row) (= (length row) (length percentiles))) reward))))
+
+(define (jsexpr->fee-history-of who v _blocks _newest percentiles)
+  (define history (jsexpr->fee-history/who who v))
+  (define reward (fee-history-reward history))
+  (if (rewards-fit? reward (length (fee-history-gas-used-ratio history)) percentiles)
+      history
+      (raise-node-malformed who "fee history reward" (hash-ref v 'reward 'null))))
 
 (module* internal #f
   (provide block-fields
+           block-noun
            fee-history-fields
+           fee-history-noun
            jsexpr->block-of
            jsexpr->block/who
-           jsexpr->fee-history/who
-           withdrawal-fields))
+           jsexpr->fee-history-of
+           withdrawal-fields
+           withdrawal-noun))

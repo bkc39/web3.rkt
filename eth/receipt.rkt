@@ -59,4 +59,5 @@
   (provide jsexpr->receipt-of
            jsexpr->receipt/who
            receipt-fields
+           receipt-noun
            (rename-out [receipt-logs receipt-log-list])))

@@ -2,16 +2,16 @@
 
 (module+ test
   (require racket/format
-           (only-in racket/file file->string)
-           (only-in racket/match match match-define)
+           (only-in racket/match match-define)
            rackunit
            web3/eth/receipt
            (only-in (submod web3/eth/receipt internal) receipt-fields)
            (only-in web3/eth eth-get-block-receipts eth-get-transaction-receipt wait-for-receipt)
            (only-in web3/eth/log jsexpr->log log-address log-block-timestamp log?)
            (only-in web3/event receipt-logs)
-           (only-in web3/private/record field-row-field field-row-provided?)
-           (only-in web3/rpc exn:fail:web3? hex-string->bytes mock-provider)
+           (only-in web3/rpc hex-string->bytes mock-provider)
+           (only-in "helpers/records.rkt"
+                    check-fields check-in-web3-and-manual message-of provided-accessors)
            "helpers/results.rkt"
            "modules.rkt"
            "util.rkt")
@@ -20,11 +20,6 @@
   (define block-hash "0x78e3cb19177d24232982259d6717f8ea45cfae5f369be21280af7b8e535146b5")
   (define token "0x5FbDB2315678afecb367f032d93F642f64180aa3")
   (define shouted-hash (string-append "0x" (string-upcase (substring tx-hash 2))))
-
-  (define (message-of thunk)
-    (define e (raised thunk))
-    (check-pred exn:fail:web3? e)
-    (and e (exn-message e)))
 
   (define expected-fields
     `([transaction-hash ,tx-hash]
@@ -44,19 +39,9 @@
       [blob-gas-used #f]
       [blob-gas-price #f]))
 
-  (define (accessor-name row)
-    (string->symbol (~a "receipt-" (field-row-field row))))
-
-  (define provided-rows (filter field-row-provided? receipt-fields))
-
   (test-case "R1: a node's receipt reads into its fields"
     (define receipt (jsexpr->receipt receipt-json))
-    (for ([row (in-list provided-rows)])
-      (match (assq (field-row-field row) expected-fields)
-        [(list _ value)
-         (check-equal? ((dynamic-require 'web3 (accessor-name row)) receipt) value
-                       (~a (field-row-field row)))]
-        [#f (fail (~a "no expected value for " (field-row-field row)))]))
+    (check-fields receipt "receipt" receipt-fields expected-fields)
     (check-equal? (map log-address (receipt-logs receipt)) (list token))
     (check-true (receipt-succeeded? receipt))
     (check-false (receipt-succeeded? (jsexpr->receipt (hash-set receipt-json 'status "0x0"))))
@@ -148,13 +133,7 @@
                                        #:provider (answering (hash-set receipt-json 'gasUsed "zz")))))))
 
   (test-case "every accessor the field table provides is in web3 and the manual"
-    (define manual (file->string (collection-file-path "scribblings/web3.scrbl" "web3")))
-    (define names (exported-names 'web3))
-    (for ([row (in-list provided-rows)])
-      (define name (accessor-name row))
-      (check-not-false (memq name names) (~a name))
-      (check-regexp-match (regexp (~a "@defproc\\[\\(" (regexp-quote (~a name)) " ")) manual
-                          (~a name)))
+    (check-in-web3-and-manual (provided-accessors "receipt" receipt-fields))
     (check-false (memq 'receipt-logs (exported-names 'web3/eth/receipt))))
 
   (test-case "A1: a receipt without an effective gas price, and a numeric log timestamp, read"

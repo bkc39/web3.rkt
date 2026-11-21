@@ -13,7 +13,7 @@
          "eth/log.rkt"
          (only-in (submod "eth/log.rkt" internal) jsexpr->log/who)
          (only-in (submod "eth/receipt.rkt" internal) receipt-log-list)
-         (only-in "private/node.rkt" node-quantity->number raise-node-malformed)
+         (only-in "private/node.rkt" raise-node-malformed)
          "rpc.rkt")
 
 (provide
@@ -154,9 +154,9 @@
     ["earliest" 0]
     [(or "latest" "pending") (eth-block-number #:provider provider)]
     [_
-     (match (rpc-call "eth_getBlockByNumber" (list tag #f) #:provider provider)
-       [(? hash? block) (node-quantity->number who "block number" (hash-ref block 'number #f))]
-       [block (raise-node-malformed who (format "~a block" tag) block)])]))
+     (match (eth-get-block-by-number tag #f #:provider provider)
+       [#f (raise-node-malformed who (format "~a block" tag) 'null)]
+       [tagged (block-number tagged)])]))
 
 (define (resolved-range who f provider)
   (define from (tag->block-number who (log-filter-from f) provider))

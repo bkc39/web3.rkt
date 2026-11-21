@@ -57,7 +57,7 @@ return the call's result (quantities as exact integers), and raise
 ```racket
 (define-jsonrpc-endpoint eth_getBalance
   (-> string? [block-param/c block-param->string] exact-nonnegative-integer?)
-  #:result-transform hex-string->number)
+  #:result-transform (lambda (_method result) (hex-string->number result)))
 ```
 
 Keccak-256 comes from [keccak-rkt](https://github.com/bkc39/keccak-rkt).

@@ -2,34 +2,28 @@
 
 (module+ test
   (require racket/format
-           (only-in racket/file file->string)
            (only-in racket/match match match-define)
            rackunit
            (only-in web3/account secp256k1-order signature)
            (only-in web3/eth eth-get-transaction-by-hash)
            web3/eth/transaction-info
            (only-in (submod web3/eth/transaction-info internal) transaction-info-fields)
-           (only-in web3/private/record field-row-field field-row-provided?)
-           (only-in web3/rpc exn:fail:web3? mock-provider number->hex-string)
+           (only-in web3/private/exn exn:fail:web3:signature?)
+           (only-in web3/rpc hex-string->number mock-provider number->hex-string)
            web3/transaction
+           (only-in "helpers/records.rkt"
+                    check-fields check-in-web3-and-manual message-of provided-accessors)
            (only-in "helpers/results.rkt"
                     transaction-info-json/0
                     transaction-info-json/1
                     transaction-info-json/2)
-           (only-in "helpers/transactions.rkt" example-key example-transactions nick-raw)
-           "modules.rkt"
+           (only-in "helpers/transactions.rkt" example-key example-transactions nick-raw no-point-r)
            "util.rkt")
 
   (define alice "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")
   (define bob "0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
   (define legacy-hash (hash-ref transaction-info-json/0 'hash))
   (define block-hash "0x56268c1258891dd669aacbe1c854f83204063dd979b3207267179897f8e45d7c")
-
-  (define (message-of thunk)
-    (define e (raised thunk))
-    (check-pred exn:fail:web3? e)
-    (check-false (exn:fail:contract? e))
-    (and e (exn-message e)))
 
   (define expected-fields
     `([hash ,legacy-hash]
@@ -56,22 +50,16 @@
       [r #xbbfa8af4971395f4254befd93c53c020fb096fc451369a7dc6496814972c5948]
       [s #x17e6be4dd1cdb05aa9f72da7d69aa2af9d5c619ad2d29b538f7cf16e40a21411]))
 
-  (define (accessor-name row)
-    (string->symbol (~a "transaction-info-" (field-row-field row))))
-
-  (define provided-rows (filter field-row-provided? transaction-info-fields))
-
   (test-case "T1: a node's transaction reads into its fields"
     (define info (jsexpr->transaction-info transaction-info-json/0))
-    (for ([row (in-list provided-rows)])
-      (match (assq (field-row-field row) expected-fields)
-        [(list _ value)
-         (check-equal? ((dynamic-require 'web3 (accessor-name row)) info) value
-                       (~a (field-row-field row)))]
-        [#f (fail (~a "no expected value for " (field-row-field row)))]))
+    (check-fields info "transaction-info" transaction-info-fields expected-fields)
     (check-eq? (transaction-info->jsexpr info) transaction-info-json/0)
     (check-equal? (transaction-info-access-list (jsexpr->transaction-info transaction-info-json/1))
-                  (list (list bob (make-bytes 32 1)))))
+                  (list (list bob (make-bytes 32 1))))
+    (check-regexp-match #rx"^jsexpr->transaction-info: malformed transaction y parity from the node"
+                        (message-of (lambda ()
+                                      (jsexpr->transaction-info
+                                       (hash-set transaction-info-json/1 'yParity "0x2"))))))
 
   (test-case "B4: a pending transaction has no block"
     (define pending
@@ -86,85 +74,120 @@
                   (~a "#<transaction-info " (hash-ref transaction-info-json/2 'hash)
                       " type 2 nonce 2 block pending index pending>")))
 
-  (define (quantity n)
-    (number->hex-string n))
-
-  (define (signed->json stx)
-    (define tx (signed-transaction-transaction stx))
-    (match-define (signature r s y-parity) (signed-transaction-signature stx))
-    (define request (transaction->jsexpr tx #:from (signed-transaction-sender stx)))
+  (define (signed->json signed)
+    (define transaction (signed-transaction-transaction signed))
+    (match-define (signature signature-r signature-s y-parity) (signed-transaction-signature signed))
+    (define request (transaction->jsexpr transaction #:from (signed-transaction-sender signed)))
     (define common
       (hash-set* (hash-remove request 'data)
                  'input (hash-ref request 'data)
-                 'hash (signed-transaction-hash stx)
-                 'r (quantity r)
-                 's (quantity s)))
-    (match (cons (transaction-type tx) (transaction-chain-id tx))
-      [(cons 0 #f) (hash-set common 'v (quantity (+ 27 y-parity)))]
-      [(cons 0 chain-id) (hash-set common 'v (quantity (+ 35 (* 2 chain-id) y-parity)))]
-      [_ (hash-set* common 'v (quantity y-parity) 'yParity (quantity y-parity))]))
+                 'hash (signed-transaction-hash signed)
+                 'r (number->hex-string signature-r)
+                 's (number->hex-string signature-s)))
+    (match (cons (transaction-type transaction) (transaction-chain-id transaction))
+      [(cons 0 #f) (hash-set common 'v (number->hex-string (+ 27 y-parity)))]
+      [(cons 0 chain-id) (hash-set common 'v (number->hex-string (+ 35 (* 2 chain-id) y-parity)))]
+      [_ (hash-set* common
+                    'v (number->hex-string y-parity)
+                    'yParity (number->hex-string y-parity))]))
 
   (define signed-examples
-    (append (for/list ([tx (in-list example-transactions)])
-              (sign-transaction example-key tx))
+    (append (for/list ([transaction (in-list example-transactions)])
+              (sign-transaction example-key transaction))
             (list (bytes->signed-transaction nick-raw))))
 
+  (define (converted json)
+    (transaction-info->signed-transaction (jsexpr->transaction-info json)))
+
   (test-case "T4: transaction-info->signed-transaction rebuilds the transaction"
-    (for ([stx (in-list signed-examples)])
-      (define info (jsexpr->transaction-info (signed->json stx)))
-      (check-equal? (transaction-info->signed-transaction info) stx (~a stx)))
+    (for ([signed (in-list signed-examples)])
+      (check-equal? (converted (signed->json signed)) signed (~a signed)))
     (for ([json (in-list (list transaction-info-json/0 transaction-info-json/1
                                transaction-info-json/2
                                (hash-remove transaction-info-json/0 'chainId)))])
-      (define stx (transaction-info->signed-transaction (jsexpr->transaction-info json)))
-      (check-equal? (signed-transaction-hash stx) (hash-ref json 'hash))
-      (check-equal? (signed-transaction-sender stx) alice)))
+      (define signed (converted json))
+      (check-equal? (signed-transaction-hash signed) (hash-ref json 'hash))
+      (check-equal? (signed-transaction-sender signed) alice)))
 
-  (define legacy-s #x17e6be4dd1cdb05aa9f72da7d69aa2af9d5c619ad2d29b538f7cf16e40a21411)
+  (test-case "T4: a transaction without a type is legacy unless a typed field says otherwise"
+    (check-equal? (converted (hash-remove transaction-info-json/0 'type))
+                  (converted transaction-info-json/0))
+    (for ([key (in-list '(maxFeePerGas maxPriorityFeePerGas yParity))])
+      (check-equal? (message-of (lambda ()
+                                  (converted (hash-set (hash-remove transaction-info-json/0 'type)
+                                                       key "0x1"))))
+                    (~a "transaction-info->signed-transaction: malformed transaction type from the "
+                        "node: 'null")
+                    (~a key)))
+    (check-regexp-match #rx"malformed transaction type"
+                        (message-of (lambda ()
+                                      (converted (hash-remove transaction-info-json/1 'type))))))
 
-  (define hostile-conversions
-    `([2 ((type "0x3")) "^transaction-info->signed-transaction: type 3 is not supported$"]
-      [2 ((type "0x4")) "^transaction-info->signed-transaction: type 4 is not supported$"]
-      [2 ((type "0x7e")) "^transaction-info->signed-transaction: type 126 is not supported$"]
-      [2 ((type remove)) "^transaction-info->signed-transaction: malformed transaction type from the node: 'null$"]
-      [0 ((chainId "0x1")) "^transaction-info->signed-transaction: malformed transaction chain id from the node: 1$"]
-      [0 ((v "0x1b")) "^transaction-info->signed-transaction: malformed transaction chain id from the node: 31337$"]
-      [0 ((v "0x5") (chainId remove)) "^transaction-info->signed-transaction: malformed transaction y parity from the node: 5$"]
-      [1 ((yParity "0x2")) "^jsexpr->transaction-info: malformed transaction y parity from the node: \"0x2\"$"]
-      [1 ((yParity "0x0")) "^transaction-info->signed-transaction: malformed transaction y parity from the node: 0$"]
-      [2 ((v "0x2") (yParity remove)) "^transaction-info->signed-transaction: malformed transaction y parity from the node: 2$"]
-      [2 ((v remove) (yParity remove)) "^transaction-info->signed-transaction: malformed transaction y parity from the node: 'null$"]
-      [0 ((gasPrice remove)) "^transaction-info->signed-transaction: malformed transaction gas price from the node: 'null$"]
-      [1 ((accessList null)) "^transaction-info->signed-transaction: malformed transaction access list from the node: 'null$"]
-      [2 ((chainId remove)) "^transaction-info->signed-transaction: malformed transaction chain id from the node: 'null$"]
-      [2 ((maxFeePerGas remove)) "^transaction-info->signed-transaction: malformed transaction max fee per gas from the node: 'null$"]
-      [2 ((maxFeePerGas "0x1")) "^transaction-info->signed-transaction: malformed transaction max priority fee per gas from the node: 2000000000$"]
-      [0 ((r "0x0")) "^transaction-info->signed-transaction: malformed transaction r from the node: 0$"]
-      [0 ((r remove)) "^transaction-info->signed-transaction: malformed transaction r from the node: 'null$"]
-      [0 ((s ,(quantity secp256k1-order))) "^transaction-info->signed-transaction: malformed transaction s from the node: [0-9]+$"]
-      [0 ((s ,(quantity (- secp256k1-order legacy-s))) (v "0xf4f5")) "^signed-transaction: s is more than half the curve order"]
-      [0 ((hash ,(filled-hash #\c))) ,(~a "^transaction-info->signed-transaction: the node's hash 0xc+ is not the transaction's "
-                                          legacy-hash "$")]
-      [0 ((from ,bob)) ,(~a "^transaction-info->signed-transaction: the node's from " bob
-                            " is not the signature's sender " alice "$")]))
+  (define legacy-s (hex-string->number (hash-ref transaction-info-json/0 's)))
+
+  (define malformed-conversions
+    `([2 ((type remove)) "type" "'null"]
+      [0 ((chainId "0x1")) "chain id" "1"]
+      [0 ((v "0x1b")) "chain id" "31337"]
+      [0 ((v "0x5") (chainId remove)) "v" "5"]
+      [0 ((v "0x0")) "v" "0"]
+      [0 ((v "0x1")) "v" "1"]
+      [0 ((v ,(number->hex-string (expt 2 70)))) "v" ,(~a (expt 2 70))]
+      [1 ((yParity "0x0")) "y parity" "0"]
+      [2 ((v "0x2") (yParity remove)) "v" "2"]
+      [2 ((v remove) (yParity remove)) "y parity" "'null"]
+      [0 ((gasPrice remove)) "gas price" "'null"]
+      [1 ((accessList null)) "access list" "'null"]
+      [2 ((chainId remove)) "chain id" "'null"]
+      [2 ((maxFeePerGas remove)) "max fee per gas" "'null"]
+      [2 ((maxFeePerGas "0x1")) "max priority fee per gas" "2000000000"]
+      [0 ((r "0x0")) "r" "0"]
+      [0 ((r remove)) "r" "'null"]
+      [0 ((s ,(number->hex-string secp256k1-order))) "s" ,(~a secp256k1-order)]))
+
+  (define refused-conversions
+    `([2 ((type "0x3")) "type 3 is not supported"]
+      [2 ((type "0x4")) "type 4 is not supported"]
+      [2 ((type "0x7e")) "type 126 is not supported"]
+      [0 ((hash ,(filled-hash #\c)))
+         ,(~a "the node's hash " (filled-hash #\c) " is not the transaction's " legacy-hash)]
+      [0 ((from ,bob)) ,(~a "the node's from " bob " is not the signature's sender " alice)]))
+
+  (define signature-failures
+    `([0 ((s ,(number->hex-string (- secp256k1-order legacy-s))) (v "0xf4f5"))
+         "s is more than half the curve order (EIP-2)"]
+      [0 ((r ,(number->hex-string (no-point-r)))) "the signature recovers no address"]))
 
   (define bases (vector transaction-info-json/0 transaction-info-json/1 transaction-info-json/2))
 
-  (define (edited json edits)
-    (for/fold ([json json]) ([edit (in-list edits)])
+  (define (edited base edits)
+    (for/fold ([json (vector-ref bases base)]) ([edit (in-list edits)])
       (match edit
         [(list key 'remove) (hash-remove json key)]
         [(list key value) (hash-set json key value)])))
 
-  (test-case "T5: a transaction the node describes badly raises exn:fail:web3"
-    (for ([row (in-list hostile-conversions)])
-      (match-define (list base edits pattern) row)
-      (define json (edited (vector-ref bases base) edits))
-      (check-regexp-match (pregexp pattern)
-                          (message-of (lambda ()
-                                        (transaction-info->signed-transaction
-                                         (jsexpr->transaction-info json))))
-                          (~s edits))))
+  (define converter-prefix "transaction-info->signed-transaction: ")
+
+  (test-case "T5: a field the node gets wrong raises exn:fail:web3 naming it"
+    (for ([row (in-list malformed-conversions)])
+      (match-define (list base edits what shown) row)
+      (check-equal? (message-of (lambda () (converted (edited base edits))))
+                    (~a converter-prefix "malformed transaction " what " from the node: " shown)
+                    (~s edits))))
+
+  (test-case "T5: an unsupported type or a false claim raises exn:fail:web3"
+    (for ([row (in-list refused-conversions)])
+      (match-define (list base edits message) row)
+      (check-equal? (message-of (lambda () (converted (edited base edits))))
+                    (~a converter-prefix message)
+                    (~s edits))))
+
+  (test-case "T5: a bad signature raises exn:fail:web3:signature under the converter's name"
+    (for ([row (in-list signature-failures)])
+      (match-define (list base edits message) row)
+      (define e (raised (lambda () (converted (edited base edits)))))
+      (check-pred exn:fail:web3:signature? e (~s edits))
+      (check-equal? (and e (exn-message e)) (~a converter-prefix message) (~s edits))))
 
   (test-case "T6: a transaction prints its hash, type, nonce and place in every mode"
     (define info (jsexpr->transaction-info transaction-info-json/1))
@@ -195,14 +218,8 @@
                   (~a "eth_getTransactionByHash: malformed transaction hash from the node: "
                       (~s legacy-hash))))
 
-  (test-case "every accessor the field table provides is in web3 and the manual"
-    (define manual (file->string (collection-file-path "scribblings/web3.scrbl" "web3")))
-    (define names (exported-names 'web3))
-    (for ([name (in-list (append (map accessor-name provided-rows)
-                                 '(transaction-info? jsexpr->transaction-info
-                                   transaction-info->jsexpr
-                                   transaction-info->signed-transaction)))])
-      (check-not-false (memq name names) (~a name))
-      (check-not-false (regexp-match? (regexp (~a "@defproc\\[\\(" (regexp-quote (~a name)) " "))
-                                      manual)
-                       (~a name)))))
+  (test-case "every accessor the transaction table provides is in web3 and the manual"
+    (check-in-web3-and-manual
+     (append (provided-accessors "transaction-info" transaction-info-fields)
+             '(transaction-info? jsexpr->transaction-info transaction-info->jsexpr
+               transaction-info->signed-transaction)))))

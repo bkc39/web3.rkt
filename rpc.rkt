@@ -65,10 +65,6 @@
                             message
                             data)))
 
-(define (raise-web3-error method fmt . args)
-  (raise (exn:fail:web3 (format "~a: ~a" method (apply format fmt args))
-                        (current-continuation-marks))))
-
 ;;;; providers
 
 (define-generics provider
@@ -343,8 +339,11 @@
 
   (struct endpoint-transformer (checked-for) #:property prop:procedure expand-endpoint-use))
 
-(define ((ignoring-arguments transform) raw . _arguments)
-  (transform raw))
+(define (untransformed _method raw)
+  raw)
+
+(define ((ignoring-arguments transform) method raw . _arguments)
+  (transform method raw))
 
 (define (endpoint-checker signature procedure positive name srcloc)
   (define checked (make-hash))
@@ -358,7 +357,7 @@
     ((~datum ->) p:arg-spec ... result-contract:expr)
     (~optional (~or* (~seq #:result-transform transform:expr)
                      (~seq #:result-transform/arguments arguments-transform:expr))
-               #:defaults ([transform #'values])))
+               #:defaults ([transform #'untransformed])))
   #:with fn-name (format-id #'rpc-name "~a" (->kebab-case (syntax-e #'rpc-name)))
   #:with method (datum->syntax #'rpc-name (symbol->string (syntax-e #'rpc-name)))
   #:with (arg ...) (generate-temporaries #'(p ...))
@@ -367,7 +366,7 @@
   #:with procedure
   (syntax-property #'(lambda (arg ... #:provider [provider (current-provider)])
                        (call-endpoint method (list (p.->param arg) ...) provider
-                                      (lambda (raw) (transformer raw arg ...))
+                                      (lambda (raw) (transformer method raw arg ...))
                                       result?))
                    'inferred-name
                    (syntax-e #'fn-name))

@@ -74,7 +74,9 @@
          (check-equal? (fee-history-oldest-block history) (sub1 head))
          (check-equal? (length (fee-history-base-fee-per-gas history)) 3)
          (check-equal? (length (fee-history-gas-used-ratio history)) 2)
-         (check-equal? (map length (fee-history-reward history)) '(2 2))))
+         (check-equal? (map length (fee-history-reward history)) '(2 2))
+         (check-not-false (member (fee-history-reward (eth-fee-history 2 "latest" '()))
+                                  '(#f () (() ()))))))
 
      (test-case "A6: the blob base fee of a chain without blobs is 1"
        (with-anvil ()
