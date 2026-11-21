@@ -15,9 +15,12 @@
   (define-contract counter #:file "../examples/contracts/out/Counter.sol/Counter.json")
 
   (match-define (list _ key1 key2 key3 key4 _ ...) (map hex-string->secret-key anvil-keys))
-  (match-define (list _ account1 _ account3 _ ...) anvil-addresses)
+  (match-define (list _ account1 _ account3 _ account5 _ ...) anvil-addresses)
   (define token-abi
     (file->contract-abi (collection-file-path "examples/contracts/out/Token.sol/Token.json" "web3")))
+  (define counter-abi
+    (file->contract-abi
+     (collection-file-path "examples/contracts/out/Counter.sol/Counter.json" "web3")))
 
   (define prng (seeded 1 8 7 5 4 2))
   (define one-and-a-half (ether->wei "1.5"))
@@ -115,7 +118,31 @@
       (for ([tx-hash (in-list hashes)]
             [nonce (in-naturals first-nonce)])
         (check-equal? (receipt-status (wait-for-receipt tx-hash)) 1)
-        (check-equal? (transaction-info-nonce (eth-get-transaction-by-hash tx-hash)) nonce))))
+        (check-equal? (transaction-info-nonce (eth-get-transaction-by-hash tx-hash)) nonce)))
+
+    (test-case "S9: the node signs sends from its accounts, filling their nonces"
+      (define recipient (fresh-address))
+      (define first-nonce (pending account5))
+      (define receipt (send-transaction/receipt account5 recipient #:value (ether->wei 1)))
+      (check-equal? (list (receipt-status receipt) (receipt-from receipt) (receipt-to receipt))
+                    (list 1 account5 recipient))
+      (check-equal? (balance recipient) (ether->wei 1))
+      (define hashes
+        (for/list ([_ (in-range 2)])
+          (send-transaction account5 recipient #:value 1)))
+      (check-equal? (for/list ([tx-hash (in-list hashes)])
+                      (receipt-status (wait-for-receipt tx-hash)))
+                    '(1 1))
+      (check-equal? (map (lambda (tx-hash)
+                           (transaction-info-nonce (eth-get-transaction-by-hash tx-hash)))
+                         hashes)
+                    (list (+ first-nonce 1) (+ first-nonce 2)))
+      (check-equal? (balance recipient) (+ (ether->wei 1) 2))
+      (define created
+        (send-transaction/receipt account5 #f #:data (contract-abi-bytecode counter-abi)))
+      (define address (receipt-contract-address created))
+      (check-equal? address (create-address account5 (+ first-nonce 3)))
+      (check-equal? (counter-count address) 0)))
 
   (define (contract-cases)
     (test-case "N4, N5: a contract's sends from an address and from its key leave the same chain"

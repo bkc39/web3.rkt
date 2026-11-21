@@ -270,7 +270,7 @@
 
   (define send-names
     '(fill-transaction send-signed-transaction send-signed-transaction/receipt
-                       exn:fail:web3:fill exn:fail:web3:fill? exn:fail:web3:fill-reason
+                       send-transaction send-transaction/receipt exn:fail:web3:fill exn:fail:web3:fill? exn:fail:web3:fill-reason
                        struct:exn:fail:web3:fill))
 
   (test-case "F22: web3 re-exports web3/send, and requires without conflicts"

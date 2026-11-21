@@ -12,10 +12,7 @@
   (with-anvil ()
     (match-define (list alice bob _ ...) (eth-accounts))
     (print-accounts alice bob)
-    (define tx-hash
-      (eth-send-transaction
-       (hasheq 'from alice 'to bob 'value (number->hex-string (ether->wei 1)))))
-    (define receipt (wait-for-receipt tx-hash))
+    (define receipt (send-transaction/receipt alice bob #:value (ether->wei 1)))
     (printf "block ~a, gas used ~a, succeeded ~a\n"
             (receipt-block-number receipt)
             (receipt-gas-used receipt)

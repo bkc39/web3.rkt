@@ -20,8 +20,9 @@
                   reward-percentiles/c
                   storage-slot/c
                   storage-slots->jsexpr)
+         (only-in "private/field-contracts.rkt" hash-string/c)
          (only-in "private/hex.rkt" hex-data-string?)
-         (only-in "private/node.rkt" node-quantity->number node-quantity?)
+         (only-in "private/node.rkt" node-hash->string node-quantity->number node-quantity?)
          (only-in "private/record.rkt" list-field read-field record-field)
          "private/who.rkt"
          "rpc.rkt")
@@ -81,8 +82,7 @@
           [wait-for-receipt
            (->* (hex-string?)
                 (#:timeout real? #:interval real? #:provider (or/c #f provider?))
-                receipt?)]
-          [send-transaction/receipt (->* (object/c) (#:provider (or/c #f provider?)) receipt?)]))
+                receipt?)]))
 
 (module* internal #f
   (provide wait-for-receipt/who))
@@ -106,6 +106,9 @@
 
 (define (count-or-null->number v)
   (if (eq? v 'null) 0 (quantity->number v)))
+
+(define (read-transaction-hash method raw _tx)
+  (node-hash->string method "transaction hash" raw))
 
 (define (signed-transaction-result result)
   (match result
@@ -186,7 +189,8 @@
   #:result-transform quantity->number)
 (define-jsonrpc-endpoint eth_createAccessList
   (-> object/c [block-param/c block-param->string] hash?))
-(define-jsonrpc-endpoint eth_sendTransaction (-> object/c hex-string?))
+(define-jsonrpc-endpoint eth_sendTransaction (-> object/c hash-string/c)
+  #:result-reader read-transaction-hash)
 (define-jsonrpc-endpoint eth_sendRawTransaction (-> hex-string? hex-string?))
 (define-jsonrpc-endpoint eth_sign (-> string? hex-string? hex-string?))
 (define-jsonrpc-endpoint eth_signTransaction (-> object/c hex-string?)
@@ -231,6 +235,3 @@
                               #:interval [interval receipt-poll-interval]
                               #:provider [provider (current-provider)])
   (read-receipt who (poll-receipt who tx-hash timeout interval provider) tx-hash))
-
-(define (send-transaction/receipt tx #:provider [provider (current-provider)])
-  (wait-for-receipt (eth-send-transaction tx #:provider provider) #:provider provider))

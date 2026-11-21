@@ -368,8 +368,8 @@
     (check-blames-here (wait-for-receipt 'hash))
     (check-blames-here (wait-for-receipt tx-hash #:timeout "1"))
     (check-blames-here (wait-for-receipt tx-hash #:provider 'node))
-    (check-blames-here (send-transaction/receipt "tx"))
-    (check-blames-here (send-transaction/receipt (hasheq 'from (void)))))
+    (check-blames-here (send-transaction/receipt "tx" anvil-bob))
+    (check-blames-here (send-transaction/receipt anvil-alice (void))))
 
   (test-case "return data too short for the outputs raises a decode error under contract-call"
     (define-values (e _calls)
