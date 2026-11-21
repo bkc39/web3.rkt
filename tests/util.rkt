@@ -31,6 +31,7 @@
          max-word
          pick
          raised
+         raised-or-value
          raised-type-error
          seeded
          signature-inputs
@@ -132,6 +133,10 @@
   (with-handlers ([exn:fail? values])
     (thunk)
     #f))
+
+(define (raised-or-value thunk)
+  (with-handlers ([exn:fail? values])
+    (thunk)))
 
 (define (raised-type-error thunk)
   (with-handlers ([exn:fail:web3:abi:type? values])

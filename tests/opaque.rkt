@@ -5,6 +5,7 @@
                     any/c
                     blame-positive
                     contract
+                    contract-name
                     exn:fail:contract:blame-object
                     exn:fail:contract:blame?)
            (only-in racket/match match)
@@ -75,6 +76,30 @@
     (check-refusal e 'caller "no keyword arguments" "keyword #:x")
     (when e
       (check-false (string-contains? (exn-message e) secret-text))))
+
+  (define keyed
+    (wrap (opaque-> small/c #:to small/c [#:by small/c] any/c)
+          (lambda (x #:to to #:by [by 1]) (list x to by))))
+
+  (test-case "a required keyword is passed through and checked like any argument"
+    (check-equal? (keyed 1 #:to 1) '(1 1 1))
+    (check-equal? (keyed 1 #:to 1 #:by 1) '(1 1 1))
+    (define e (refusal (lambda () (keyed 1 #:to secret-text))))
+    (check-refusal e 'caller "a small thing" "a string of 12 characters")
+    (when e
+      (check-false (string-contains? (exn-message e) secret-text))))
+
+  (test-case "a missing required keyword names the keyword, never the arguments"
+    (define e (refusal (lambda () (keyed secret-text #:by secret-text))))
+    (check-refusal e 'caller "keyword #:to" "no keyword #:to")
+    (when e
+      (check-false (string-contains? (exn-message e) secret-text)))
+    (check-refusal (refusal (lambda () (keyed 1 #:to 1 #:from 1)))
+                   'caller "keywords #:to or #:by" "keyword #:from"))
+
+  (test-case "the name of a contract shows required keywords bare and optional ones bracketed"
+    (check-equal? (contract-name (opaque-> small/c #:to small/c [#:by small/c] any/c))
+                  '(opaque-> small/c #:to small/c (#:by small/c) any/c)))
 
   (test-case "values that meet the contracts pass through, and the name is kept"
     (define (identity x) x)

@@ -16,8 +16,8 @@
          (only-in (submod "account.rkt" private) sign-digest/who)
          (only-in "address.rkt" address->checksum-string checksum-address?)
          "private/exn.rkt"
-         (only-in "private/hex.rkt" bytes->hex bytes->natural hex->bytes)
-         (only-in "private/opaque.rkt" opaque-> opaque/c secret-key/c)
+         (only-in "private/hex.rkt" bytes->hex bytes->natural hex->bytes natural->hex)
+         (only-in "private/opaque.rkt" address/c opaque-> opaque/c secret-key/c)
          "private/who.rkt"
          (only-in "rlp.rkt" natural->rlp-scalar rlp-encode)
          (only-in (submod "rlp.rkt" internal) rlp-decode/who))
@@ -88,11 +88,14 @@
           [signed-transaction-sender (-> signed-transaction? checksum-address?)]
           [signed-transaction-hash (-> signed-transaction? transaction-hash/c)]
           [signed-transaction->bytes (-> signed-transaction? bytes?)]
-          [bytes->signed-transaction (-> bytes? signed-transaction?)]))
+          [bytes->signed-transaction (-> bytes? signed-transaction?)]
+          [transaction->jsexpr (opaque-> transaction/c #:from address/c hash?)]))
 
 (module* internal #f
   (provide bytes->signed-transaction/who
            raw-transaction-reason/c
+           transaction/c
+           transaction-difference
            wire-fields))
 
 (define raw-transaction-phrases
@@ -137,7 +140,12 @@
   (drop-right (hash-ref wire-fields type) 3))
 
 (define (stored-fields type)
-  (if (zero? type) (cons 'chain-id (unsigned-fields type)) (unsigned-fields type)))
+  (if (zero? type) (append (unsigned-fields type) '(chain-id)) (unsigned-fields type)))
+
+(define (json-key name)
+  (match (regexp-split #rx"-" (symbol->string name))
+    ['("gas" "limit") 'gas]
+    [(cons head tail) (string->symbol (apply string-append head (map string-titlecase tail)))]))
 
 (define (equal+hash-by key)
   (list (lambda (this other _) (equal? (key this) (key other)))
@@ -324,6 +332,34 @@
 (define (seal tx sig sender)
   (define raw (bytes->immutable-bytes (encode-signed tx sig)))
   (sealed-transaction tx sig sender (string->immutable-string (bytes->hex (keccak256 raw))) raw))
+
+(define (transaction->jsexpr tx #:from from)
+  (define type (transaction-type tx))
+  (for/fold ([json (hasheq 'type (natural->hex type) 'from (address->checksum-string from))])
+            ([name (in-list (stored-fields type))])
+    (define value (transaction-field tx name))
+    (if value
+        (hash-set json (json-key name) (field->json (hash-ref field-kinds name) value))
+        json)))
+
+(define (field->json kind value)
+  (match kind
+    [(or 'u64 'u256) (natural->hex value)]
+    ['to value]
+    ['data (bytes->hex value)]
+    ['access-list (map access-entry->json value)]))
+
+(define (access-entry->json entry)
+  (match-define (cons address keys) entry)
+  (hasheq 'address address 'storageKeys (map bytes->hex keys)))
+
+(define (transaction-difference a b)
+  (define type (transaction-type a))
+  (if (eqv? type (transaction-type b))
+      (for/first ([name (in-list (stored-fields type))]
+                  #:unless (equal? (transaction-field a name) (transaction-field b name)))
+        name)
+      'type))
 
 (define (signed-transaction->bytes stx)
   (bytes-copy (signed-transaction-raw stx)))

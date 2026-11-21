@@ -8,6 +8,7 @@
 
 (provide collection
          direct-imports
+         exported-names
          import-closure
          module-name)
 
@@ -46,4 +47,15 @@
     [_ #f]))
 
 (define (collection name)
-  (car (regexp-split #rx"/" name)))
+  (match (regexp-split #rx"/" name)
+    [(cons head _) head]))
+
+(define (exported-names module)
+  (module-declared? module #t)
+  (define-values (variables syntax) (module->exports module))
+  (for*/list ([phase+names (in-list (append variables syntax))]
+              [name (in-list (match phase+names
+                               [(cons 0 names) names]
+                               [_ '()]))])
+    (match name
+      [(cons symbol _) symbol])))

@@ -6,7 +6,8 @@
          bytes->natural
          hex->bytes
          hex-data-string?
-         natural->bytes)
+         natural->bytes
+         natural->hex)
 
 (define (hex-data-string? v)
   (and (string? v) (regexp-match? #px"^0x(?:[0-9a-fA-F]{2})*$" v)))
@@ -17,6 +18,9 @@
    (apply string-append
           (for/list ([b (in-bytes bs)])
             (string-append (if (< b 16) "0" "") (number->string b 16))))))
+
+(define (natural->hex n)
+  (string-append "0x" (number->string n 16)))
 
 (define (hex->bytes h)
   (apply bytes

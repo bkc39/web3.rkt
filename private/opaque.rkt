@@ -1,6 +1,7 @@
 #lang racket/base
 
-;; Deliberately copied from libsecp256k1's private contracts (bkc39/rkt-libsecp256k1#12).
+;; Deliberately copied from libsecp256k1's private contracts (bkc39/rkt-libsecp256k1#12),
+;; with required keyword arguments added.
 
 (require (for-syntax racket/base
                      syntax/parse)
@@ -18,11 +19,17 @@
                   prop:flat-contract
                   raise-blame-error)
          (only-in racket/dict in-dict)
+         (only-in racket/list append-map filter-map)
+         (only-in racket/match match-define match-lambda)
          (only-in racket/string string-join string-trim)
          syntax/parse/define
+         (only-in "../abi/type.rkt" abi-value?)
          (only-in "signature.rkt" signature?))
 
-(provide describe-kind
+(provide address/c
+         describe-kind
+         digest/c
+         message/c
          opaque->
          (rename-out [opaque-contract opaque/c])
          secret-key/c)
@@ -65,6 +72,13 @@
                                 (opaque-contract-expected c) (describe-kind v))))))))
 
 (define secret-key/c (opaque-contract 'secret-key? "a secret key" secret-key?))
+(define digest/c
+  (opaque-contract 'digest/c "a 32-byte digest"
+                   (lambda (v) (and (bytes? v) (= (bytes-length v) 32)))))
+(define message/c
+  (opaque-contract 'message/c "a byte string or a string" (lambda (v) (or (bytes? v) (string? v)))))
+(define address/c
+  (opaque-contract 'address/c "an address" (lambda (v) (abi-value? 'address v))))
 
 (define (opaque v)
   (if (opaque-contract? v)
@@ -98,18 +112,27 @@
 (define (arity-includes? arity n)
   (if (arity-at-least? arity) (>= n (arity-at-least-value arity)) (= n arity)))
 
+(define (keyword-contract-name k)
+  (match-define (list kw c required?) k)
+  (define named (list kw (contract-name c)))
+  (if required? named (list named)))
+
 (define (make-opaque-arrow doms rest kws rng)
   (define opaque-doms (map opaque doms))
   (define opaque-rest (and rest (opaque rest)))
-  (define opaque-kws (for/list ([k (in-list kws)]) (cons (car k) (opaque (cdr k)))))
+  (define opaque-kws
+    (for/list ([k (in-list kws)])
+      (match-define (list kw c required?) k)
+      (list kw (opaque c) required?)))
+  (define required
+    (filter-map (match-lambda [(list kw _ required?) (and required? kw)]) opaque-kws))
   (define opaque-rng (opaque rng))
   (define arity (if rest (arity-at-least (length doms)) (length doms)))
   (make-contract
    #:name (apply build-compound-type-name 'opaque->
                  (append (map contract-name opaque-doms)
                          (if rest (list '#:rest (contract-name opaque-rest)) '())
-                         (for/list ([k (in-list opaque-kws)])
-                           (list (car k) (contract-name (cdr k))))
+                         (append-map keyword-contract-name opaque-kws)
                          (list (contract-name opaque-rng))))
    #:first-order (lambda (f) (and (procedure? f) (procedure-arity-includes? f (length doms))))
    #:late-neg-projection
@@ -124,7 +147,8 @@
        (and rest (argument-projection opaque-rest "the rest argument of")))
      (define kw-projections
        (for/list ([k (in-list opaque-kws)])
-         (cons (car k) (argument-projection (cdr k) (format "the ~a argument of" (car k))))))
+         (match-define (list kw c _) k)
+         (cons kw (argument-projection c (format "the ~a argument of" kw)))))
      (define rng-projection
        ((get/build-late-neg-projection opaque-rng) (blame-add-context blame "the range of")))
      (lambda (f neg)
@@ -139,8 +163,10 @@
              [else (cons ((car ps) (car args) neg) (loop (cdr args) (cdr ps)))])))
        (define (call kws kw-args . args)
          (define unknown (for/first ([k (in-list kws)] #:unless (assq k kw-projections)) k))
+         (define missing (for/first ([k (in-list required)] #:unless (memq k kws)) k))
          (cond
            [unknown (refuse (keywords-text (map car kw-projections)) (format "keyword ~a" unknown))]
+           [missing (refuse (format "keyword ~a" missing) (format "no keyword ~a" missing))]
            [(not (arity-includes? arity (length args)))
             (refuse (arity-text (procedure-arity f)) (count-text (length args)))]
            [else
@@ -159,13 +185,16 @@
     #:description "an argument contract"
     (pattern (~and e:expr (~not (_:keyword . _)) (~not _:keyword))))
 
-  (define-syntax-class optional-keyword
-    #:description "an optional keyword argument: [#:keyword contract]"
-    (pattern [kw:keyword c:expr])))
+  (define-splicing-syntax-class keyword-argument
+    #:description "a keyword argument: #:keyword contract, or [#:keyword contract] if optional"
+    (pattern [kw:keyword c:expr] #:with required? #'#f)
+    (pattern (~seq kw:keyword c:expr)
+             #:fail-when (and (eq? (syntax-e #'kw) '#:rest) #'kw) "#:rest comes before keywords"
+             #:with required? #'#t)))
 
 (define-syntax-parser opaque->
-  [(_ dom:positional ... (~optional (~seq #:rest rest:expr)) kw:optional-keyword ... rng:expr)
+  [(_ dom:positional ... (~optional (~seq #:rest rest:expr)) kw:keyword-argument ... rng:expr)
    #'(make-opaque-arrow (list dom ...)
                         (~? rest #f)
-                        (list (cons 'kw.kw kw.c) ...)
+                        (list (list 'kw.kw kw.c kw.required?) ...)
                         rng)])

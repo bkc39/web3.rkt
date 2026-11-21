@@ -19,7 +19,7 @@
                   secret-key->public-key
                   secret-key?)
          (only-in racket/match define-match-expander match-define)
-         (only-in "address.rkt" checksum-address?)
+         (only-in "address.rkt" address->checksum-string checksum-address?)
          (only-in (submod "address.rkt" private) digest->address)
          "private/exn.rkt"
          (only-in "private/hex.rkt" bytes->natural)
@@ -38,8 +38,6 @@
   (opaque/c 'y-parity/c "0 or 1" (lambda (v) (or (eqv? v 0) (eqv? v 1)))))
 (define signature-bytes/c
   (opaque/c 'signature-bytes/c "65 bytes" (lambda (v) (and (bytes? v) (= (bytes-length v) 65)))))
-(define digest/c
-  (opaque/c 'digest/c "a 32-byte digest" (lambda (v) (and (bytes? v) (= (bytes-length v) 32)))))
 (define public-key/c (opaque/c 'public-key? "a public key" public-key?))
 (define signature/c (opaque/c 'signature? "a signature" signature?))
 
@@ -65,10 +63,16 @@
   [signature-low-s? (opaque-> signature/c boolean?)]
   [signature-v (opaque-> signature/c (or/c 27 28))]
   [signature->bytes (opaque-> signature/c signature-bytes/c)]
-  [bytes->signature (opaque-> signature-bytes/c signature?)]))
+  [bytes->signature (opaque-> signature-bytes/c signature?)]
+  [hash-message (opaque-> message/c digest/c)]
+  [sign-message (opaque-> secret-key/c message/c signature?)]
+  [recover-message-address (opaque-> signature/c message/c (or/c #f checksum-address?))]
+  [message-signed-by? (opaque-> signature/c message/c address/c boolean?)]))
 
 (module* private #f
-  (provide recoverable->signature
+  (provide bytes->signature/who
+           message->bytes
+           recoverable->signature
            sign-digest/who))
 
 (define-module-boundary-contract checked-signature raw-signature
@@ -113,18 +117,37 @@
 (define (signature-low-s? sig)
   (<= (signature-s sig) (quotient secp256k1-order 2)))
 
-(define (bytes->signature bs)
+(define/who (bytes->signature who bs)
   (define v (bytes-ref bs 64))
   (define r (bytes->natural bs 0 32))
   (define s (bytes->natural bs 32 64))
   (define (invalid fmt . args)
-    (apply raise-signature-error (string-append "bytes->signature: invalid signature;\n " fmt)
-           args))
+    (apply raise-signature-error (string-append "~a: invalid signature;\n " fmt) who args))
   (cond
     [(not (memv v '(0 1 27 28))) (invalid "v is ~a, not 0, 1, 27 or 28" v)]
     [(not (scalar? r)) (invalid "r is zero or not less than the curve order")]
     [(not (scalar? s)) (invalid "s is zero or not less than the curve order")]
     [else (raw-signature r s (if (>= v 27) (- v 27) v))]))
+
+(define personal-message-prefix #"\x19Ethereum Signed Message:\n")
+
+(define (message->bytes message)
+  (if (bytes? message) message (string->bytes/utf-8 message)))
+
+(define (hash-message message)
+  (define body (message->bytes message))
+  (keccak256 (bytes-append personal-message-prefix
+                           (string->bytes/utf-8 (number->string (bytes-length body)))
+                           body)))
+
+(define (sign-message key message)
+  (sign-digest/who 'sign-message key (hash-message message)))
+
+(define (recover-message-address sig message)
+  (recover-address sig (hash-message message)))
+
+(define (message-signed-by? sig message address)
+  (equal? (recover-message-address sig message) (address->checksum-string address)))
 
 (define (raise-key-error fmt . args)
   (raise (exn:fail:web3:key (apply format fmt args) (current-continuation-marks))))

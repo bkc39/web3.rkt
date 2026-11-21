@@ -511,16 +511,6 @@
                           names)
                   '()))
 
-  (define (exported-names module)
-    (module-declared? module #t)
-    (define-values (variables syntax) (module->exports module))
-    (for*/list ([phase+names (in-list (append variables syntax))]
-                [name (in-list (match phase+names
-                                 [(cons 0 names) names]
-                                 [_ '()]))])
-      (match name
-        [(cons symbol _) symbol])))
-
   (test-case "D2: web3 provides every name web3/transaction does"
     (define all (exported-names 'web3))
     (for ([name (in-list (exported-names 'web3/transaction))])
