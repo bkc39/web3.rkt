@@ -33,7 +33,13 @@
           [rename send-request provider-request (-> provider? string? (listof jsexpr?) any)]
           [rename close-provider provider-close (-> provider? void?)]
           [current-provider (parameter/c (or/c #f provider?))]
-          [url->http-provider (-> string? http-provider?)]
+          [url->http-provider
+           (->i ([url string?])
+                (#:ssl-context [ssl-context ssl-client-context?])
+                #:pre/name (url ssl-context)
+                "#:ssl-context needs an https URL"
+                (or (unsupplied-arg? ssl-context) (https-url? url))
+                [_ http-provider?])]
           [http-provider-url (-> http-provider? string?)]
           [mock-provider (-> mock-handler/c mock-provider?)]
           [mock-provider-calls (-> mock-provider? (listof (cons/c string? list?)))]
@@ -91,16 +97,19 @@
 
 ;;;; HTTP
 
-(struct http-provider (url path host port ssl? link owner last-id)
+(struct http-provider (url path host port ssl-context link owner last-id)
   #:methods gen:provider
   [(define (provider-request p method params)
      (response->result method (call-with-connection p (lambda () (exchange p method params)))))
    (define (provider-close p)
      (call-with-connection p (lambda () (drop-link! p))))])
 
-(define (url->http-provider url-string)
+(define (https-url? url-string)
+  (equal? "https" (url-scheme (string->url url-string))))
+
+(define (url->http-provider url-string #:ssl-context [ssl-context #f])
   (define u (string->url url-string))
-  (define ssl? (equal? "https" (url-scheme u)))
+  (define ssl? (https-url? url-string))
   (define path
     (cond
       [(regexp-match #px"^[a-zA-Z]+://[^/]+(/.+)$" url-string) => cadr]
@@ -170,7 +179,7 @@
               (byte-ready? (link-in l))))))
 
 (define (open-link! p)
-  (match-define (struct* http-provider ([host host] [port port] [ssl? ssl?])) p)
+  (match-define (struct* http-provider ([host host] [port port] [ssl-context ssl?])) p)
   (define-values (in out) ((if ssl? ssl-connect tcp-connect) host port))
   (define conn (http-conn))
   (http-conn-open! conn host
@@ -403,4 +412,15 @@
     (check-equal? (sync/timeout 20 outcome) '("0x1" #f))
     (kill-thread runner)
     (custodian-shutdown-all server)
-    (provider-close p)))
+    (provider-close p))
+
+  (test-case "an https provider holds its context"
+    (define test-pem (collection-file-path "test.pem" "openssl"))
+    (parameterize ([ssl-default-verify-sources (list test-pem)])
+      (check-eq? (http-provider-ssl-context (url->http-provider "https://127.0.0.1:1/"))
+                 (ssl-secure-client-context)))
+    (check-false (http-provider-ssl-context (url->http-provider "http://127.0.0.1:1/")))
+    (define context (ssl-make-client-context 'auto))
+    (check-eq? (http-provider-ssl-context
+                (url->http-provider "https://127.0.0.1:1/" #:ssl-context context))
+               context)))

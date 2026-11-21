@@ -1,6 +1,7 @@
 #lang scribble/manual
 @require[@for-label[json
                     libsecp256k1
+                    openssl
                     racket/base
                     racket/contract
                     racket/generic
@@ -39,7 +40,8 @@
 @(define transaction-eval (make-base-eval '(require web3)))
 @(define signer-eval (make-base-eval '(require web3)))
 @(define send-eval (make-base-eval '(require web3)))
-@(define provider-guide-eval (make-base-eval '(require racket/generic racket/match web3)))
+@(define provider-eval (make-base-eval '(require openssl web3)))
+@(define provider-guide-eval(make-base-eval '(require racket/generic racket/match web3)))
 @(define abi-guide-eval (make-base-eval '(require web3)))
 @(define event-guide-eval (make-base-eval '(require web3)))
 
@@ -132,7 +134,9 @@ as documented raises @racket[exn:fail:web3].
 A provider is a connection to a node: @racket[url->http-provider] makes one from the node's URL,
 and @racket[with-anvil] starts a local node and makes its provider the @racket[current-provider]
 while its body runs.  Every endpoint takes a @racket[#:provider] argument and otherwise uses the
-current one.
+current one.  An @tt{https} provider checks the node's certificate and host name;
+@racket[url->http-provider] takes another context for a private certificate authority or a local
+node with a self-signed certificate.
 
 @racket[define-jsonrpc-endpoint] defines an endpoint for a method this library lacks, with
 contracts on its arguments and a conversion of its result.  An error response raises
@@ -761,15 +765,40 @@ parameter.  The response's @tt{result} goes through
 
 @subsection{HTTP Providers}
 
-@defproc[(url->http-provider [url string?]) http-provider?]{
+@defproc[(url->http-provider [url string?]
+                             [#:ssl-context ssl-context ssl-client-context?
+                              (ssl-secure-client-context)])
+         http-provider?]{
 
 Returns a provider that sends JSON-RPC requests to @racket[url] over
 HTTP or HTTPS.  The path and query of @racket[url] are kept, so URLs
 that carry an API key in their path work as given.
 
+For an @tt{https} URL, every connection is made with @racket[ssl-context], taken when the
+provider is made.  The default checks the node's certificate against
+@racket[(ssl-default-verify-sources)] and checks that it is for the URL's host.  A connection
+that fails the check is closed before any request is sent, and the request raises
+@racket[exn:fail:web3] naming the host and port.  A context from
+@racket[ssl-make-client-context] trusts a private certificate authority, or, made with
+@racket['auto] and nothing loaded, accepts any certificate, as a local node with a self-signed
+one needs.  Giving @racket[ssl-context] with an @tt{http} URL is a contract violation.
+
 The provider can be shared between threads.  An interrupted or failed
 request never leaks its reply into a later one.  A lost connection, or
-one closed by @racket[provider-close], is reopened on the next request.}
+one closed by @racket[provider-close], is reopened on the next request.
+
+@racketblock[
+(define private-ca (ssl-make-client-context 'auto))
+(ssl-load-verify-source! private-ca "ca.pem")
+(ssl-set-verify! private-ca #t)
+(ssl-set-verify-hostname! private-ca #t)
+(url->http-provider "https://node.internal:8545" #:ssl-context private-ca)]
+
+@examples[#:eval provider-eval
+          (http-provider? (url->http-provider "https://127.0.0.1:8545"
+                                              #:ssl-context (ssl-make-client-context 'auto)))
+          (eval:error (url->http-provider "http://127.0.0.1:8545"
+                                          #:ssl-context (ssl-make-client-context 'auto)))]}
 
 @defproc[(http-provider? [v any/c]) boolean?]{
 Recognizes providers made by @racket[url->http-provider].}

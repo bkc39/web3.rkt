@@ -4,7 +4,8 @@
 ;; The last test needs anvil and is skipped without it.
 
 (module+ test
-  (require racket/contract
+  (require openssl
+           racket/contract
            racket/generic
            rackunit
            web3
@@ -83,7 +84,18 @@
     (check-exn exn:fail:contract? (lambda () (provider-request 'nope "eth_chainId" '())))
     (check-exn exn:fail:contract? (lambda () (provider-close 'nope)))
     (check-exn #rx"no provider"
-               (lambda () (with-provider #f (eth-chain-id)))))
+               (lambda () (with-provider #f (eth-chain-id))))
+    (check-true (blames-caller? (lambda ()
+                                  (url->http-provider "http://127.0.0.1:8545"
+                                                      #:ssl-context
+                                                      (ssl-make-client-context 'auto)))))
+    (for ([context (list 'secure #f (ssl-make-server-context))])
+      (check-true (blames-caller? (lambda ()
+                                    (url->http-provider "https://127.0.0.1:8545"
+                                                        #:ssl-context context)))))
+    (check-true (http-provider? (url->http-provider "https://127.0.0.1:8545"
+                                                    #:ssl-context
+                                                    (ssl-make-client-context 'auto)))))
 
   (test-case "a provider must implement provider-request"
     (define ns (make-base-namespace))
