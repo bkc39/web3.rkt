@@ -12,6 +12,7 @@
          (only-in (submod "abi/event.rkt" internal) event-where/c)
          (only-in (submod "abi/event-type.rkt" private) spec->abi-event/who)
          "address.rkt"
+         (only-in (submod "address.rkt" private) digest->address)
          (only-in "eth.rkt" block-param/c)
          "event.rkt"
          "rpc.rkt"
@@ -337,9 +338,6 @@
     (deploy-code who init-code constructor args
                  #:from from #:value value #:gas gas #:errors errors #:provider provider))
   address)
-
-(define (digest->address digest)
-  (address->checksum-string (bytes->hex-string (subbytes digest 12))))
 
 (define (natural->minimal-bytes n)
   (let loop ([n n] [acc '()])

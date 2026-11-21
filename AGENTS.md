@@ -19,7 +19,10 @@ bezzle, which pin it as a flake input.
 | `private/define-contract.rkt` | define-contract's expansion-time half; reads JSON at phase 1, never keccak |
 | `private/binding-rules.rkt` | the keywords a bound procedure accepts and the messages for what it refuses, shared by the expansion-time checks and the procedures |
 | `private/abi-json.rkt` | reading JSON ABIs and artifacts from ports and files |
-| `address.rkt` | EIP-55 checksums; requires only `racket/base` libraries, `keccak` and `abi/type.rkt` |
+| `address.rkt` | EIP-55 checksums; requires only `racket/base` libraries, `keccak` and `abi/type.rkt`; a `private` submodule, which also requires `private/hex.rkt`, holds `digest->address`, the address in the last 20 bytes of a hash |
+| `account.rkt` | secret keys (libsecp256k1's), addresses, `sign-digest`, `recover-address`, signatures and their 65 bytes; every procedure under `opaque->`, the constructor too: `signature` is a match expander that, as an expression, is the checked constructor, so the struct cannot be extended or copied around it; no network, JSON or node modules; a `private` submodule holds `recoverable->signature` |
+| `private/opaque.rkt` | `opaque/c` and `opaque->`, contracts whose errors name the kind of value, never the value; copied from libsecp256k1, which does not export them, except `web3-kinds`, the kinds only web3 has |
+| `private/signature.rkt` | the unchecked `signature` struct, its printer and its 65 bytes, shared by `account.rkt`, which exports it under contracts, and `private/opaque.rkt` |
 | `abi/type.rkt` | ABI types, signatures and value checks; phase-1 safe, so it requires only `racket/base` libraries and `private/exn.rkt`; a `private` submodule holds the reader and contracts other modules share |
 | `abi/event-type.rkt` | event descriptions (`abi-event`, string and s-expression forms); phase-1 safe like `abi/type.rkt`, plus `private/who.rkt`; a `private` submodule holds the readers under their caller's `who` |
 | `abi/description.rkt` | ABI items and contract descriptions from strings, s-expressions and JSON; phase-1 safe, as abi/type.rkt |
@@ -29,8 +32,8 @@ bezzle, which pin it as a flake input.
 | `abi/vectors.rkt` | conformance vectors, data in `abi/vectors/encode.rktd` (regenerate with `racket tests/generate-abi-vectors.rkt`) and the hand-written `abi/vectors/decode.rktd` |
 | `private/abi-decode.rkt` | the decoder core and its reasons; `abi.rkt` puts contracts on it |
 | `private/abi-item.rkt` | ABI item structs and their string and s-expression readers under the caller's `who`; phase-1 safe; `abi/description.rkt` puts contracts on it |
-| `private/hex.rkt` | unchecked hex conversions shared by `rpc.rkt` and `abi.rkt` |
-| `private/exn.rkt` | the exception structs (`exn:fail:web3`, `…:rpc`, `…:rpc:revert`, `…:transaction`, `…:abi`, `…:abi:type`, `…:abi:value`, `…:abi:decode`); racket/base only |
+| `private/hex.rkt` | unchecked conversions between bytes, hex strings and naturals; callers check their input |
+| `private/exn.rkt` | the exception structs (`exn:fail:web3`, `…:rpc`, `…:rpc:revert`, `…:transaction`, `…:abi`, `…:abi:type`, `…:abi:value`, `…:abi:decode`, `…:key`, `…:signature`); racket/base only |
 | `private/node.rkt` | checked conversions of node data (hex, quantities, addresses, hashes, receipt status, optional fields); no JSON or transport modules |
 | `private/who.rkt` | `define/who`, which defines `name` and `name/who`, the same procedure taking the `who` its messages start with |
 | `anvil.rkt` | anvil's methods and process management |
@@ -63,10 +66,14 @@ the `racket-deps` hash in `flake.nix` (the build prints the new one).
   `tests/fixtures.rkt` fails when sources and artifacts disagree.
 - Every user-visible feature has an example.  A new example takes the next
   number, gets a row in `examples/README.md`, and is run by
-  `tests/examples.rkt`.
-- Errors a caller can meet are `exn:fail:web3` or a subtype.  Bytes that
-  come from a contract or a node are untrusted: decoders validate offsets
-  and lengths and raise `exn:fail:web3`, never an index error.
+  `tests/examples.rkt`, or, for a program with a `main` submodule, by its
+  own `tests/examples/NN-name.rkt`.
+- Errors a caller can meet are `exn:fail:web3` or a subtype, or
+  libsecp256k1's `exn:fail:libsecp256k1:load`, which passes through
+  unchanged.  No error shows a secret key or the text it was read from.
+  Bytes that come from a contract or a node are untrusted: decoders
+  validate offsets and lengths and raise `exn:fail:web3`, never an index
+  error.
 - Macros use `syntax-parse` (`define-syntax-parse-rule`), never
   `define-syntax-rule`.  Conversions are named `a->b`.  Constructors are
   `(type-name ...)`, not `(make-type-name ...)`.

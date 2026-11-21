@@ -13,6 +13,7 @@
            "../examples/common.rkt")
 
   (define-runtime-path examples-dir "../examples")
+  (define-runtime-path example-tests-dir "examples")
 
   (define (example-number name)
     (string->number (cadr (regexp-match #px"^([0-9]{2})-" name))))
@@ -22,6 +23,11 @@
                      #:when (regexp-match? #px"^[0-9]{2}-.*[.]rkt$" (path->string p)))
             (path->string p))
           string<?))
+
+  (define (program? name)
+    (module-declared? `(submod (file ,(path->string (build-path examples-dir name))) main) #t))
+
+  (define-values (program-names script-names) (partition program? example-names))
 
   (define (run-example name)
     (define custodian (make-custodian))
@@ -39,6 +45,11 @@
   (test-case "examples are numbered 00, 01, ... without gaps"
     (check-equal? (map example-number example-names)
                   (range (length example-names))))
+
+  (test-case "every program has its own test"
+    (check-not-equal? program-names '())
+    (for ([name (in-list program-names)])
+      (check-true (file-exists? (build-path example-tests-dir name)) name)))
 
   (test-case "show indents the continuation lines of an expression"
     (define lines
@@ -101,6 +112,6 @@
     [(not (current-anvil-path))
      (displayln "skipping examples: anvil not found (set WEB3_ANVIL or use `nix develop`)")]
     [else
-     (for ([name (in-list example-names)])
+     (for ([name (in-list script-names)])
        (test-case name
          (check-regexp-match #rx"^\n;;;; " (run-example name))))]))

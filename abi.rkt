@@ -16,7 +16,7 @@
          "address.rkt"
          "private/abi-decode.rkt"
          "private/exn.rkt"
-         (only-in "private/hex.rkt" bytes->hex hex->bytes)
+         (only-in "private/hex.rkt" bytes->hex bytes->natural hex->bytes natural->bytes)
          "private/who.rkt")
 
 (provide (all-from-out "abi/description.rkt" "abi/event-type.rkt" "abi/type.rkt")
@@ -67,16 +67,9 @@
 (define (word->bytes n)
   (natural->bytes n 32))
 
-(define (natural->bytes n width)
-  (define bs (make-bytes width 0))
-  (for ([i (in-range width)])
-    (bytes-set! bs (- width i 1) (bitwise-and (arithmetic-shift n (* -8 i)) 255)))
-  bs)
-
 (define (bytes->words bs)
   (for/list ([i (in-range 0 (bytes-length bs) 32)])
-    (for/fold ([n 0]) ([b (in-bytes bs i (min (bytes-length bs) (+ i 32)))])
-      (+ (* n 256) b))))
+    (bytes->natural bs i (min (bytes-length bs) (+ i 32)))))
 
 (define (address->natural a)
   (string->number (substring a 2) 16))

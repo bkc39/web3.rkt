@@ -1,7 +1,8 @@
 #lang racket/base
 
 (require (for-syntax racket/base
-                     (only-in racket/path file-name-from-path))
+                     (only-in racket/list take-right)
+                     (only-in racket/string string-join))
          (only-in racket/contract exn:fail:contract:blame?)
          racket/list
          racket/match
@@ -79,10 +80,11 @@
        (regexp-match? (regexp (string-append "blaming: [^\n]*" (regexp-quote file-name)))
                       (exn-message e))))
 
-;; A contract violation blaming the module this form appears in.
 (define-syntax-parse-rule (check-blames-here expr)
   #:with file-name
-  (datum->syntax #'expr (path->string (file-name-from-path (syntax-source this-syntax))))
+  (datum->syntax #'expr (string-join (map path->string
+                                          (take-right (explode-path (syntax-source this-syntax)) 2))
+                                     "/"))
   (check-exn (lambda (e) (blames? file-name e))
              (lambda () expr)
              (format "~s" 'expr)))
