@@ -749,7 +749,8 @@ the receipt.
 Contracts take a signer wherever they take a sender: as @racket[#:from], as
 @racket[current-account], or in a @racket[contract-instance].  A send from a signer is filled,
 signed here and sent raw.  A send from an address is signed by the node, as with
-@racket[send-transaction], which is how impersonated accounts send.  Calls and estimates use the signer's address and sign nothing.
+@racket[send-transaction], which is how impersonated accounts send.  Calls and estimates use the
+signer's address and sign nothing.
 
 @racketblock[
 (define-contract counter #:file "contracts/out/Counter.sol/Counter.json")
@@ -2157,7 +2158,10 @@ Sends from one signer in several threads at once may get the same one.}
 A transaction from @racket[from], an account the node holds, to @racket[to] (@racket[#f] creates a
 contract), signed and sent by the node with @tt{eth_sendTransaction}, returning its hash, or with
 @racket[send-transaction/receipt] its receipt once mined.  The fields given are sent, with
-@racket[from] and @racket[to] checksummed; a nonce and fees not given are left to the node.  A
+@racket[from] and @racket[to] checksummed; a nonce and fees not given are left to the node.  When
+@racket[type], or the fee fields given, make the transaction type 0 or 1, as for
+@racket[fill-transaction], a gas price not given is @tt{eth_gasPrice}, and type 1 sends an empty
+access list when none is given, so the node sends that type.  A
 @racket[gas-limit] not given is @tt{eth_estimateGas} of the transaction, and a revert there raises
 @racket[exn:fail:web3:rpc:revert], decoded against @racket[errors].  The node is asked for its
 chain id only when @racket[chain-id] is given, and one other than the node's raises

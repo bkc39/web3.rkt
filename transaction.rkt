@@ -88,7 +88,6 @@
            signed-transaction/who
            transaction/c
            transaction-difference
-           transaction-field-name?
            (rename-out [build fields->transaction] [hash-string/c transaction-hash/c])
            v-chain-id
            v-y-parity
@@ -139,9 +138,6 @@
 
 (define (stored-fields type)
   (if (zero? type) (append (unsigned-fields type) '(chain-id)) (unsigned-fields type)))
-
-(define (transaction-field-name? v)
-  (hash-has-key? field-kinds v))
 
 (define (field-json-key name)
   (match (regexp-split #rx"-" (symbol->string name))

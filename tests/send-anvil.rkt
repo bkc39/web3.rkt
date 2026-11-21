@@ -6,7 +6,7 @@
            rackunit
            web3
            (only-in "helpers/accounts.rkt" anvil-addresses anvil-keys random-key)
-           (only-in "helpers/mock.rkt" recording recording-calls)
+           (only-in "helpers/mock.rkt" call-with-fields recording recording-calls)
            (only-in "helpers/transactions.rkt"
                     check-node-fields quantity random-checksummed-address slot-1)
            (only-in "util.rkt" anvil-bob seeded))
@@ -142,7 +142,25 @@
         (send-transaction/receipt account5 #f #:data (contract-abi-bytecode counter-abi)))
       (define address (receipt-contract-address created))
       (check-equal? address (create-address account5 (+ first-nonce 3)))
-      (check-equal? (counter-count address) 0)))
+      (check-equal? (counter-count address) 0))
+
+    (test-case "S11: a send the node signs has the type fill-transaction gives"
+      (define price (eth-gas-price))
+      (for ([row (in-list `((0 (#:type 0))
+                            (1 (#:type 1))
+                            (1 (#:type 1 #:gas-price ,price))
+                            (1 (#:gas-price ,price #:access-list ()))
+                            (2 (#:type 2))
+                            (2 ())))])
+        (match-define (list type fields) row)
+        (define name (format "~s" fields))
+        (define recipient (fresh-address))
+        (check-equal? (transaction-type
+                       (call-with-fields fill-transaction fields account5 recipient))
+                      type name)
+        (check-equal? (receipt-type (call-with-fields send-transaction/receipt fields
+                                                      account5 recipient))
+                      type name))))
 
   (define (contract-cases)
     (test-case "N4, N5: a contract's sends from an address and from its key leave the same chain"

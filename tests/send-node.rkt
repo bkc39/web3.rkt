@@ -37,6 +37,22 @@
        #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x") (type . "0x0")
                (nonce . "0x0") (gasPrice . "0x7") (gas . "0x5208"))
        ("eth_sendTransaction"))
+      ((#:type 0 #:gas-limit 21000) ,anvil-bob
+       #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x") (type . "0x0")
+               (gasPrice . "0x9") (gas . "0x5208"))
+       ("eth_gasPrice" "eth_sendTransaction"))
+      ((#:type 1) ,anvil-bob
+       #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x") (type . "0x1")
+               (gasPrice . "0x9") (accessList . ()) (gas . "0x5208"))
+       ("eth_gasPrice" "eth_estimateGas" "eth_sendTransaction"))
+      ((#:gas-price 7 #:access-list ()) ,anvil-bob
+       #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x") (gasPrice . "0x7")
+               (accessList . ()) (gas . "0x5208"))
+       ("eth_estimateGas" "eth_sendTransaction"))
+      ((#:type 2) ,anvil-bob
+       #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x") (type . "0x2")
+               (gas . "0x5208"))
+       ("eth_estimateGas" "eth_sendTransaction"))
       ((#:nonce 3 #:type 2 #:max-priority-fee-per-gas 1 #:max-fee-per-gas 2 #:data #"\1\2"
         #:access-list ((,(string-downcase anvil-carol) ,storage-key)))
        ,anvil-bob
@@ -48,7 +64,7 @@
        ("eth_estimateGas" "eth_sendTransaction"))))
 
   (define (node-answers . overrides)
-    (apply hash-set* (hash-set (sending) "eth_chainId" "0x7a69") overrides))
+    (apply hash-set* (hash-set* (sending) "eth_chainId" "0x7a69" "eth_gasPrice" "0x9") overrides))
 
   (define (sent procedure fields
                 #:from [from (string-downcase anvil-alice)]
@@ -140,6 +156,28 @@
                   (list (list (hasheq 'from anvil-alice 'to anvil-bob 'data "0x" 'value "0x5"
                                       'gas "0x5208")
                               "0x5"))))
+
+  (test-case "S7: every request goes to #:provider, never to current-provider"
+    (define trap (mock-provider (hash)))
+    (parameterize ([current-provider trap])
+      (define node (mock-provider (node-answers)))
+      (define receipt
+        (send-transaction/receipt anvil-alice anvil-bob #:type 1 #:chain-id 31337 #:provider node))
+      (check-eq? (receipt->jsexpr receipt) mined)
+      (check-equal? (method-names (mock-provider-calls node))
+                    '("eth_chainId" "eth_gasPrice" "eth_estimateGas" "eth_sendTransaction"
+                      "eth_getTransactionReceipt"))
+      (define failing
+        (mock-provider (node-answers "eth_getTransactionReceipt" failed
+                                     "eth_call" (reverting "eth_call"))))
+      (define e
+        (with-handlers ([exn:fail? values])
+          (send-transaction/receipt anvil-alice anvil-bob #:provider failing)))
+      (check-pred exn:fail:web3:transaction? e)
+      (check-equal? (method-names (mock-provider-calls failing))
+                    '("eth_estimateGas" "eth_sendTransaction" "eth_getTransactionReceipt"
+                      "eth_call"))
+      (check-equal? (mock-provider-calls trap) '())))
 
   (test-case "S8: wrong arguments blame the caller"
     (parameterize ([current-provider (mock-provider (node-answers))])

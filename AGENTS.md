@@ -11,13 +11,13 @@ bezzle, which pin it as a flake input.
 | module | holds |
 |---|---|
 | `rpc.rkt` | providers, `rpc-call`, errors, hex helpers, `define-jsonrpc-endpoint` (whose `#:result-reader` gets the method name, the result and the call's arguments) |
-| `eth.rkt` | `web3_*`, `net_*`, `eth_*` endpoints (fees, blocks, receipts, proofs, filters), `wait-for-receipt`; an `internal` submodule holds `poll-receipt/who`, the raw poll every wait runs |
+| `eth.rkt` | `web3_*`, `net_*`, `eth_*` endpoints (fees, blocks, receipts, proofs, filters), `wait-for-receipt`; an `internal` submodule holds `wait-for-receipt/who`, the poll every wait runs, under the caller's `who` and with the caller's reader |
 | `private/eth-params.rkt` | the endpoints' parameter contracts and their conversions to the node's JSON: block parameters, reward percentiles, storage slots, JSON objects; `eth.rkt` exports the documented ones |
 | `abi.rkt` | the contract ABI: encoders, decoders, selectors, reverts; an `internal` submodule of entry points that take the caller's `who` |
 | `contract.rkt` | deploying, calls and sends, contract instances, define-contract, contract addresses; an `internal` submodule of entry points that take the caller's `who` |
 | `private/contract-call.rkt` | the calls, sends, estimates and deploys `contract.rkt` and bound procedures run, under their caller's `who`; the sending itself is `private/send.rkt`'s |
 | `send.rkt` | filling transactions from a node, signing them with a signer and sending them raw, and sends from an address the node signs (`send-transaction`); every procedure under `opaque->` |
-| `private/send.rkt` | filling, raw sends, node-signed sends (`send-from-node`, which contract sends from an address share), and the estimate/send/wait/replay every send runs, under the caller's `who`; `define-fill-keywords`, the one table of fill keywords their formals and contracts come from; JSON objects through `transaction.rkt`'s field mapping |
+| `private/send.rkt` | filling, raw sends, node-signed sends (`send-from-node`, which contract sends from an address share), and the estimate/send/wait/replay every send runs, under the caller's `who`; `define-fill-keywords`, the one table of fill keywords their formals, their contracts and the fields a send names come from; JSON objects through `transaction.rkt`'s field mapping |
 | `private/contracts.rkt` | the argument contracts the send and contract entry points share: senders, `to`, errors, providers |
 | `private/bindings.rkt` | `define-contract` and `contract-bindings-out`, and the procedures they bind |
 | `private/define-contract.rkt` | define-contract's expansion-time half; reads JSON at phase 1, never keccak |
