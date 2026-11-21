@@ -25,8 +25,9 @@ node.  `(show expr)` prints an expression and its value.
 | `07-events.rkt` | event descriptions in three forms and their topics, a receipt's log raw and decoded, arguments by name, `get-logs` for every transfer, filtered by an indexed address, by any of several, and from the zero address, block ranges and chunked fetching, hashed indexed values, anonymous events, events sharing topic 0, several events at once, malformed logs, events and filters |
 | `08-contract-bindings.rkt` | define-contract from a compiled artifact, from inline items and from s-expressions, deploying, calls and sends through bound procedures, custom errors decoded by name, events by name, call data without sending, contract instances from JSON at run time, a state-changing function called and not sent, ABI descriptions as plain data, overloads, mistakes caught before anything is sent |
 | `09-accounts.rkt` | a random key, its address, signing a digest, recovering the signer |
+| `10-rlp.rkt` | encoding and decoding RLP, scalars, the RLP behind CREATE addresses, refusing non-canonical input |
 
-09 is a program: `racket examples/09-accounts.rkt` runs its `main` and needs no node.
+09 and 10 are programs: `racket examples/NN-name.rkt` runs its `main` and needs no node.
 
 `contracts/` holds the Solidity the examples deploy (`Token.sol`,
 `Counter.sol`, `Events.sol`); `contracts/out/` is its compiled form,
