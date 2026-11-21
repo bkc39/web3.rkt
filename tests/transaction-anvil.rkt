@@ -66,8 +66,8 @@
     (check-equal? (raw-by-hash hash) (signed-transaction->bytes stx))
     (if to
         (check-equal? (- (eth-get-balance to "latest") before) value)
-        (check-equal? (string-downcase (hash-ref receipt 'contractAddress))
-                      (string-downcase (create-address sender (transaction-nonce tx))))))
+        (check-equal? (receipt-contract-address receipt)
+                      (create-address sender (transaction-nonce tx)))))
 
   (cond
     [(not (current-anvil-path))

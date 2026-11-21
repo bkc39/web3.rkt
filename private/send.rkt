@@ -9,7 +9,10 @@
          "../abi.rkt"
          (submod "../abi.rkt" internal)
          (only-in "../address.rkt" address->checksum-string)
-         (only-in "../eth.rkt" eth-call eth-send-transaction wait-for-receipt)
+         (only-in "../eth.rkt" eth-call eth-send-transaction)
+         (only-in (submod "../eth.rkt" internal) poll-receipt/who)
+         (only-in "../eth/receipt.rkt" receipt-block-number receipt-status)
+         (only-in (submod "../eth/receipt.rkt" internal) jsexpr->receipt-of)
          "../rpc.rkt"
          (only-in (submod "../signer.rkt" internal)
                   raise-signer
@@ -159,26 +162,23 @@
                    (lambda (e)
                      (raise (with-message e (format "~a: sent transaction ~a, outcome unknown: ~a"
                                                     who tx-hash (exn-message e)))))])
-    (wait-for-receipt tx-hash #:timeout (receipt-timeout) #:provider provider)))
+    (poll-receipt/who 'wait-for-receipt tx-hash
+                      #:timeout (receipt-timeout) #:interval 0.002 #:provider provider)))
 
 (define (settle who tx-hash tx errors provider)
-  (define receipt (wait-for-outcome who tx-hash provider))
-  (cond
-    [(node-status->boolean who
-                           (of-transaction "receipt status" tx-hash)
-                           (hash-ref receipt 'status #f))
-     receipt]
-    [else
-     (define block
-       (node-quantity->number who
-                              (of-transaction "block number" tx-hash)
-                              (hash-ref receipt 'blockNumber #f)))
+  (define raw (wait-for-outcome who tx-hash provider))
+  (define receipt (jsexpr->receipt-of who tx-hash raw (of-transaction "" tx-hash)))
+  (match (receipt-status receipt)
+    [1 receipt]
+    [0
+     (define block (receipt-block-number receipt))
      (define-values (revert tail) (replay tx block errors provider))
      (raise (exn:fail:web3:transaction
              (format "~a: transaction ~a failed in block ~a: ~a" who tx-hash block tail)
              (current-continuation-marks)
              receipt
-             revert))]))
+             revert))]
+    [#f (raise-node-malformed who (of-transaction "receipt status" tx-hash) 'null)]))
 
 (define (rpc-replay-outcome e errors)
   (cond
@@ -243,10 +243,6 @@
 
 (define (block-needed? order fixed)
   (or (not fixed) (and (= fixed 2) (not (fill-order-max-fee-per-gas order)))))
-
-(define (node-natural who what v bits)
-  (define n (node-quantity->number who what v))
-  (if (< n (expt 2 bits)) n (raise-node-malformed who what v)))
 
 (define (ask who what bits provider method . params)
   (node-natural who what (rpc-call method params #:provider provider) bits))

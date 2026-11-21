@@ -12,6 +12,7 @@
          (only-in (submod "abi/event-type.rkt" private) spec->abi-event/who)
          "address.rkt"
          (only-in (submod "address.rkt" private) digest->address)
+         (only-in "eth/receipt.rkt" receipt?)
          "event.rkt"
          (only-in "rlp.rkt" natural->rlp-scalar rlp-encode)
          "rpc.rkt"
@@ -21,7 +22,7 @@
          (only-in "private/eth-params.rkt" block-param/c)
          "private/exn.rkt"
          (only-in "private/hex.rkt" hex-data-string?)
-         (only-in "private/contracts.rkt" errors/c from/c provider/c receipt/c)
+         (only-in "private/contracts.rkt" errors/c from/c provider/c)
          "private/who.rkt")
 
 (define-syntax-parse-rule (transaction->* (required:expr ...) (optional ...) result:expr)
@@ -74,7 +75,7 @@
           [file->contract-abi (-> path-string? contract-abi?)]
           [deploy-contract (transaction->* (init-code/c) (signature/c) checksum-address?)]
           [deploy-contract/receipt
-           (transaction->* (init-code/c) (signature/c) (values checksum-address? receipt/c))]
+           (transaction->* (init-code/c) (signature/c) (values checksum-address? receipt?))]
           [create-address (-> (abi-value/c 'address) nonce/c checksum-address?)]
           [create2-address (-> (abi-value/c 'address) salt/c init-code/c checksum-address?)]))
 
@@ -171,7 +172,7 @@
         #:errors [errors errors/c]
         #:provider [provider provider/c])
        #:rest [args list?]
-       [_ receipt/c]))
+       [_ receipt?]))
 
 (define estimate/c
   (->i ([target target/c]

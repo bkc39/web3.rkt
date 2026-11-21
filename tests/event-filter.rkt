@@ -10,6 +10,7 @@
            (only-in (submod web3/event internal) log-limit-error?)
            "abi-gen.rkt"
            "helpers/event-fixtures.rkt"
+           (only-in "helpers/results.rkt" receipt-json)
            "util.rkt")
 
   (struct filter-json (filter jsexpr) #:prefab)
@@ -300,13 +301,18 @@
                   (traffic (lambda (node) (get-logs f #:provider node)))))
 
   (test-case "receipt-logs reads and decodes a receipt's logs"
-    (define receipt (hasheq 'status "0x1" 'logs (list (log-at 0) approval-json)))
+    (define receipt
+      (jsexpr->receipt (hash-set receipt-json 'logs (list (log-at 0) approval-json))))
     (check-equal? (map log->jsexpr (receipt-logs receipt)) (list (log-at 0) approval-json))
+    (check-equal? (map event-log? (receipt-logs receipt)) '(#f #f))
     (check-equal? (map event-log? (receipt-logs receipt #:events (list transfer))) '(#t #f))
-    (for ([logs (in-list '(missing null "x"))])
-      (define bad (if (eq? logs 'missing) (hasheq 'status "0x1") (hasheq 'logs logs)))
-      (malformed-from (lambda () (receipt-logs bad)) "receipt-logs: malformed"))
-    (check-blames-here (receipt-logs 'null)))
+    (for ([logs (in-list '(null "x" (42)))])
+      (malformed-from (lambda () (jsexpr->receipt (hash-set receipt-json 'logs logs)))
+                      "jsexpr->receipt: malformed"))
+    (malformed-from (lambda () (jsexpr->receipt (hash-remove receipt-json 'logs)))
+                    "jsexpr->receipt: malformed receipt logs")
+    (check-blames-here (receipt-logs 'null))
+    (check-blames-here (receipt-logs receipt-json)))
 
   (test-case "get-logs blames its caller"
     (check-blames-here (get-logs (hasheq)))

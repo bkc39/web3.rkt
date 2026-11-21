@@ -57,8 +57,8 @@
            (match (token-logs token #:where (hasheq 'from zero-address))
              [(list minted)
               (check-equal? (event-log-arguments minted) (list zero-address anvil-alice 1000000))
-              (check-equal? (log-block-number minted) (hex->number (hash-ref deployed 'blockNumber)))
-              (check-equal? (log-transaction-hash minted) (hash-ref deployed 'transactionHash))]
+              (check-equal? (log-block-number minted) (receipt-block-number deployed))
+              (check-equal? (log-transaction-hash minted) (receipt-transaction-hash deployed))]
              [other (fail (format "~a" other))]))
 
          (define sent (contract-send token "transfer(address,uint256)" anvil-bob 250))
@@ -70,7 +70,7 @@
               (check-true (andmap checksum-address? (take (event-log-arguments l) 2)))
               (check-equal? (log-address l) token)
               (check-equal? (log-index l) 0)
-              (check-eq? (log->jsexpr l) (first (hash-ref sent 'logs)))]
+              (check-eq? (log->jsexpr l) (log->jsexpr (first (receipt-logs sent))))]
              [other (fail (format "~a" other))]))
 
          (define later
@@ -150,7 +150,7 @@
                               (append-map receipt-logs (append (list deployed sent) later (list deposited) mixed))))
            (for ([chunk (in-list '(1 2 3 7))])
              (check-equal? (get-logs (log-filter #:address token) #:chunk chunk) all (format "chunk ~a" chunk)))
-           (define start (hex->number (hash-ref (first mixed) 'blockNumber)))
+           (define start (receipt-block-number (first mixed)))
            (check-equal? (get-logs (log-filter #:address token #:from-block start #:to-block (+ start 2)))
                          (filter (lambda (l) (<= start (log-block-number l) (+ start 2))) all)))
 

@@ -11,14 +11,14 @@ bezzle, which pin it as a flake input.
 | module | holds |
 |---|---|
 | `rpc.rkt` | providers, `rpc-call`, errors, hex helpers, `define-jsonrpc-endpoint` |
-| `eth.rkt` | `web3_*`, `net_*`, `eth_*` endpoints (fees, blocks, receipts, proofs, filters) |
+| `eth.rkt` | `web3_*`, `net_*`, `eth_*` endpoints (fees, blocks, receipts, proofs, filters), `wait-for-receipt`; an `internal` submodule holds `poll-receipt/who`, the raw poll every wait runs |
 | `private/eth-params.rkt` | the endpoints' parameter contracts and their conversions to the node's JSON: block parameters, reward percentiles, storage slots, JSON objects; `eth.rkt` exports the documented ones |
 | `abi.rkt` | the contract ABI: encoders, decoders, selectors, reverts; an `internal` submodule of entry points that take the caller's `who` |
 | `contract.rkt` | deploying, calls and sends, contract instances, define-contract, contract addresses; an `internal` submodule of entry points that take the caller's `who` |
 | `private/contract-call.rkt` | the calls, sends, estimates and deploys `contract.rkt` and bound procedures run, under their caller's `who`; the sending itself is `private/send.rkt`'s |
 | `send.rkt` | filling transactions from a node, signing them with a signer and sending them raw; every procedure under `opaque->` |
 | `private/send.rkt` | filling, raw sends, and the estimate/send/wait/replay every send runs, from an address or a signer, under the caller's `who`; `define-fill-keywords`, the one table of fill keywords their formals and contracts come from |
-| `private/contracts.rkt` | the argument contracts the send and contract entry points share: senders, `to`, errors, providers, receipts |
+| `private/contracts.rkt` | the argument contracts the send and contract entry points share: senders, `to`, errors, providers |
 | `private/bindings.rkt` | `define-contract` and `contract-bindings-out`, and the procedures they bind |
 | `private/define-contract.rkt` | define-contract's expansion-time half; reads JSON at phase 1, never keccak |
 | `private/binding-rules.rkt` | the keywords a bound procedure accepts and the messages for what it refuses, shared by the expansion-time checks and the procedures |
@@ -37,6 +37,7 @@ bezzle, which pin it as a flake input.
 | `abi/description.rkt` | ABI items and contract descriptions from strings, s-expressions and JSON; phase-1 safe, as abi/type.rkt |
 | `abi/event.rkt` | event topics, `event-topics`, decoding logs into `event-log`s; an `internal` submodule of entry points that take the caller's `who` |
 | `eth/log.rkt` | logs, a `define-node-record` table (the struct is `log-struct`; nothing binds `log`); an `internal` submodule holds the reader under the caller's `who`, the table and what `abi/event.rkt` extends |
+| `eth/receipt.rkt` | receipts, a `define-node-record` table, and `receipt-succeeded?`; an `internal` submodule holds the reader under the caller's `who`, the check of a receipt's transaction hash, the table and the logs accessor `event.rkt` uses |
 | `private/record.rkt` | `define-node-record`: one field table per node object, from which its struct, accessors, contracts, reader, printer hook and `T-fields` come; the field kinds, each a reader under the caller's `who` and a contract |
 | `private/field-contracts.rkt` | the field contracts records and transactions share: hashes, `to`, `uint64/c`, `uint256/c`, 32 bytes, access lists |
 | `event.rkt` | `log-filter`, `get-logs` (chunks, halving on a refused range), `receipt-logs` |
@@ -45,7 +46,7 @@ bezzle, which pin it as a flake input.
 | `private/abi-item.rkt` | ABI item structs and their string and s-expression readers under the caller's `who`; phase-1 safe; `abi/description.rkt` puts contracts on it |
 | `private/hex.rkt` | unchecked conversions between bytes, hex strings and naturals; callers check their input |
 | `private/exn.rkt` | the exception structs (`exn:fail:web3`, `…:rpc`, `…:rpc:revert`, `…:transaction`, `…:fill`, `…:abi`, `…:abi:type`, `…:abi:value`, `…:abi:decode`, `…:key`, `…:rlp`, `…:raw-transaction`, `…:signature`, `…:signer`, `…:units`); racket/base only |
-| `private/node.rkt` | checked conversions of node data (hex, quantities, addresses, hashes, receipt status, optional fields); no JSON or transport modules |
+| `private/node.rkt` | checked conversions of node data (hex, quantities, addresses, hashes, naturals of a given width); no JSON or transport modules |
 | `private/who.rkt` | `define/who`, which defines `name` and `name/who`, the same procedure taking the `who` its messages start with |
 | `anvil.rkt` | anvil's methods and process management |
 | `examples/` | numbered programs (`NN-name.rkt`), each with a `main` submodule; `common.rkt` reads the compiled fixture contracts for the tests |

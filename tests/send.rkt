@@ -212,7 +212,7 @@
   (test-case "F17: /receipt waits for the receipt, and replays a failed transaction"
     (define-values (result calls)
       (filled (filling) `(#:value ,one-and-a-half) #:procedure send-signed-transaction/receipt))
-    (check-eq? (first result) mined)
+    (check-equal? (receipt->jsexpr (first result)) (hash-set mined 'transactionHash eip1559-hash))
     (check-equal? (last calls) (list "eth_getTransactionReceipt" eip1559-hash))
     (check-equal? (drop-right calls 1)
                   (filled-calls `(#:value ,one-and-a-half) #:procedure send-signed-transaction))

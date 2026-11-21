@@ -38,7 +38,7 @@
     (check-equal? (string-downcase (eth-get-code token "latest")) (artifact-deployed-bytecode "Token"))
     (define-values (again receipt)
       (deploy-contract/receipt token-code "constructor(string,string,uint256)" "Token" "TOK" 1000000))
-    (check-equal? (address->checksum-string (hash-ref receipt 'contractAddress)) again)
+    (check-equal? (receipt-contract-address receipt) again)
     (check-equal? (contract-call token "name()(string)") "Token")
     (check-equal? (call-with-values (lambda () (contract-call token "info()(string,string,uint8,uint256)"))
                                     list)
@@ -64,7 +64,7 @@
          (test-case "a send returns its receipt once mined"
            (define receipt (contract-send token transfer anvil-bob 250))
            (check-true (receipt-succeeded? receipt))
-           (check-equal? (map (lambda (log) (first (hash-ref log 'topics))) (hash-ref receipt 'logs))
+           (check-equal? (map (lambda (entry) (first (log-topics entry))) (receipt-logs receipt))
                          '("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"))
            (check-equal? (balance-of token anvil-alice) 999750)
            (check-equal? (balance-of token anvil-bob) 250)
@@ -87,7 +87,7 @@
              (raised (lambda () (contract-send token transfer anvil-alice 1
                                                #:from anvil-carol #:gas 100000 #:errors errors))))
            (check-pred exn:fail:web3:transaction? on-chain)
-           (check-equal? (hash-ref (exn:fail:web3:transaction-receipt on-chain) 'status) "0x0")
+           (check-equal? (receipt-status (exn:fail:web3:transaction-receipt on-chain)) 0)
            (check-equal? (nonce anvil-carol) (add1 before))
            (define reverts
              (list (exn:fail:web3:rpc:revert-revert on-call)
@@ -134,7 +134,7 @@
            (define e (raised (lambda () (contract-send token transfer anvil-bob 1 #:gas 30000))))
            (check-pred exn:fail:web3:transaction? e)
            (check-false (exn:fail:web3:transaction-revert e))
-           (check-equal? (hash-ref (exn:fail:web3:transaction-receipt e) 'status) "0x0"))
+           (check-equal? (receipt-status (exn:fail:web3:transaction-receipt e)) 0))
 
          (test-case "a sender the node does not manage is the node's RPC error"
            (define e (raised (lambda () (contract-send token transfer anvil-bob 0

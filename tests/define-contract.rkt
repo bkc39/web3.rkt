@@ -205,7 +205,7 @@
     (check-equal? values-result '("Token" "TOK" 18 1000000))
     (define-values (receipt _mint-calls)
       (run-mock (sending) (lambda () (token-mint token-address anvil-bob 1 #:from anvil-alice))))
-    (check-eq? (first receipt) mined)
+    (check-eq? (receipt->jsexpr (first receipt)) mined)
     (check-equal? (format "~a" token-transfer) "#<procedure:token-transfer>"))
 
   (test-case "reverts are decoded with the ABI's errors, under the bound name"
@@ -471,7 +471,7 @@ MESSAGE
     (check-equal? (contract-abi-errors mover) (list (string->abi-item "error Unauthorized(address who)")))
     (define-values (moved calls)
       (run-mock (sending) (lambda () (mover-move-left token-address 7 #:from anvil-alice))))
-    (check-eq? (first moved) mined)
+    (check-eq? (receipt->jsexpr (first moved)) mined)
     (check-equal? (hash-ref (second (first calls)) 'data)
                   (bytes->hex-string (encode-call "moveLeft(uint256)" 7))))
 

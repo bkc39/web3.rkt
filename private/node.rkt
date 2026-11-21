@@ -8,12 +8,9 @@
          node-data->bytes
          node-hash->string
          node-natural
-         node-optional
          node-quantity->number
          node-quantity?
-         node-status->boolean
-         raise-node-malformed
-         receipt-status->boolean)
+         raise-node-malformed)
 
 (define (raise-node-malformed who what v #:origin [origin " from the node"])
   (raise (exn:fail:web3 (format "~a: malformed ~a~a: ~e" who what origin v)
@@ -49,19 +46,3 @@
   (cond
     [(node-string? #px"^0x[0-9a-fA-F]{64}$" v) (string-downcase v)]
     [else (raise-node-malformed who what v)]))
-
-;; A field the node leaves out is read as 'null.
-(define (node-optional reader who what v)
-  (if (eq? v 'null) #f (reader who what v)))
-
-(define (status->boolean v malformed)
-  (cond
-    [(equal? v "0x1") #t]
-    [(equal? v "0x0") #f]
-    [else (malformed v)]))
-
-(define (node-status->boolean who what v)
-  (status->boolean v (lambda (v) (raise-node-malformed who what v))))
-
-(define (receipt-status->boolean who v)
-  (status->boolean v (lambda (v) (raise-node-malformed who "receipt status" v #:origin ""))))

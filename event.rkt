@@ -12,6 +12,7 @@
          "eth.rkt"
          "eth/log.rkt"
          (only-in (submod "eth/log.rkt" internal) jsexpr->log/who)
+         (only-in (submod "eth/receipt.rkt" internal) receipt-log-list)
          (only-in "private/node.rkt" node-quantity->number raise-node-malformed)
          "rpc.rkt")
 
@@ -41,7 +42,7 @@
                   #:chunk (or/c #f exact-positive-integer?)
                   #:provider (or/c #f provider?))
                  (listof log?))]
-  [receipt-logs (->* ((and/c hash? jsexpr?)) (#:events (listof abi-event-spec/c)) (listof log?))]))
+  [receipt-logs (->* (receipt?) (#:events (listof abi-event-spec/c)) (listof log?))]))
 
 (define address-filter/c
   (flat-named-contract 'address-filter/c
@@ -198,10 +199,7 @@
   (decode (fetch-filter 'get-logs f chunk provider)))
 
 (define (receipt-logs receipt #:events [events '()])
-  (define decode (logs-decoder 'receipt-logs events))
-  (match (hash-ref receipt 'logs #f)
-    [(? list? logs) (decode (read-logs 'receipt-logs logs))]
-    [logs (raise-node-malformed 'receipt-logs "logs" logs)]))
+  ((logs-decoder 'receipt-logs events) (receipt-log-list receipt)))
 
 (module* internal #f
   (provide event-where/c

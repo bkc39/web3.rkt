@@ -20,6 +20,7 @@
                     web3/abi/event
                     web3/eth
                     web3/eth/log
+                    web3/eth/receipt
                     web3/event
                     web3/rlp
                     web3/rpc
@@ -45,6 +46,7 @@
 @(define provider-guide-eval (make-base-eval '(require racket/generic racket/match web3)))
 @(define abi-guide-eval (make-base-eval '(require web3)))
 @(define event-guide-eval (make-base-eval '(require web3)))
+@(define results-eval (make-base-eval '(require web3 web3/tests/helpers/results)))
 
 @(define-syntax-parse-rule (defproc/filling (name:id positional ...) result:expr body ...)
    (defproc (name positional ...
@@ -110,13 +112,17 @@ Results come back decoded where the encoding is unambiguous:
 @itemlist[
  @item{quantities (balances, gas, block numbers, counts) are exact
        nonnegative integers;}
- @item{data, hashes and addresses are @racket["0x..."] strings;}
- @item{transactions, receipts and blocks are @racket[jsexpr?]
-       hash tables with symbol keys, as read by @racketmodname[json];}
- @item{logs from @racket[get-logs] and @racket[receipt-logs] are
-       @racket[log] values; @racket[eth-get-logs] returns the node's JSON;}
- @item{a missing object (an unknown transaction, raw transaction or block, a block that
-       does not exist yet) is @racket['null].}]
+ @item{receipts and logs are values with accessors, @racket[receipt?] and @racket[log?]:
+       their addresses are checksummed, their hashes lowercase @racket["0x..."] strings and
+       their data bytes, and the node's object is kept in @racket[receipt->jsexpr] and
+       @racket[log->jsexpr];}
+ @item{transactions and blocks are @racket[jsexpr?] hash tables with symbol keys, as read by
+       @racketmodname[json], and other data, hashes and addresses are @racket["0x..."]
+       strings;}
+ @item{logs from @racket[get-logs] and @racket[receipt-logs] are @racket[log?] values;
+       @racket[eth-get-logs] returns the node's JSON;}
+ @item{a missing receipt is @racket[#f], and a missing transaction, raw transaction or block (one
+       that does not exist yet) is @racket['null].}]
 
 Addresses and transaction objects are passed as the node expects them:
 addresses as @racket["0x..."] strings, and transaction or call objects
@@ -167,9 +173,10 @@ See @filepath{examples/00-provider.rkt}.
 
 @subsection[#:tag "guide-chain-state"]{Chain State}
 
-Quantities are exact integers: balances in wei, nonces, gas and block numbers.  Addresses, hashes
-and data are @racket["0x..."] strings, and blocks, transactions and receipts are the node's JSON
-as hash tables, as in @secref["Conventions"].
+Quantities are exact integers: balances in wei, nonces, gas and block numbers.  A receipt is a
+value with accessors such as @racket[receipt-block-number].  Blocks and transactions are the
+node's JSON as hash tables, and their addresses, hashes and data @racket["0x..."] strings, as in
+@secref["Conventions"].
 
 A node such as anvil holds keys for its accounts and signs for them.
 @racket[eth-send-transaction] sends a transaction from one of them and returns its hash, and
@@ -194,8 +201,8 @@ from 0 to 1.
      (hasheq 'from alice 'to bob 'value (number->hex-string (ether->wei 1)))))
   (define receipt (wait-for-receipt tx-hash))
   (printf "block ~a, gas used ~a, succeeded ~a\n"
-          (hex-string->number (hash-ref receipt 'blockNumber))
-          (hex-string->number (hash-ref receipt 'gasUsed))
+          (receipt-block-number receipt)
+          (receipt-gas-used receipt)
           (receipt-succeeded? receipt))
   (print-accounts alice bob))]
 
@@ -235,7 +242,7 @@ snapshot taken before undoes the send, and slot 0 holds 0 again.
     (send-transaction/receipt
      (hasheq 'from stranger 'to contract 'data (bytes->hex-string (word->bytes 7)))))
   (anvil-stop-impersonating-account stranger)
-  (printf "sent from ~a, stored ~a\n" (hash-ref receipt 'from) (stored-value))
+  (printf "sent from ~a, stored ~a\n" (receipt-from receipt) (stored-value))
   (evm-revert snapshot)
   (printf "reverted, stored ~a\n" (stored-value)))]
 
@@ -1058,8 +1065,8 @@ The block, with full transaction objects when
 
 @defproc[(eth-get-block-receipts [block block-param/c]
                                  [#:provider provider (or/c #f provider?) (current-provider)])
-         (or/c 'null (listof hash?))]{
-The receipts of the block's transactions, in order, or @racket['null] for an unknown block.}
+         (or/c #f (listof receipt?))]{
+The receipts of the block's transactions, in order, or @racket[#f] for an unknown block.}
 
 @deftogether[(
 @defproc[(eth-get-transaction-by-block-hash-and-index
@@ -1133,16 +1140,29 @@ The node's EIP-191 signature of @racket[data] with an account it holds, as 65 by
 The raw bytes of @racket[tx] signed by the account the node holds for its @racket['from]; a node
 that answers with an object gives its @racket['raw].  See @racket[transaction->jsexpr].}
 
-@deftogether[(
 @defproc[(eth-get-transaction-by-hash
           [tx-hash hex-string?]
           [#:provider provider (or/c #f provider?) (current-provider)])
-         (or/c 'null hash?)]
+         (or/c 'null hash?)]{
+A transaction, or @racket['null] for an unknown one.}
+
 @defproc[(eth-get-transaction-receipt
           [tx-hash hex-string?]
           [#:provider provider (or/c #f provider?) (current-provider)])
-         (or/c 'null hash?)])]{
-A transaction, or its receipt once it has been mined.}
+         (or/c #f receipt?)]{
+The receipt of a mined transaction, or @racket[#f] before it is mined.  A receipt the node gets
+wrong raises @racket[exn:fail:web3] naming the method and the field.
+
+@examples[#:eval results-eval
+          (eth-get-transaction-receipt
+           (hash-ref receipt-json 'transactionHash)
+           #:provider (mock-provider (hash "eth_getTransactionReceipt" receipt-json)))
+          (eval:error
+           (eth-get-transaction-receipt
+            (hash-ref receipt-json 'transactionHash)
+            #:provider (mock-provider
+                        (hash "eth_getTransactionReceipt"
+                              (hash-set receipt-json 'gasUsed "zz")))))]}
 
 @defproc[(eth-get-raw-transaction-by-hash
           [tx-hash hex-string?]
@@ -1163,23 +1183,18 @@ The logs matching @racket[filter], a hash table with keys such as
                            [#:timeout timeout real? 30.0]
                            [#:interval interval real? 0.002]
                            [#:provider provider (or/c #f provider?) (current-provider)])
-         hash?]{
+         receipt?]{
 Polls for the receipt of @racket[tx-hash], starting every
 @racket[interval] seconds and backing off to every quarter second.
 Raises @racket[exn:fail:web3] if no receipt appears within
-@racket[timeout] seconds.}
+@racket[timeout] seconds, or if the receipt is not @racket[tx-hash]'s.}
 
 @defproc[(send-transaction/receipt [tx (and/c hash? jsexpr?)]
                                    [#:provider provider (or/c #f provider?) (current-provider)])
-         hash?]{
+         receipt?]{
 Sends @racket[tx] with @racket[eth-send-transaction] and returns its
 receipt once mined.  For a transaction signed here, see
 @racket[send-signed-transaction/receipt].}
-
-@defproc[(receipt-succeeded? [receipt hash?]) boolean?]{
-Whether the receipt's status is success, @racket["0x1"], rather than
-failure, @racket["0x0"].  Any other status, or none, raises
-@racket[exn:fail:web3].}
 
 @subsection{Filters}
 
@@ -1219,6 +1234,58 @@ Every log a log filter matches.}
                                [#:provider provider (or/c #f provider?) (current-provider)])
          boolean?]{
 Removes the filter; @racket[#f] if the node had none with that id.}
+
+@subsection{Receipts}
+
+@defmodule[web3/eth/receipt]
+
+A receipt is the outcome of a mined transaction.  @racketmodname[web3/eth] provides everything
+here.  In the examples, @racket[receipt-json] is a token transfer's receipt as anvil sent it.
+
+@defproc[(receipt? [v any/c]) boolean?]{
+Recognizes receipts.  A receipt prints with its transaction hash, place, status and gas used.}
+
+@deftogether[(@defproc[(receipt-transaction-hash [r receipt?])
+                       (and/c string? #px"^0x[0-9a-f]{64}$")]
+              @defproc[(receipt-transaction-index [r receipt?]) uint64/c]
+              @defproc[(receipt-block-hash [r receipt?]) (and/c string? #px"^0x[0-9a-f]{64}$")]
+              @defproc[(receipt-block-number [r receipt?]) uint64/c]
+              @defproc[(receipt-from [r receipt?]) checksum-address?]
+              @defproc[(receipt-to [r receipt?]) (or/c #f checksum-address?)]
+              @defproc[(receipt-type [r receipt?]) (or/c #f byte?)]
+              @defproc[(receipt-status [r receipt?]) (or/c #f 0 1)]
+              @defproc[(receipt-root [r receipt?]) (or/c #f (and/c string? #px"^0x[0-9a-f]{64}$"))]
+              @defproc[(receipt-cumulative-gas-used [r receipt?]) uint64/c]
+              @defproc[(receipt-gas-used [r receipt?]) uint64/c]
+              @defproc[(receipt-effective-gas-price [r receipt?]) uint256/c]
+              @defproc[(receipt-contract-address [r receipt?]) (or/c #f checksum-address?)]
+              @defproc[(receipt-logs-bloom [r receipt?])
+                       (and/c bytes? (property/c bytes-length (=/c 256)))]
+              @defproc[(receipt-blob-gas-used [r receipt?]) (or/c #f uint64/c)]
+              @defproc[(receipt-blob-gas-price [r receipt?]) (or/c #f uint256/c)])]{
+The fields of a receipt, each the node's field of the same name in camelCase.  @racket[#f] is a
+field the node leaves out or sends as @tt{null}: @racket[receipt-to] for a contract creation,
+@racket[receipt-contract-address] for anything else, the blob fields for other transactions,
+@racket[receipt-type] from nodes before Berlin, @racket[receipt-root] after Byzantium and
+@racket[receipt-status] before it.  The logs are @racket[receipt-logs].}
+
+@defproc[(receipt-succeeded? [r receipt?]) boolean?]{
+Whether @racket[(receipt-status r)] is @racket[1].  A receipt with only a root raises
+@racket[exn:fail:web3].}
+
+@defproc[(jsexpr->receipt [v any/c]) receipt?]{
+A receipt from the node's JSON.  Raises @racket[exn:fail:web3], naming the field, for anything
+else.  Unknown fields are kept in @racket[receipt->jsexpr].
+
+@examples[#:eval results-eval
+          (define receipt (jsexpr->receipt receipt-json))
+          receipt
+          (receipt-gas-used receipt)
+          (receipt-succeeded? receipt)
+          (eval:error (jsexpr->receipt (hash-set receipt-json 'gasUsed "zz")))]}
+
+@defproc[(receipt->jsexpr [r receipt?]) hash?]{
+The node's object @racket[r] was read from.}
 
 @section{Addresses}
 
@@ -1800,7 +1867,7 @@ type 2 and another, the latest block decides: 2 when it has a base fee, else 0, 
               @defproc/filling[(send-signed-transaction/receipt
                                 [signer signer?]
                                 [to (or/c #f (abi-value/c 'address))])
-                               (and/c hash? jsexpr?)])]{
+                               receipt?])]{
 @racket[(fill-transaction signer to ....)] signed by @racket[signer] and sent with
 @tt{eth_sendRawTransaction}, returning its hash, or with @racket[send-signed-transaction/receipt]
 its receipt once mined.  While @racket[signer] signs, @racket[current-provider] is
@@ -2511,7 +2578,7 @@ for an @racket[abi-function], or a function looked up, that is not
                         [#:gas gas (or/c #f exact-positive-integer?) #f]
                         [#:errors errors (listof (or/c string? abi-signature?)) '()]
                         [#:provider provider (or/c #f provider?) (current-provider)])
-         (and/c hash? jsexpr?)]{
+         receipt?]{
 Sends a transaction calling @racket[function] from @racket[from], and
 returns its receipt once mined.  Outputs in
 @racket[function] are ignored.  With a @racket[contract-instance],
@@ -2565,7 +2632,7 @@ node signs it (@tt{eth_sendTransaction}).  Calls and estimates from a signer use
           [#:gas gas (or/c #f exact-positive-integer?) #f]
           [#:errors errors (listof (or/c string? abi-signature?)) '()]
           [#:provider provider (or/c #f provider?) (current-provider)])
-         (values checksum-address? (and/c hash? jsexpr?))])]{
+         (values checksum-address? receipt?)])]{
 Deploys @racket[init-code] with the @racket[arg]s encoded as the inputs of
 @racket[constructor], a signature named @tt{constructor}, and returns the
 new contract's address, and with @racket[deploy-contract/receipt] its
@@ -2598,7 +2665,7 @@ The address @tt{CREATE2} gives @racket[init-code] deployed by
           (create2-address "0x0000000000000000000000000000000000000000" 0 #"\0")]}
 
 @defstruct*[(exn:fail:web3:transaction exn:fail:web3)
-            ([receipt (and/c hash? jsexpr?)] [revert (or/c #f abi-revert?)])]{
+            ([receipt receipt?] [revert (or/c #f abi-revert?)])]{
 A transaction that was mined and failed.  @racket[revert] is what replaying
 it with @racket[eth-call] at its block reverted with, or @racket[#f] when the
 replay did not revert or could not be made.  The replay runs after the whole
@@ -2953,10 +3020,15 @@ its tags as block numbers, @racket["pending"] as the latest block.
                     #:provider node)
           (mock-provider-calls node)]}
 
-@defproc[(receipt-logs [receipt (and/c hash? jsexpr?)]
+@defproc[(receipt-logs [receipt receipt?]
                        [#:events events (listof abi-event-spec/c) '()])
          (listof log?)]{
-The logs of @racket[receipt], decoded with @racket[decode-logs].}
+The logs of @racket[receipt], decoded with @racket[decode-logs].
+
+@examples[#:eval results-eval
+          (receipt-logs (jsexpr->receipt receipt-json))
+          (receipt-logs (jsexpr->receipt receipt-json)
+                        #:events (list "Transfer(address indexed, address indexed, uint256)"))]}
 
 @section{Local Nodes with anvil}
 

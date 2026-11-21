@@ -6,12 +6,13 @@
            (only-in racket/match match-define)
            rackunit
            web3
+           (only-in "helpers/results.rkt" receipt-json)
            (only-in "util.rkt" check-blames-here filled-hash max-word raised))
 
   (define addr "0x00000000000000000000000000000000000c0de0")
   (define a-block (hasheq 'number "0x10" 'hash (filled-hash #\b) 'transactions '()))
   (define a-transaction (hasheq 'hash (filled-hash #\a) 'nonce "0x0"))
-  (define a-receipt (hasheq 'transactionHash (filled-hash #\a) 'status "0x1"))
+  (define a-receipt (jsexpr->receipt receipt-json))
   (define a-log (hasheq 'address addr 'topics '() 'data "0x"))
   (define a-tx (hasheq 'from addr 'to addr 'data "0x"))
   (define a-query (hasheq 'address addr 'fromBlock "earliest"))
@@ -30,7 +31,9 @@
       [,eth-get-proof (,addr (0 255) "latest")
                       "eth_getProof" (,addr (,zero-word ,word-255) "latest") ,a-proof ,a-proof]
       [,eth-get-block-by-hash ("0xbb" #t) "eth_getBlockByHash" ("0xbb" #t) ,a-block ,a-block]
-      [,eth-get-block-receipts (16) "eth_getBlockReceipts" ("0x10") (,a-receipt) (,a-receipt)]
+      [,eth-get-block-receipts (16) "eth_getBlockReceipts" ("0x10") (,receipt-json) (,a-receipt)]
+      [,eth-get-transaction-receipt ("0xaa") "eth_getTransactionReceipt" ("0xaa")
+                                    ,receipt-json ,a-receipt]
       [,eth-get-block-receipts ("safe") "eth_getBlockReceipts" ("safe") () ()]
       [,eth-get-transaction-by-block-hash-and-index
        ("0xbb" 2) "eth_getTransactionByBlockHashAndIndex" ("0xbb" "0x2")
@@ -73,9 +76,13 @@
       (match-define (list result _) (call-mocked procedure arguments method answer))
       (check-equal? result expected method)))
 
-  (test-case "E3: a missing object is 'null"
+  (test-case "E3: a missing receipt is #f, and any other missing object 'null"
+    (for ([row (in-list `([,eth-get-block-receipts ("latest") "eth_getBlockReceipts" null]
+                          [,eth-get-transaction-receipt ("0xaa") "eth_getTransactionReceipt" null]))])
+      (match-define (list procedure arguments method answer) row)
+      (match-define (list result _) (call-mocked procedure arguments method answer))
+      (check-false result method))
     (for ([row (in-list `([,eth-get-block-by-hash ("0xbb" #f) "eth_getBlockByHash" null]
-                          [,eth-get-block-receipts ("latest") "eth_getBlockReceipts" null]
                           [,eth-get-transaction-by-block-hash-and-index
                            ("0xbb" 0) "eth_getTransactionByBlockHashAndIndex" null]
                           [,eth-get-transaction-by-block-number-and-index
@@ -103,9 +110,17 @@
       [,eth-get-block-by-hash ("0xbb" #f) "eth_getBlockByHash" "0xbb"
                               "eth_getBlockByHash: unexpected result \"0xbb\""]
       [,eth-get-block-receipts ("latest") "eth_getBlockReceipts" ("0xaa")
-                               "eth_getBlockReceipts: unexpected result '(\"0xaa\")"]
+                               "eth_getBlockReceipts: malformed receipt from the node: \"0xaa\""]
       [,eth-get-block-receipts ("latest") "eth_getBlockReceipts" ,(hasheq)
                                "eth_getBlockReceipts: unexpected result '#hasheq()"]
+      [,eth-get-block-receipts ("latest") "eth_getBlockReceipts"
+                               (,(hash-set receipt-json 'gasUsed "zz"))
+                               "eth_getBlockReceipts: malformed receipt gas used from the node: \"zz\""]
+      [,eth-get-transaction-receipt ("0xaa") "eth_getTransactionReceipt"
+                                    ,(hash-set receipt-json 'gasUsed "zz")
+                                    "eth_getTransactionReceipt: malformed receipt gas used from the node: \"zz\""]
+      [,eth-get-transaction-receipt ("0xaa") "eth_getTransactionReceipt" 42
+                                    "eth_getTransactionReceipt: unexpected result 42"]
       [,eth-get-transaction-by-block-hash-and-index
        ("0xbb" 0) "eth_getTransactionByBlockHashAndIndex" ()
        "eth_getTransactionByBlockHashAndIndex: unexpected result '()"]
