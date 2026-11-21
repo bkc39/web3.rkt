@@ -4,7 +4,7 @@
 
 (define-jsonrpc-endpoint eth_getUncleCountByBlockNumber
   (-> [exact-nonnegative-integer? number->hex-string] exact-nonnegative-integer?)
-  #:result-transform (lambda (_method result) (hex-string->number result)))
+  #:result-transform hex-string->number)
 
 (define (print-rpc-error e)
   (printf "refused ~a: ~a\n" (exn:fail:web3:rpc-code e) (exn:fail:web3:rpc-rpc-message e)))

@@ -339,11 +339,8 @@
 
   (struct endpoint-transformer (checked-for) #:property prop:procedure expand-endpoint-use))
 
-(define (untransformed _method raw)
-  raw)
-
-(define ((ignoring-arguments transform) method raw . _arguments)
-  (transform method raw))
+(define ((transform->reader transform) _method raw . _arguments)
+  (transform raw))
 
 (define (endpoint-checker signature procedure positive name srcloc)
   (define checked (make-hash))
@@ -356,8 +353,8 @@
   (define-jsonrpc-endpoint rpc-name:id
     ((~datum ->) p:arg-spec ... result-contract:expr)
     (~optional (~or* (~seq #:result-transform transform:expr)
-                     (~seq #:result-transform/arguments arguments-transform:expr))
-               #:defaults ([transform #'untransformed])))
+                     (~seq #:result-reader reader:expr))
+               #:defaults ([transform #'values])))
   #:with fn-name (format-id #'rpc-name "~a" (->kebab-case (syntax-e #'rpc-name)))
   #:with method (datum->syntax #'rpc-name (symbol->string (syntax-e #'rpc-name)))
   #:with (arg ...) (generate-temporaries #'(p ...))
@@ -371,7 +368,7 @@
                    'inferred-name
                    (syntax-e #'fn-name))
   (begin
-    (define transformer (~? (ignoring-arguments transform) arguments-transform))
+    (define transformer (~? (transform->reader transform) reader))
     (define result? (flat-contract-predicate (coerce-flat-contract 'fn-name result-contract)))
     (define unchecked procedure)
     (define signature (->* (p.contract ...) (#:provider (or/c #f provider?)) any))

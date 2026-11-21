@@ -225,7 +225,7 @@ contracts on its arguments and a conversion of its result.  An error response ra
 @racketblock[
 (define-jsonrpc-endpoint eth_getUncleCountByBlockNumber
   (-> [exact-nonnegative-integer? number->hex-string] exact-nonnegative-integer?)
-  #:result-transform (lambda (_method result) (hex-string->number result)))
+  #:result-transform hex-string->number)
 
 (define (print-rpc-error e)
   (printf "refused ~a: ~a\n" (exn:fail:web3:rpc-code e) (exn:fail:web3:rpc-rpc-message e)))]
@@ -822,7 +822,7 @@ response's @tt{result}.  Raises @racket[exn:fail:web3] when
                               [contract-expr ->param-expr]]
                     [maybe-transform (code:line)
                                      (code:line #:result-transform transform-expr)
-                                     (code:line #:result-transform/arguments transform-expr)])]{
+                                     (code:line #:result-reader reader-expr)])]{
 
 Defines a function for the JSON-RPC method @racket[rpc-name], named
 after it in kebab-case (@racket[eth_getBalance] defines
@@ -832,20 +832,20 @@ stands for the function wherever it appears, so it cannot be @racket[set!].
 
 Each argument is checked against its @racket[contract-expr], which blames the
 module of the call, and, when the spec gives a @racket[->param-expr], converted by it into
-the JSON parameter.  @racket[transform-expr] is applied to the method's name, a string, and the
-response's @tt{result}; without one, the result is kept as it is.  The transformed result is
-checked against @racket[result-contract-expr], a flat contract.  A result that
+the JSON parameter.  The response's @tt{result} goes through
+@racket[transform-expr] (default @racket[values]) and is checked against
+@racket[result-contract-expr], a flat contract.  A result that
 @racket[transform-expr] raises on or that fails the contract raises
 @racket[exn:fail:web3] with the message
 @racket["method: unexpected result value"], unless @racket[transform-expr] raises
-@racket[exn:fail:web3] itself, which is raised as it is.  With
-@racket[#:result-transform/arguments], @racket[transform-expr] is also applied to the
-function's positional arguments, after the result and before their conversion.
+@racket[exn:fail:web3] itself, which is raised as it is.  A @racket[reader-expr] takes the
+place of @racket[transform-expr] and is applied to the method's name, a string, the result and
+the function's positional arguments before their conversion.
 
 @racketblock[
 (define-jsonrpc-endpoint eth_getBalance
   (-> string? [block-param/c block-param->string] exact-nonnegative-integer?)
-  #:result-transform (lambda (_method result) (hex-string->number result)))
+  #:result-transform hex-string->number)
 ]}
 
 @subsection{HTTP Providers}
