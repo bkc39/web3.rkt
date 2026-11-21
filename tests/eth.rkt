@@ -23,7 +23,7 @@
 
   (define endpoints
     `([,eth-blob-base-fee () "eth_blobBaseFee" () "0x1" 1]
-      [,eth-fee-history (4 16 (25 1/2 75.5)) "eth_feeHistory" ("0x4" "0x10" (25 0.5 75.5))
+      [,eth-fee-history (4 16 (1/2 25 75.5)) "eth_feeHistory" ("0x4" "0x10" (0.5 25 75.5))
                         ,history ,history]
       [,eth-fee-history (1 "latest" ()) "eth_feeHistory" ("0x1" "latest" ()) ,history ,history]
       [,eth-get-proof (,addr (0 255) "latest")
@@ -139,7 +139,6 @@
       [,eth-fee-history (1 "latest" (75 25))]
       [,eth-fee-history (1 "latest" (+nan.0))]
       [,eth-fee-history (1 "latest" (-1))]
-      [,eth-fee-history (1 "latest")]
       [,eth-get-block-by-hash ("0xbb" yes)]
       [,eth-get-block-receipts ("head")]
       [,eth-get-block-receipts (-1)]
@@ -162,6 +161,12 @@
       (match-define (list procedure arguments _ _ _ _) row)
       (check-blames-here (apply procedure arguments #:provider 'nope))))
 
+  (test-case "E5: the wrong number of arguments is an arity error naming the endpoint"
+    (define e (with-handlers ([exn:fail:contract:arity? values])
+                (eth-fee-history 1 "latest" #:provider (mock-provider (hash)))))
+    (check-pred exn:fail:contract:arity? e)
+    (check-regexp-match #rx"eth-fee-history" (exn-message e)))
+
   (test-case "E6: existing endpoints blame the caller"
     (parameterize ([current-provider (mock-provider (hash "eth_getBalance" "0x0"))])
       (check-blames-here (eth-get-balance 'x "latest"))
@@ -169,8 +174,8 @@
 
   (test-case "E7: percentiles are JSON numbers"
     (match-define (list _ (list (list _ _ _ percentiles)))
-      (call-mocked eth-fee-history '(4 16 (25 1/2 75.5)) "eth_feeHistory" history))
-    (check-false (jsexpr? '(25 1/2 75.5)))
+      (call-mocked eth-fee-history '(4 16 (1/2 25 75.5)) "eth_feeHistory" history))
+    (check-false (jsexpr? '(1/2 25 75.5)))
     (check-true (jsexpr? percentiles)))
 
   (define (sent-slots slots)

@@ -91,20 +91,26 @@
 
 (define receipts/c (listof hash?))
 
+(define (percentile->jsexpr percentile)
+  (if (exact-integer? percentile) percentile (exact->inexact percentile)))
+
 (define (percentiles->jsexpr percentiles)
-  (error 'percentiles->jsexpr "unimplemented"))
+  (map percentile->jsexpr percentiles))
+
+(define (storage-slot->jsexpr slot)
+  (bytes->hex (natural->bytes slot 32)))
 
 (define (storage-slots->jsexpr slots)
-  (error 'storage-slots->jsexpr "unimplemented"))
+  (map storage-slot->jsexpr slots))
 
 (define (empty-data->null v)
-  (error 'empty-data->null "unimplemented"))
+  (if (equal? v "0x") 'null v))
 
 (define (quantity->number v)
-  (error 'quantity->number "unimplemented"))
+  (node-quantity->number 'quantity->number "quantity" v))
 
-(define (count-or-null->number r)
-  (if (eq? r 'null) 0 (hex-string->number r)))
+(define (count-or-null->number v)
+  (if (eq? v 'null) 0 (quantity->number v)))
 
 (define tx/c (and/c hash? jsexpr?))
 
@@ -120,20 +126,20 @@
 (define-jsonrpc-endpoint net_version (-> string?))
 (define-jsonrpc-endpoint net_listening (-> boolean?))
 (define-jsonrpc-endpoint net_peerCount (-> exact-nonnegative-integer?)
-  #:result-transform hex-string->number)
+  #:result-transform quantity->number)
 (define-jsonrpc-endpoint eth_protocolVersion (-> string?))
 (define-jsonrpc-endpoint eth_syncing (-> (or/c boolean? hash?)))
 (define-jsonrpc-endpoint eth_coinbase (-> string?))
 (define-jsonrpc-endpoint eth_chainId (-> exact-nonnegative-integer?)
-  #:result-transform hex-string->number)
+  #:result-transform quantity->number)
 (define-jsonrpc-endpoint eth_mining (-> boolean?))
 (define-jsonrpc-endpoint eth_hashrate (-> exact-nonnegative-integer?)
-  #:result-transform hex-string->number)
+  #:result-transform quantity->number)
 ;; wei
 (define-jsonrpc-endpoint eth_gasPrice (-> exact-nonnegative-integer?)
-  #:result-transform hex-string->number)
+  #:result-transform quantity->number)
 (define-jsonrpc-endpoint eth_maxPriorityFeePerGas (-> exact-nonnegative-integer?)
-  #:result-transform hex-string->number)
+  #:result-transform quantity->number)
 (define-jsonrpc-endpoint eth_blobBaseFee (-> exact-nonnegative-integer?)
   #:result-transform quantity->number)
 (define-jsonrpc-endpoint eth_feeHistory
@@ -141,17 +147,17 @@
       [reward-percentiles/c percentiles->jsexpr] hash?))
 (define-jsonrpc-endpoint eth_accounts (-> (listof string?)))
 (define-jsonrpc-endpoint eth_blockNumber (-> exact-nonnegative-integer?)
-  #:result-transform hex-string->number)
+  #:result-transform quantity->number)
 ;; wei
 (define-jsonrpc-endpoint eth_getBalance
   (-> string? [block-param/c block-param->string] exact-nonnegative-integer?)
-  #:result-transform hex-string->number)
+  #:result-transform quantity->number)
 (define-jsonrpc-endpoint eth_getStorageAt
   (-> string? [exact-nonnegative-integer? number->hex-string] [block-param/c block-param->string]
       hex-string?))
 (define-jsonrpc-endpoint eth_getTransactionCount
   (-> string? [block-param/c block-param->string] exact-nonnegative-integer?)
-  #:result-transform hex-string->number)
+  #:result-transform quantity->number)
 (define-jsonrpc-endpoint eth_getProof
   (-> string? [(listof storage-slot/c) storage-slots->jsexpr] [block-param/c block-param->string]
       hash?))
@@ -180,7 +186,7 @@
   (-> tx/c [block-param/c block-param->string] hex-string?))
 (define-jsonrpc-endpoint eth_estimateGas
   (-> tx/c exact-nonnegative-integer?)
-  #:result-transform hex-string->number)
+  #:result-transform quantity->number)
 (define-jsonrpc-endpoint eth_createAccessList (-> tx/c [block-param/c block-param->string] hash?))
 (define-jsonrpc-endpoint eth_sendTransaction (-> tx/c hex-string?))
 (define-jsonrpc-endpoint eth_sendRawTransaction (-> hex-string? hex-string?))
@@ -213,8 +219,9 @@
     (cond
       [(hash? r) r]
       [(> (current-inexact-milliseconds) deadline)
-       (raise (exn:fail:web3 (format "wait-for-receipt: no receipt for ~a after ~as" tx-hash timeout)
-                             (current-continuation-marks)))]
+       (raise (exn:fail:web3
+               (format "wait-for-receipt: no receipt for ~a after ~as" tx-hash timeout)
+               (current-continuation-marks)))]
       [else
        (sleep interval)
        (loop (min 0.25 (* 2 interval)))])))

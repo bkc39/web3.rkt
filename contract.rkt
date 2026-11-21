@@ -56,8 +56,8 @@
            (->i ([target target/c])
                 ([event (target) (event/c target)]
                  #:where [where (event) (where/c event)]
-                 #:from-block [from block/c]
-                 #:to-block [to block/c]
+                 #:from-block [from block-param/c]
+                 #:to-block [to block-param/c]
                  #:chunk [chunk (or/c #f exact-positive-integer?)]
                  #:provider [provider provider/c])
                 [_ (listof log?)])]
@@ -104,7 +104,6 @@
 (define salt/c
   (or/c (and/c bytes? (property/c bytes-length (=/c 32))) (integer-in 0 (sub1 (expt 2 256)))))
 (define nonce/c (integer-in 0 (- (expt 2 64) 2)))
-(define block/c (flat-named-contract 'block-param/c block-param/c))
 
 (define target/c
   (flat-named-contract 'target/c (or/c (abi-value/c 'address) contract-instance?)))
@@ -157,7 +156,7 @@
        (#:from [from from/c]
         #:value [value exact-nonnegative-integer?]
         #:gas [gas (or/c #f exact-positive-integer?)]
-        #:block [block block/c]
+        #:block [block block-param/c]
         #:errors [errors errors/c]
         #:provider [provider provider/c])
        #:rest [args list?]

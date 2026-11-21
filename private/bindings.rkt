@@ -24,12 +24,11 @@
 
 (define address/c (abi-value/c 'address))
 (define value/c exact-nonnegative-integer?)
-(define block/c (flat-named-contract 'block-param/c block-param/c))
 (define gas/c (or/c #f exact-positive-integer?))
 
 (define view-procedure/c
   (->* (address/c)
-       (#:from from/c #:block block/c #:gas gas/c #:errors errors/c #:provider provider/c)
+       (#:from from/c #:block block-param/c #:gas gas/c #:errors errors/c #:provider provider/c)
        #:rest list?
        any))
 
@@ -47,7 +46,7 @@
 
 (define any-procedure/c
   (->* (address/c)
-       (#:from from/c #:value value/c #:block block/c #:gas gas/c #:errors errors/c
+       (#:from from/c #:value value/c #:block block-param/c #:gas gas/c #:errors errors/c
         #:provider provider/c)
        #:rest list?
        any))

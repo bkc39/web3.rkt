@@ -259,8 +259,11 @@
       (check-regexp-match (regexp (string-append "^" who ": malformed")) (exn-message e))))
 
   (test-case "malformed node data raises exn:fail:web3"
-    (malformed-from (lambda () (get-logs transfers #:provider (mock-provider (hash "eth_getLogs" '(42)))))
-                    "get-logs")
+    (check-equal? (exn-message
+                   (raised (lambda ()
+                             (get-logs transfers
+                                       #:provider (mock-provider (hash "eth_getLogs" '(42)))))))
+                  "eth_getLogs: unexpected result '(42)")
     (define five-topics (log-jsexpr #:topics (make-list 5 transfer-topic)))
     (malformed-from (lambda () (get-logs transfers #:provider (mock-provider (hash "eth_getLogs" (list five-topics)))))
                     "get-logs")

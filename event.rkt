@@ -21,8 +21,8 @@
   [log-filter
    (->i ()
         (#:address [address address-filter/c]
-         #:from-block [from block/c]
-         #:to-block [to block/c]
+         #:from-block [from block-param/c]
+         #:to-block [to block-param/c]
          #:block-hash [block-hash (or/c #f block-hash/c)]
          #:topics [topics topic-positions/c]
          #:event [event (or/c #f abi-event-spec/c)]
@@ -46,8 +46,6 @@
 (define address-filter/c
   (flat-named-contract 'address-filter/c
                        (or/c #f (abi-value/c 'address) (non-empty-listof (abi-value/c 'address)))))
-
-(define block/c (flat-named-contract 'block-param/c block-param/c))
 
 (define block-hash/c (flat-named-contract 'block-hash/c topic/c))
 

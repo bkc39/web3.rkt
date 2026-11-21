@@ -340,11 +340,24 @@
   #:with method (datum->syntax #'rpc-name (symbol->string (syntax-e #'rpc-name)))
   #:with (arg ...) (generate-temporaries #'(p ...))
   #:with result? (generate-temporary #'rpc-name)
+  #:with unchecked (generate-temporary #'rpc-name)
+  #:with signature #'(->* (p.contract ...) (#:provider (or/c #f provider?)) any)
+  #:with procedure
+  (syntax-property #'(lambda (arg ... #:provider [provider (current-provider)])
+                       (call-endpoint method (list (p.->param arg) ...) provider transform result?))
+                   'inferred-name
+                   (syntax-e #'fn-name))
+  #:with definition
+  (if (eq? (syntax-local-context) 'module)
+      #'(begin
+          (define unchecked procedure)
+          (define-module-boundary-contract fn-name unchecked signature
+            #:name-for-blame fn-name
+            #:lift-to-end? #f))
+      #'(define/contract fn-name signature procedure))
   (begin
     (define result? (flat-contract-predicate (coerce-flat-contract 'fn-name result-contract)))
-    (define/contract (fn-name arg ... #:provider [provider (current-provider)])
-      (->* (p.contract ...) (#:provider (or/c #f provider?)) any)
-      (call-endpoint method (list (p.->param arg) ...) provider transform result?))))
+    definition))
 
 ;; The node's result is untrusted: one the transform rejects or the result
 ;; contract refuses is the node's fault, not the caller's.

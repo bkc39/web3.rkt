@@ -748,9 +748,9 @@ after it in kebab-case (@racket[eth_getBalance] defines
 @racket[eth-get-balance]).  The function takes one positional argument
 per @racket[arg-spec] and an optional @racket[#:provider].
 
-Each argument is checked against its @racket[contract-expr] and, when
-the spec gives a @racket[->param-expr], converted by it into the JSON
-parameter.  The response's @tt{result} goes through
+Each argument is checked against its @racket[contract-expr], which blames the
+caller, and, when the spec gives a @racket[->param-expr], converted by it into
+the JSON parameter.  The response's @tt{result} goes through
 @racket[transform-expr] (default @racket[values]) and is checked against
 @racket[result-contract-expr], a flat contract.  A result that
 @racket[transform-expr] raises on or that fails the contract raises
@@ -974,7 +974,7 @@ result is the node's JSON; @racket['baseFeePerGas] has one more entry, for the n
             (mock-provider (hash "eth_feeHistory"
                                  (hasheq 'oldestBlock "0x10" 'baseFeePerGas '("0x7" "0x7")
                                          'gasUsedRatio '(0.5) 'reward '(("0x1" "0x2"))))))
-          (eth-fee-history 1 16 '(25 1/2) #:provider node)
+          (eth-fee-history 1 16 '(1/2 25) #:provider node)
           (mock-provider-calls node)]}
 
 @deftogether[(
