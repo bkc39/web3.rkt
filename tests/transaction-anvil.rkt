@@ -7,7 +7,7 @@
            web3
            (only-in "abi-gen.rkt" random-address)
            (only-in "helpers/accounts.rkt" anvil-addresses anvil-keys)
-           (only-in "helpers/transactions.rkt" high-s-twin slot-1)
+           (only-in "helpers/transactions.rkt" check-node-fields high-s-twin slot-1)
            (only-in "util.rkt" seeded))
 
   (define recipients
@@ -49,53 +49,8 @@
                             #:max-priority-fee-per-gas priority-fee #:max-fee-per-gas gas-price
                             #:gas-limit 100000 #:to #f #:value value #:data init-code)]))
 
-  (define (quantity text)
-    (hex-string->number text))
-
   (define (raw-by-hash hash)
     (hex-string->bytes (rpc-call "eth_getRawTransactionByHash" (list hash))))
-
-  (define (check-node-fields stx node)
-    (define tx (signed-transaction-transaction stx))
-    (match-define (signature r s y-parity) (signed-transaction-signature stx))
-    (define (field key) (hash-ref node key 'null))
-    (define name (format "~s" stx))
-    (check-equal? (string-downcase (field 'from)) (string-downcase (signed-transaction-sender stx))
-                  name)
-    (check-equal? (field 'hash) (signed-transaction-hash stx) name)
-    (check-equal? (quantity (field 'type)) (transaction-type tx) name)
-    (check-equal? (quantity (field 'nonce)) (transaction-nonce tx) name)
-    (check-equal? (match (field 'chainId) ['null #f] [id (quantity id)]) (transaction-chain-id tx)
-                  name)
-    (check-equal? (field 'to) (match (transaction-to tx) [#f 'null] [to (string-downcase to)]) name)
-    (check-equal? (quantity (field 'value)) (transaction-value tx) name)
-    (check-equal? (field 'input) (bytes->hex-string (transaction-data tx)) name)
-    (check-equal? (quantity (field 'gas)) (transaction-gas-limit tx) name)
-    (check-equal? (quantity (field 'r)) r name)
-    (check-equal? (quantity (field 's)) s name)
-    (match (transaction-type tx)
-      [0
-       (check-equal? (quantity (field 'gasPrice)) (transaction-gas-price tx) name)
-       (check-equal? (quantity (field 'v))
-                     (match (transaction-chain-id tx)
-                       [#f (+ 27 y-parity)]
-                       [chain-id (+ 35 (* 2 chain-id) y-parity)])
-                     name)]
-      [type
-       (check-equal? (quantity (field 'yParity)) y-parity name)
-       (check-equal? (field 'accessList)
-                     (for/list ([entry (in-list (transaction-access-list tx))])
-                       (match-define (cons address keys) entry)
-                       (hasheq 'address (string-downcase address)
-                               'storageKeys (map bytes->hex-string keys)))
-                     name)
-       (if (= type 1)
-           (check-equal? (quantity (field 'gasPrice)) (transaction-gas-price tx) name)
-           (check-equal? (list (quantity (field 'maxFeePerGas))
-                               (quantity (field 'maxPriorityFeePerGas)))
-                         (list (transaction-max-fee-per-gas tx)
-                               (transaction-max-priority-fee-per-gas tx))
-                         name))]))
 
   (define (check-sent kind key-index recipient)
     (define sender (list-ref anvil-addresses key-index))

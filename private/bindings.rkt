@@ -13,21 +13,19 @@
          "../abi.rkt"
          (only-in (submod "../abi/description.rkt" private) bytecode/c)
          (only-in "../eth.rkt" block-param/c)
-         (only-in "../rpc.rkt" current-provider provider?)
+         (only-in "../rpc.rkt" current-provider)
          "binding-rules.rkt"
          "contract-call.rkt"
-         "exn.rkt")
+         "exn.rkt"
+         (only-in "contracts.rkt" errors/c from/c provider/c))
 
 (provide contract-bindings-out
          define-contract)
 
 (define address/c (abi-value/c 'address))
-(define from/c (or/c #f address/c))
 (define value/c exact-nonnegative-integer?)
 (define block/c (flat-named-contract 'block-param/c block-param/c))
 (define gas/c (or/c #f exact-positive-integer?))
-(define errors/c (listof (or/c string? abi-signature?)))
-(define provider/c (or/c #f provider?))
 
 (define view-procedure/c
   (->* (address/c)

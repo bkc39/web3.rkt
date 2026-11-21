@@ -5,9 +5,9 @@
            racket/match
            rackunit
            web3
-           (only-in "abi-gen.rkt" random-address random-bytes)
+           (only-in "abi-gen.rkt" random-bytes)
            (only-in "helpers/accounts.rkt" anvil-addresses anvil-keys signature-hex)
-           (only-in "helpers/transactions.rkt" slot-1)
+           (only-in "helpers/transactions.rkt" random-checksummed-address slot-1)
            (only-in "util.rkt" seeded))
 
   (match-define (list key0 _ key2 _ ...) (map hex-string->secret-key anvil-keys))
@@ -16,7 +16,7 @@
   (define prng (seeded 8 1 3 3 7 5))
 
   (define (fresh-address)
-    (address->checksum-string (random-address prng)))
+    (random-checksummed-address prng))
 
   (define pinned-messages
     `(("hello"

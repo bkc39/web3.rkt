@@ -29,9 +29,10 @@ node.  `(show expr)` prints an expression and its value.
 | `11-units.rkt` | wei, gwei and ether amounts from decimal strings and back, a token's decimals, refused amounts |
 | `12-transactions.rkt` | legacy, EIP-2930 and EIP-1559 transactions signed offline, their raw bytes, hashes and recovered senders, a refused truncation |
 | `13-signers.rkt` | a local key and a node account as signers: each one's EIP-191 signature verifies, and both sign the same transaction |
+| `14-sending.rkt` | a key the node does not hold: a contract deploy and send, an ether transfer |
 
 09, 10, 11 and 12 are programs: `racket examples/NN-name.rkt` runs its `main` and needs no node.
-13 is a program that starts its own anvil.
+13 and 14 are programs that start their own anvil.
 
 `contracts/` holds the Solidity the examples deploy (`Token.sol`,
 `Counter.sol`, `Events.sol`); `contracts/out/` is its compiled form,

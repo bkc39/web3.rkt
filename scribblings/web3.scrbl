@@ -20,10 +20,13 @@
                     web3/event
                     web3/rlp
                     web3/rpc
+                    web3/send
                     web3/signer
                     web3/transaction
                     web3/units]
-          scribble/example]
+          (for-syntax racket/base)
+          scribble/example
+          syntax/parse/define]
 
 @(define abi-eval (make-base-eval '(require web3/abi web3/address web3/rpc)))
 @(define contract-eval (make-base-eval '(require web3)))
@@ -33,6 +36,24 @@
 @(define units-eval (make-base-eval '(require web3)))
 @(define transaction-eval (make-base-eval '(require web3)))
 @(define signer-eval (make-base-eval '(require web3)))
+@(define send-eval (make-base-eval '(require web3)))
+
+@(define-syntax-parse-rule (defproc/filling (name:id positional ...) result:expr body ...)
+   (defproc (name positional ...
+             [#:value value uint256/c 0]
+             [#:data data bytes? #""]
+             [#:nonce nonce (or/c #f uint64/c) #f]
+             [#:gas-limit gas-limit (or/c #f uint64/c) #f]
+             [#:chain-id chain-id (or/c #f uint64/c) #f]
+             [#:type type (or/c #f 0 1 2) #f]
+             [#:gas-price gas-price (or/c #f uint256/c) #f]
+             [#:max-priority-fee-per-gas max-priority-fee-per-gas (or/c #f uint256/c) #f]
+             [#:max-fee-per-gas max-fee-per-gas (or/c #f uint256/c) #f]
+             [#:access-list access-list (or/c #f access-list/c) #f]
+             [#:errors errors (listof (or/c string? abi-signature?)) '()]
+             [#:provider provider (or/c #f provider?) (current-provider)])
+     result
+     body ...))
 
 @title{web3: Ethereum JSON-RPC for Racket}
 @author{bkc}
@@ -48,7 +69,7 @@ support for running local
 @racketmodname[web3/eth], @racketmodname[web3/abi],
 @racketmodname[web3/address], @racketmodname[web3/account], @racketmodname[web3/rlp],
 @racketmodname[web3/units], @racketmodname[web3/transaction],
-@racketmodname[web3/signer], @racketmodname[web3/contract],
+@racketmodname[web3/signer], @racketmodname[web3/send], @racketmodname[web3/contract],
 @racketmodname[web3/event] and @racketmodname[web3/anvil].
 
 @racketblock[
@@ -252,6 +273,54 @@ not recover its address, or a transaction other than the one asked for, raises
 @racket[exn:fail:web3:signer].
 
 See @filepath{examples/13-signers.rkt}.
+
+@subsection[#:tag "guide-sending"]{Sending Transactions}
+
+@racket[fill-transaction] completes a transaction from what the caller gives.  The node supplies
+the rest: its chain id, the sender's next nonce, a gas estimate, and fees.  A chain whose blocks
+have a base fee gets a type 2 transaction; one without gets a legacy one.
+
+@examples[#:eval send-eval
+          (define key
+            (hex-string->secret-key
+             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"))
+          (define signer (local-signer key))
+          (define recipient "0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
+          (define answers
+            (hash "eth_chainId" "0x7a69"
+                  "eth_estimateGas" "0x5208"
+                  "eth_getTransactionCount" "0x0"
+                  "eth_getBlockByNumber" (hasheq 'number "0x1" 'baseFeePerGas "0x3b9aca00")
+                  "eth_maxPriorityFeePerGas" "0x3b9aca00"
+                  "eth_sendRawTransaction"
+                  "0x353911be23e52e6b62f32b2323be63d06541c4ab17382cde9ff87b3174c3c9f6"))
+          (define node (mock-provider answers))
+          (define tx (fill-transaction signer recipient #:value (ether->wei "1.5") #:provider node))
+          tx
+          (transaction-max-fee-per-gas tx)]
+
+A field given is kept, and the node is not asked for it.
+
+@racket[send-signed-transaction] fills a transaction, signs it with the signer, and sends the raw
+bytes with @tt{eth_sendRawTransaction}.  @racket[send-signed-transaction/receipt] also waits for
+the receipt.
+
+@examples[#:eval send-eval
+          (send-signed-transaction signer recipient #:value (ether->wei "1.5") #:provider node)]
+
+Contracts take a signer wherever they take a sender: as @racket[#:from], as
+@racket[current-account], or in a @racket[contract-instance].  A send from a signer is filled,
+signed here and sent raw.  A send from an address is signed by the node, which is how
+impersonated accounts send.  Calls and estimates use the signer's address and sign nothing.
+
+@racketblock[
+(define-contract counter #:file "contracts/out/Counter.sol/Counter.json")
+(parameterize ([current-account signer])
+  (define address (counter-deploy))
+  (counter-increment address)
+  (counter-count address))]
+
+See @filepath{examples/14-sending.rkt}.
 
 @section{Providers and Calls}
 
@@ -492,6 +561,9 @@ Writes a block number as a hex quantity and passes tags through.}
          (or/c boolean? hash?)]
 @defproc[(eth-gas-price [#:provider provider (or/c #f provider?) (current-provider)])
          exact-nonnegative-integer?]
+@defproc[(eth-max-priority-fee-per-gas [#:provider provider (or/c #f provider?)
+                                                   (current-provider)])
+         exact-nonnegative-integer?]
 @defproc[(eth-accounts [#:provider provider (or/c #f provider?) (current-provider)])
          (listof string?)]
 @defproc[(eth-block-number [#:provider provider (or/c #f provider?) (current-provider)])
@@ -499,7 +571,7 @@ Writes a block number as a hex quantity and passes tags through.}
 
 @tt{web3_clientVersion}, @tt{net_version}, @tt{net_listening},
 @tt{net_peerCount}, @tt{eth_chainId}, @tt{eth_syncing},
-@tt{eth_gasPrice} (in wei), @tt{eth_accounts} and
+@tt{eth_gasPrice} (in wei), @tt{eth_maxPriorityFeePerGas} (in wei), @tt{eth_accounts} and
 @tt{eth_blockNumber}.  @racket[net-version] returns the network id as
 the node reports it, a decimal string.}
 
@@ -643,7 +715,8 @@ Raises @racket[exn:fail:web3] if no receipt appears within
                                    [#:provider provider (or/c #f provider?) (current-provider)])
          hash?]{
 Sends @racket[tx] with @racket[eth-send-transaction] and returns its
-receipt once mined.}
+receipt once mined.  For a transaction signed here, see
+@racket[send-signed-transaction/receipt].}
 
 @defproc[(receipt-succeeded? [receipt hash?]) boolean?]{
 Whether the receipt's status is success, @racket["0x1"], rather than
@@ -1187,6 +1260,67 @@ changing it changes neither the caller's bytes nor what the result is checked ag
             ([reason (or/c 'unsupported 'malformed 'wrong-signer 'wrong-transaction 'high-s)])]{
 A signer that cannot do what was asked, or that returned something other than a low-@racket[s]
 signature by its address of what was asked.}
+
+@section[#:tag "sending"]{Sending Transactions}
+
+@defmodule[web3/send]
+
+Completing transactions from a node, signing them with a signer, and sending them.  No error
+here shows a signer or a key.
+
+@defproc/filling[(fill-transaction [from (or/c (abi-value/c 'address) signer?)]
+                                   [to (or/c #f (abi-value/c 'address))])
+                 transaction?]{
+A transaction from @racket[from], an address or a signer, to @racket[to] (@racket[#f] creates a
+contract).  It has the fields given; each field given as @racket[#f] comes from the node behind
+@racket[provider]:
+@itemlist[
+ @item{the nonce, from @tt{eth_getTransactionCount} of @racket["pending"];}
+ @item{the gas limit, from @tt{eth_estimateGas}, with no margin;}
+ @item{for type 2, the priority fee from @tt{eth_maxPriorityFeePerGas}, and a fee cap of twice
+       the latest block's base fee plus the priority fee;}
+ @item{for types 0 and 1, the gas price from @tt{eth_gasPrice}.}]
+The node is always asked for its chain id.  A @racket[chain-id] other than the node's raises
+@racket[exn:fail:web3:fill].
+
+The type is @racket[type] when given, else the one the fee fields given allow.  When those allow
+type 2 and another, the latest block decides: 2 when it has a base fee, else 0, or 1 with an
+@racket[access-list].  Fields of a type other than @racket[type], or of two types, raise
+@racket[exn:fail:contract] before any request.  An estimate that reverts raises
+@racket[exn:fail:web3:rpc:revert], decoded against @racket[errors].
+
+@examples[#:eval send-eval
+          (eval:error (fill-transaction signer recipient #:chain-id 1 #:provider node))
+          (eval:error
+           (fill-transaction signer recipient #:type 0 #:access-list '() #:provider node))
+          (define legacy-node
+            (mock-provider (hash-set answers "eth_getBlockByNumber" (hasheq 'number "0x1"))))
+          (eval:error (fill-transaction signer recipient #:type 2 #:provider legacy-node))]}
+
+@deftogether[(@defproc/filling[(send-signed-transaction [signer signer?]
+                                                        [to (or/c #f (abi-value/c 'address))])
+                               (and/c string? #px"^0x[0-9a-f]{64}$")]
+              @defproc/filling[(send-signed-transaction/receipt
+                                [signer signer?]
+                                [to (or/c #f (abi-value/c 'address))])
+                               (and/c hash? jsexpr?)])]{
+@racket[(fill-transaction signer to ....)] signed by @racket[signer] and sent with
+@tt{eth_sendRawTransaction}, returning its hash, or with @racket[send-signed-transaction/receipt]
+its receipt once mined.  While @racket[signer] signs, @racket[current-provider] is
+@racket[provider].  When filling or signing fails, or the transaction signed is not from the
+address it was filled for, nothing is sent.  The node's refusals, such as @tt{nonce too low},
+raise @racket[exn:fail:web3:rpc], with a revert decoded against @racket[errors].  An error whose
+message starts @tt{sent transaction} means the transaction was sent: a node that answers with
+another hash raises one.  Waiting and failures are as for @racket[contract-send]: status 0 raises
+@racket[exn:fail:web3:transaction].
+
+Each call reads the pending nonce, so sends in a row from one signer get consecutive nonces.
+Sends from one signer in several threads at once may get the same one.}
+
+@defstruct*[(exn:fail:web3:fill exn:fail:web3) ([reason (or/c 'chain-id 'no-base-fee 'fee-cap)])]{
+A transaction the node's answers cannot complete: a @racket[#:chain-id] other than the node's, a
+type 2 transaction on a chain without a base fee, or a @racket[#:max-fee-per-gas] below the
+node's priority fee.  Nothing has been signed or sent.}
 
 @section{Contract ABI}
 
@@ -1821,20 +1955,21 @@ The JSON ABI of @racket[d].
 @defmodule[web3/contract]
 
 Deploying contracts and calling their functions from accounts the node
-manages.  Signatures are written as for @racket[encode-call]; a call's
+manages or from signers.  Signatures are written as for @racket[encode-call]; a call's
 outputs follow its inputs, as in @racket["balanceOf(address)(uint256)"].
 Arguments and results are as in @secref["abi-values"].  A revert raises
 @racket[exn:fail:web3:rpc:revert], decoded against @racket[errors] and the
 built-in @tt{Error} and @tt{Panic}.
 
-@defparam[current-account account (or/c #f (abi-value/c 'address)) #:value #f]{
-The sender when no @racket[#:from] is given.  Sending with no sender raises
+@defparam[current-account account (or/c #f (abi-value/c 'address) signer?) #:value #f]{
+The sender when no @racket[#:from] is given: an address the node sends from, or a signer.
+Sending with no sender raises
 @racket[exn:fail:web3]; a call with none has no @tt{from}.}
 
 @defproc[(contract-call [target (or/c (abi-value/c 'address) contract-instance?)]
                         [function (or/c string? symbol? abi-signature?)]
                         [arg any/c] ...
-                        [#:from from (or/c #f (abi-value/c 'address)) (current-account)]
+                        [#:from from (or/c #f (abi-value/c 'address) signer?) (current-account)]
                         [#:value value exact-nonnegative-integer? 0]
                         [#:gas gas (or/c #f exact-positive-integer?) #f]
                         [#:block block block-param/c "latest"]
@@ -1874,14 +2009,14 @@ for an @racket[abi-function], or a function looked up, that is not
 @defproc[(contract-send [target (or/c (abi-value/c 'address) contract-instance?)]
                         [function (or/c string? symbol? abi-signature?)]
                         [arg any/c] ...
-                        [#:from from (or/c #f (abi-value/c 'address)) (current-account)]
+                        [#:from from (or/c #f (abi-value/c 'address) signer?) (current-account)]
                         [#:value value exact-nonnegative-integer? 0]
                         [#:gas gas (or/c #f exact-positive-integer?) #f]
                         [#:errors errors (listof (or/c string? abi-signature?)) '()]
                         [#:provider provider (or/c #f provider?) (current-provider)])
          (and/c hash? jsexpr?)]{
-Sends a transaction calling @racket[function] from @racket[from], an
-account the node manages, and returns its receipt once mined.  Outputs in
+Sends a transaction calling @racket[function] from @racket[from], and
+returns its receipt once mined.  Outputs in
 @racket[function] are ignored.  With a @racket[contract-instance],
 @racket[function] may be a name, resolved by its number of arguments, and
 the instance's ABI errors, provider and sender are the defaults; names,
@@ -1901,16 +2036,24 @@ of, with that type's fields: a further subtype, such as one a provider
 defines, is not kept, and any other error becomes an
 @racket[exn:fail:web3].
 
+From a signer, the transaction is completed as by @racket[fill-transaction], with @racket[gas]
+as its gas limit and @racket[value] its value, so a @racket[gas] of 2@superscript{64} or more or
+a @racket[value] of 2@superscript{256} or more raises @racket[exn:fail:contract] before any
+request.  It is then signed by the signer and sent with @tt{eth_sendRawTransaction}.  An error
+whose message starts @tt{sent transaction} means the transaction was sent.  From an address, the
+node signs it (@tt{eth_sendTransaction}).  Calls and estimates from a signer use its address.
+
 @racketblock[
 (define receipt (contract-send token "transfer(address,uint256)" bob 250 #:from alice))
 (receipt-succeeded? receipt)
+(contract-send token "transfer(address,uint256)" bob 250 #:from (local-signer key))
 ]}
 
 @deftogether[(
 @defproc[(deploy-contract [init-code (or/c bytes? (and/c string? #px"^0x(?:[0-9a-fA-F]{2})*$"))]
                           [constructor (or/c string? abi-signature?) "constructor()"]
                           [arg any/c] ...
-                          [#:from from (or/c #f (abi-value/c 'address)) (current-account)]
+                          [#:from from (or/c #f (abi-value/c 'address) signer?) (current-account)]
                           [#:value value exact-nonnegative-integer? 0]
                           [#:gas gas (or/c #f exact-positive-integer?) #f]
                           [#:errors errors (listof (or/c string? abi-signature?)) '()]
@@ -1920,7 +2063,7 @@ defines, is not kept, and any other error becomes an
           [init-code (or/c bytes? (and/c string? #px"^0x(?:[0-9a-fA-F]{2})*$"))]
           [constructor (or/c string? abi-signature?) "constructor()"]
           [arg any/c] ...
-          [#:from from (or/c #f (abi-value/c 'address)) (current-account)]
+          [#:from from (or/c #f (abi-value/c 'address) signer?) (current-account)]
           [#:value value exact-nonnegative-integer? 0]
           [#:gas gas (or/c #f exact-positive-integer?) #f]
           [#:errors errors (listof (or/c string? abi-signature?)) '()]
@@ -1929,7 +2072,7 @@ defines, is not kept, and any other error becomes an
 Deploys @racket[init-code] with the @racket[arg]s encoded as the inputs of
 @racket[constructor], a signature named @tt{constructor}, and returns the
 new contract's address, and with @racket[deploy-contract/receipt] its
-receipt.  Gas and failures are as for @racket[contract-send].
+receipt.  Gas, senders and failures are as for @racket[contract-send].
 
 @racketblock[
 (define token
@@ -1969,7 +2112,7 @@ block changed the state it depends on.}
 
 @defproc[(contract-instance [abi contract-abi?] [address (abi-value/c 'address)]
                             [#:provider provider (or/c #f provider?) #f]
-                            [#:from from (or/c #f (abi-value/c 'address)) #f])
+                            [#:from from (or/c #f (abi-value/c 'address) signer?) #f])
          contract-instance?]{
 A contract at @racket[address] described by @racket[abi]:
 @racket[contract-call], @racket[contract-send],
@@ -2003,12 +2146,13 @@ and @racket[from], when given, replace @racket[current-provider] and
               @defproc[(contract-instance-address [i contract-instance?]) checksum-address?]
               @defproc[(contract-instance-provider [i contract-instance?]) (or/c #f provider?)]
               @defproc[(contract-instance-from [i contract-instance?])
-                       (or/c #f (abi-value/c 'address))])]{}
+                       (or/c #f (abi-value/c 'address) signer?)])]{}
 
 @defproc[(contract-estimate-gas [target (or/c (abi-value/c 'address) contract-instance?)]
                                 [function (or/c string? symbol? abi-signature?)]
                                 [arg any/c] ...
-                                [#:from from (or/c #f (abi-value/c 'address)) (current-account)]
+                                [#:from from
+                                 (or/c #f (abi-value/c 'address) signer?) (current-account)]
                                 [#:value value exact-nonnegative-integer? 0]
                                 [#:errors errors (listof (or/c string? abi-signature?)) '()]
                                 [#:provider provider (or/c #f provider?) (current-provider)])
@@ -2034,7 +2178,8 @@ that names no indexed parameter of @racket[event], raise
 
 @defproc[(deploy-contract-instance [abi (and/c contract-abi? contract-abi-bytecode)]
                                    [arg any/c] ...
-                                   [#:from from (or/c #f (abi-value/c 'address)) (current-account)]
+                                   [#:from from
+                                    (or/c #f (abi-value/c 'address) signer?) (current-account)]
                                    [#:value value exact-nonnegative-integer? 0]
                                    [#:gas gas (or/c #f exact-positive-integer?) #f]
                                    [#:errors errors (listof (or/c string? abi-signature?)) '()]
@@ -2079,7 +2224,8 @@ source, @racket[#:file] or the items, which come together, and at most one
 
 A function procedure takes the contract's address and the function's
 inputs: a @tt{view} or @tt{pure} function is a @racket[contract-call],
-any other a @racket[contract-send], with their keywords (@racket[#:value]
+any other a @racket[contract-send], with their keywords (@racket[#:from] may be a signer;
+@racket[#:value]
 only for a @tt{payable} function) and the ABI's errors.  Overloads with
 different numbers of inputs share one procedure; @racket[#:rename] gives a
 function (@racket["name"]), an overload (@racket["name(T,...)"]) or an

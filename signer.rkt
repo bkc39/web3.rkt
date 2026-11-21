@@ -38,7 +38,8 @@
           [node-signer? (opaque-> any/c boolean?)]))
 
 (module* internal #f
-  (provide signer/c
+  (provide raise-signer
+           signer/c
            signer-reason/c
            signer-address/who
            signer-sign-transaction/who))

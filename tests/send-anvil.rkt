@@ -1,0 +1,246 @@
+#lang racket/base
+
+(module+ test
+  (require racket/list
+           racket/match
+           rackunit
+           web3
+           (only-in "helpers/accounts.rkt" anvil-addresses anvil-keys random-key)
+           (only-in "helpers/mock.rkt" recording recording-calls)
+           (only-in "helpers/transactions.rkt"
+                    check-node-fields quantity random-checksummed-address slot-1)
+           (only-in "util.rkt" anvil-bob seeded))
+
+  (define-contract token #:file "../examples/contracts/out/Token.sol/Token.json")
+  (define-contract counter #:file "../examples/contracts/out/Counter.sol/Counter.json")
+
+  (match-define (list _ key1 key2 key3 key4 _ ...) (map hex-string->secret-key anvil-keys))
+  (match-define (list _ account1 _ account3 _ ...) anvil-addresses)
+  (define token-abi
+    (file->contract-abi (collection-file-path "examples/contracts/out/Token.sol/Token.json" "web3")))
+
+  (define prng (seeded 1 8 7 5 4 2))
+  (define one-and-a-half (ether->wei "1.5"))
+
+  (define (fresh-address)
+    (random-checksummed-address prng))
+
+  (define (balance address)
+    (eth-get-balance address "latest"))
+
+  (define (pending address)
+    (eth-get-transaction-count address "pending"))
+
+  (define (fee receipt)
+    (* (quantity (hash-ref receipt 'gasUsed)) (quantity (hash-ref receipt 'effectiveGasPrice))))
+
+  (define (recorded calls method)
+    (for/list ([call (in-list calls)]
+               #:when (equal? (first call) method))
+      call))
+
+  (define (raw-param calls)
+    (match (recorded calls "eth_sendRawTransaction")
+      [(list (list _ (list raw) _)) raw]))
+
+  (define (raised-rpc thunk)
+    (with-handlers ([exn:fail:web3:rpc? values])
+      (thunk)
+      #f))
+
+  (define (deploy-token deploy from)
+    (deploy (contract-abi-bytecode token-abi) "constructor(string,string,uint256)" "Token" "TOK"
+            1000 #:from from))
+
+  (define (sends-from from)
+    (define-values (address deployed) (deploy-token deploy-contract/receipt from))
+    (define transferred (token-transfer address anvil-bob 10 #:from from))
+    (define deposited (token-deposit address "memo" #:from from #:value 7))
+    (values address (list deployed transferred deposited)))
+
+  (define (chain-view address receipts sender)
+    (list (for/list ([receipt (in-list receipts)])
+            (list (hash-ref receipt 'status) (hash-ref receipt 'gasUsed)
+                  (for/list ([l (in-list (hash-ref receipt 'logs))])
+                    (map (lambda (key) (hash-ref l key)) '(address topics data)))
+                  (hash-ref receipt 'contractAddress)
+                  (let ([tx (eth-get-transaction-by-hash (hash-ref receipt 'transactionHash))])
+                    (map (lambda (key) (hash-ref tx key)) '(to input value gas)))))
+          (token-balance-of address anvil-bob)
+          (token-deposits address sender)
+          (token-total-supply address)
+          (balance anvil-bob)
+          (pending sender)))
+
+  (define (decoded receipts)
+    (for*/list ([receipt (in-list receipts)]
+                [l (in-list (receipt-logs receipt #:events (contract-abi-events token-abi)))])
+      (list (event-log-name l) (event-log-arguments l))))
+
+  (define (ether-cases)
+    (test-case "N1, N11: an ether send from a local key is mined as filled and signed"
+      (define signer (local-signer key2))
+      (define sender (signer-address signer))
+      (define recipient (fresh-address))
+      (define sender-before (balance sender))
+      (define nonce-before (pending sender))
+      (define node (recording (current-provider)))
+      (define receipt
+        (send-signed-transaction/receipt signer recipient #:value one-and-a-half #:provider node))
+      (define calls (recording-calls node))
+      (check-equal? (map (lambda (key) (hash-ref receipt key)) '(status type)) '("0x1" "0x2"))
+      (check-equal? (balance recipient) one-and-a-half)
+      (check-equal? (- sender-before (balance sender)) (+ one-and-a-half (fee receipt)))
+      (check-equal? (pending sender) (add1 nonce-before))
+      (define tx-hash (hash-ref receipt 'transactionHash))
+      (define raw (rpc-call "eth_getRawTransactionByHash" (list tx-hash)))
+      (check-equal? raw (raw-param calls))
+      (define stx (bytes->signed-transaction (hex-string->bytes raw)))
+      (check-equal? (signed-transaction-sender stx) sender)
+      (check-equal? (signed-transaction-hash stx) tx-hash)
+      (check-node-fields stx (eth-get-transaction-by-hash tx-hash))
+      (match-define (list (list _ _ block)) (recorded calls "eth_getBlockByNumber"))
+      (match-define (list (list _ _ priority)) (recorded calls "eth_maxPriorityFeePerGas"))
+      (check-equal? (transaction-max-fee-per-gas (signed-transaction-transaction stx))
+                    (+ (* 2 (quantity (hash-ref block 'baseFeePerGas))) (quantity priority))))
+
+    (test-case "N2: sends in a row get consecutive nonces"
+      (define signer (local-signer key3))
+      (define first-nonce (pending (signer-address signer)))
+      (define hashes
+        (for/list ([_ (in-range 5)])
+          (send-signed-transaction signer (fresh-address) #:value 1)))
+      (for ([tx-hash (in-list hashes)]
+            [nonce (in-naturals first-nonce)])
+        (check-equal? (hash-ref (wait-for-receipt tx-hash) 'status) "0x1")
+        (check-equal? (quantity (hash-ref (eth-get-transaction-by-hash tx-hash) 'nonce)) nonce))))
+
+  (define (contract-cases)
+    (test-case "N4, N5: a contract's sends from an address and from its key leave the same chain"
+      (define snapshot (evm-snapshot))
+      (define before (balance account1))
+      (define-values (by-address address-receipts) (sends-from account1))
+      (define address-view (chain-view by-address address-receipts account1))
+      (define address-spent (- before (balance account1)))
+      (define address-logs (decoded address-receipts))
+      (evm-revert snapshot)
+      (define-values (by-signer signer-receipts) (sends-from (local-signer key1)))
+      (check-equal? by-signer by-address)
+      (check-equal? (chain-view by-signer signer-receipts account1) address-view)
+      (check-equal? (decoded signer-receipts) address-logs)
+      (check-equal? address-spent (+ 7 (apply + (map fee address-receipts))))
+      (check-equal? (- before (balance account1)) (+ 7 (apply + (map fee signer-receipts)))))
+
+    (test-case "N7: a reverting send raises the decoded revert and spends no nonce"
+      (define signer (local-signer key1))
+      (define address (deploy-token deploy-contract signer))
+      (define nonce (pending account1))
+      (define e
+        (with-handlers ([exn:fail:web3:rpc:revert? values])
+          (token-transfer address anvil-bob 1000000 #:from signer)))
+      (check-pred exn:fail:web3:rpc:revert? e)
+      (check-equal? (abi-signature-name (abi-revert-signature (exn:fail:web3:rpc:revert-revert e)))
+                    "InsufficientBalance")
+      (check-equal? (pending account1) nonce))
+
+    (test-case "N10: a node signer as #:from sends from its account"
+      (define address (deploy-token deploy-contract (local-signer key1)))
+      (define receipt
+        (contract-send address "deposit(string)" "node" #:value 1 #:from (node-signer account3)))
+      (check-equal? (hash-ref receipt 'status) "0x1")
+      (check-equal? (string-downcase (hash-ref (eth-get-transaction-by-hash
+                                                (hash-ref receipt 'transactionHash))
+                                               'from))
+                    (string-downcase account3))))
+
+  (define refusals
+    `((,(lambda (signer _poor) (send-signed-transaction signer anvil-bob #:nonce 0))
+       #rx"nonce too low")
+      (,(lambda (signer _poor) (send-signed-transaction signer anvil-bob #:max-fee-per-gas 1
+                                                        #:max-priority-fee-per-gas 0))
+       #rx"base fee")
+      (,(lambda (_signer poor) (send-signed-transaction poor anvil-bob #:value 1
+                                                        #:gas-limit 21000))
+       #rx"(?i:insufficient funds)")))
+
+  (define (account-state signer poor)
+    (define sender (signer-address signer))
+    (list (pending sender) (balance sender) (pending (signer-address poor))))
+
+  (define (refusal-cases)
+    (test-case "N8: the node's refusals leave nonces and balances as they were"
+      (define signer (local-signer key4))
+      (wait-for-receipt (send-signed-transaction signer (fresh-address) #:value 1))
+      (define poor (local-signer (random-key prng)))
+      (define before (account-state signer poor))
+      (for ([row (in-list refusals)])
+        (match-define (list send pattern) row)
+        (define e (raised-rpc (lambda () (send signer poor))))
+        (check-pred exn:fail:web3:rpc? e (format "~a" pattern))
+        (when e
+          (check-equal? (exn:fail:web3:rpc-method e) "eth_sendRawTransaction")
+          (check-regexp-match pattern (exn:fail:web3:rpc-rpc-message e))))
+      (define wrong-chain
+        (with-handlers ([exn:fail:web3:fill? values])
+          (send-signed-transaction signer anvil-bob #:chain-id 1)))
+      (check-eq? (exn:fail:web3:fill-reason wrong-chain) 'chain-id)
+      (check-equal? (account-state signer poor) before))
+
+    (test-case "N9: a transaction that fails on chain raises with its receipt"
+      (define reverter (fresh-address))
+      (anvil-set-code reverter "0x60006000fd")
+      (define e
+        (with-handlers ([exn:fail:web3:transaction? values])
+          (send-signed-transaction/receipt (local-signer key2) reverter #:gas-limit 50000)))
+      (check-pred exn:fail:web3:transaction? e)
+      (check-equal? (hash-ref (exn:fail:web3:transaction-receipt e) 'status) "0x0")))
+
+  (define (berlin-cases)
+    (test-case "N6: before London a fill is legacy, or EIP-2930 with an access list"
+      (define signer (local-signer key2))
+      (define sender (signer-address signer))
+      (define price (eth-gas-price))
+      (define legacy (fill-transaction signer (fresh-address) #:value 1))
+      (check-equal? (list (transaction-type legacy) (transaction-gas-price legacy)) (list 0 price))
+      (define listed
+        (fill-transaction signer anvil-bob #:access-list (list (list anvil-bob slot-1))))
+      (check-equal? (transaction-type listed) 1)
+      (check-equal?
+       (for/list ([access-list (list #f (list (list anvil-bob slot-1)))])
+         (hash-ref (send-signed-transaction/receipt signer (fresh-address) #:value 1
+                                                    #:access-list access-list)
+                   'type))
+       '("0x0" "0x1"))
+      (define nonce (pending sender))
+      (define e
+        (with-handlers ([exn:fail:web3:fill? values])
+          (send-signed-transaction signer anvil-bob #:type 2)))
+      (check-eq? (exn:fail:web3:fill-reason e) 'no-base-fee)
+      (check-equal? (pending sender) nonce)))
+
+  (define (accountless-cases)
+    (test-case "N3: a key the node does not hold deploys and sends; its address alone cannot"
+      (define signer (local-signer key2))
+      (define sender (signer-address signer))
+      (anvil-set-balance sender (ether->wei 10))
+      (parameterize ([current-account signer])
+        (define address (counter-deploy))
+        (check-equal? address (create-address sender 0))
+        (counter-increment address)
+        (check-equal? (counter-count address) 1)
+        (define e (raised-rpc (lambda () (counter-increment address #:from sender))))
+        (check-equal? (exn:fail:web3:rpc-method e) "eth_sendTransaction")
+        (check-equal? (counter-count address) 1))))
+
+  (cond
+    [(not (current-anvil-path))
+     (displayln "skipping send node tests: anvil not found")]
+    [else
+     (with-anvil ()
+       (ether-cases)
+       (contract-cases)
+       (refusal-cases))
+     (with-anvil (#:hardfork "berlin")
+       (berlin-cases))
+     (with-anvil (#:args '("--accounts" "0"))
+       (accountless-cases))]))

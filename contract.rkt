@@ -2,7 +2,6 @@
 
 (require racket/contract/base
          (only-in racket/contract/combinator raise-blame-error)
-         (only-in json jsexpr?)
          (only-in keccak keccak256)
          (only-in racket/match match match* struct*)
          (only-in racket/string string-contains? string-join)
@@ -22,12 +21,13 @@
          "private/contract-call.rkt"
          "private/exn.rkt"
          (only-in "private/hex.rkt" hex-data-string?)
+         (only-in "private/contracts.rkt" errors/c from/c provider/c receipt/c)
          "private/who.rkt")
 
 (define-syntax-parse-rule (transaction->* (required:expr ...) (optional ...) result:expr)
   (->* (required ...)
        (optional ...
-        #:from (or/c #f (abi-value/c 'address))
+        #:from from/c
         #:value exact-nonnegative-integer?
         #:gas (or/c #f exact-positive-integer?)
         #:errors errors/c
@@ -39,19 +39,19 @@
          define-contract
          contract-bindings-out
          (contract-out
-          [current-account (parameter/c (or/c #f (abi-value/c 'address)))]
+          [current-account (parameter/c from/c)]
           [contract-call call/c]
           [contract-send send/c]
           [contract-estimate-gas estimate/c]
           [contract-instance (->* (contract-abi? (abi-value/c 'address))
                                   (#:provider (or/c #f provider?)
-                                   #:from (or/c #f (abi-value/c 'address)))
+                                   #:from from/c)
                                   contract-instance?)]
           [contract-instance? (-> any/c boolean?)]
           [contract-instance-abi (-> contract-instance? contract-abi?)]
           [contract-instance-address (-> contract-instance? checksum-address?)]
           [contract-instance-provider (-> contract-instance? (or/c #f provider?))]
-          [contract-instance-from (-> contract-instance? (or/c #f (abi-value/c 'address)))]
+          [contract-instance-from (-> contract-instance? from/c)]
           [contract-logs
            (->i ([target target/c])
                 ([event (target) (event/c target)]
@@ -98,17 +98,13 @@
   #:property prop:custom-write write-instance)
 
 (define signature/c (or/c string? abi-signature?))
-(define errors/c (listof (or/c string? abi-signature?)))
 (define init-code/c
   (or/c bytes?
         (flat-named-contract '(and/c string? #px"^0x(?:[0-9a-fA-F]{2})*$") hex-data-string?)))
 (define salt/c
   (or/c (and/c bytes? (property/c bytes-length (=/c 32))) (integer-in 0 (sub1 (expt 2 256)))))
 (define nonce/c (integer-in 0 (- (expt 2 64) 2)))
-(define receipt/c (and/c hash? jsexpr?))
 (define block/c (flat-named-contract 'block-param/c block-param/c))
-(define from/c (or/c #f (abi-value/c 'address)))
-(define provider/c (or/c #f provider?))
 
 (define target/c
   (flat-named-contract 'target/c (or/c (abi-value/c 'address) contract-instance?)))
