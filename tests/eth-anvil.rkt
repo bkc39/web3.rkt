@@ -13,9 +13,12 @@
   (define contract "0x00000000000000000000000000000000000c0de0")
   (define stranger "0x000000000000000000000000000000000000beef")
 
-  (define (send-to to data)
+  (define (first-account)
     (match-define (list me _ ...) (eth-accounts))
-    (eth-send-transaction (hasheq 'from me 'to to 'data data)))
+    me)
+
+  (define (send-to to data)
+    (eth-send-transaction (hasheq 'from (first-account) 'to to 'data data)))
 
   (define (mined-transfer)
     (define tx-hash (send-to stranger "0x"))
@@ -89,10 +92,10 @@
      (test-case "A8: an access list names the slot a call writes"
        (with-anvil ()
          (anvil-set-code contract store-arg)
-         (match-define (list me _ ...) (eth-accounts))
          (define access
            (eth-create-access-list
-            (hasheq 'from me 'to contract 'data (bytes->hex-string (word 7))) "latest"))
+            (hasheq 'from (first-account) 'to contract 'data (bytes->hex-string (word 7)))
+            "latest"))
          (check-not-false (member (hasheq 'address (string-downcase contract)
                                           'storageKeys (list (filled-hash #\0)))
                                   (hash-ref access 'accessList)))))
@@ -122,7 +125,7 @@
          (define tx-hash (send-to stranger "0x"))
          (check-equal? (eth-get-filter-changes filter-id) (list tx-hash))))
 
-     (test-case "A12: uninstalling twice"
+     (test-case "A12: uninstalling a filter twice gives #t then #f"
        (with-anvil ()
          (define filter-id (eth-new-block-filter))
          (check-true (eth-uninstall-filter filter-id))

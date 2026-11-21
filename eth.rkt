@@ -1,22 +1,26 @@
 #lang racket/base
 
-;; Standard Ethereum JSON-RPC endpoints (web3_*, net_*, eth_*), returning
-;; their results directly.
-;;
-;; Quantities come back as exact integers; data and addresses as "0x..."
-;; strings; transactions, receipts and blocks as jsexprs (hasheq).
-
-(require json
-         racket/contract
+(require racket/contract
          (only-in racket/match match)
          "eth/log.rkt"
-         (only-in "private/hex.rkt" bytes->hex hex-data-string? natural->bytes)
+         (only-in "private/eth-params.rkt"
+                  block-param/c
+                  block-param->string
+                  object/c
+                  objects/c
+                  percentiles->jsexpr
+                  reward-percentiles/c
+                  storage-slot/c
+                  storage-slots->jsexpr)
+         (only-in "private/hex.rkt" hex-data-string?)
          (only-in "private/node.rkt" node-quantity->number receipt-status->boolean)
          "rpc.rkt")
 
 (provide (all-from-out "eth/log.rkt")
          block-param/c
          block-param->string
+         reward-percentiles/c
+         storage-slot/c
          web3-client-version
          web3-sha3
          net-version
@@ -68,40 +72,8 @@
            (->* (hex-string?)
                 (#:timeout real? #:interval real? #:provider (or/c #f provider?))
                 hash?)]
-          [send-transaction/receipt (->* (tx/c) (#:provider (or/c #f provider?)) hash?)]
+          [send-transaction/receipt (->* (object/c) (#:provider (or/c #f provider?)) hash?)]
           [receipt-succeeded? (-> hash? boolean?)]))
-
-(define block-param/c
-  (flat-named-contract
-   'block-param/c
-   (or/c exact-nonnegative-integer? "latest" "earliest" "pending" "safe" "finalized")))
-
-(define (block-param->string p)
-  (if (exact-nonnegative-integer? p) (number->hex-string p) p))
-
-(define (non-decreasing? xs)
-  (or (null? xs) (apply <= xs)))
-
-(define reward-percentiles/c
-  (flat-named-contract 'reward-percentiles/c (and/c (listof (real-in 0 100)) non-decreasing?)))
-
-(define storage-slot/c (flat-named-contract 'storage-slot/c (integer-in 0 (sub1 (expt 2 256)))))
-
-(define logs/c (listof hash?))
-
-(define receipts/c (listof hash?))
-
-(define (percentile->jsexpr percentile)
-  (if (exact-integer? percentile) percentile (exact->inexact percentile)))
-
-(define (percentiles->jsexpr percentiles)
-  (map percentile->jsexpr percentiles))
-
-(define (storage-slot->jsexpr slot)
-  (bytes->hex (natural->bytes slot 32)))
-
-(define (storage-slots->jsexpr slots)
-  (map storage-slot->jsexpr slots))
 
 (define (empty-data->null v)
   (if (equal? v "0x") 'null v))
@@ -111,10 +83,6 @@
 
 (define (count-or-null->number v)
   (if (eq? v 'null) 0 (quantity->number v)))
-
-(define tx/c (and/c hash? jsexpr?))
-
-(define filter/c (and/c hash? jsexpr?))
 
 (define (signed-transaction-result result)
   (match result
@@ -173,7 +141,7 @@
   (-> [block-param/c block-param->string] boolean? (or/c 'null hash?)))
 (define-jsonrpc-endpoint eth_getBlockByHash (-> hex-string? boolean? (or/c 'null hash?)))
 (define-jsonrpc-endpoint eth_getBlockReceipts
-  (-> [block-param/c block-param->string] (or/c 'null receipts/c)))
+  (-> [block-param/c block-param->string] (or/c 'null objects/c)))
 (define-jsonrpc-endpoint eth_getTransactionByBlockHashAndIndex
   (-> hex-string? [exact-nonnegative-integer? number->hex-string] (or/c 'null hash?)))
 (define-jsonrpc-endpoint eth_getTransactionByBlockNumberAndIndex
@@ -183,28 +151,29 @@
 ;; Calls and transactions take a transaction object, e.g.
 ;;   (hasheq 'from a 'to b 'data "0x...")
 (define-jsonrpc-endpoint eth_call
-  (-> tx/c [block-param/c block-param->string] hex-string?))
+  (-> object/c [block-param/c block-param->string] hex-string?))
 (define-jsonrpc-endpoint eth_estimateGas
-  (-> tx/c exact-nonnegative-integer?)
+  (-> object/c exact-nonnegative-integer?)
   #:result-transform quantity->number)
-(define-jsonrpc-endpoint eth_createAccessList (-> tx/c [block-param/c block-param->string] hash?))
-(define-jsonrpc-endpoint eth_sendTransaction (-> tx/c hex-string?))
+(define-jsonrpc-endpoint eth_createAccessList
+  (-> object/c [block-param/c block-param->string] hash?))
+(define-jsonrpc-endpoint eth_sendTransaction (-> object/c hex-string?))
 (define-jsonrpc-endpoint eth_sendRawTransaction (-> hex-string? hex-string?))
 (define-jsonrpc-endpoint eth_sign (-> string? hex-string? hex-string?))
-(define-jsonrpc-endpoint eth_signTransaction (-> tx/c hex-string?)
+(define-jsonrpc-endpoint eth_signTransaction (-> object/c hex-string?)
   #:result-transform signed-transaction-result)
 (define-jsonrpc-endpoint eth_getTransactionByHash (-> hex-string? (or/c 'null hash?)))
 (define-jsonrpc-endpoint eth_getTransactionReceipt (-> hex-string? (or/c 'null hash?)))
 (define-jsonrpc-endpoint eth_getRawTransactionByHash
   (-> hex-string? (or/c 'null hex-data-string?))
   #:result-transform empty-data->null)
-(define-jsonrpc-endpoint eth_getLogs (-> filter/c logs/c))
+(define-jsonrpc-endpoint eth_getLogs (-> object/c objects/c))
 
-(define-jsonrpc-endpoint eth_newFilter (-> filter/c hex-string?))
+(define-jsonrpc-endpoint eth_newFilter (-> object/c hex-string?))
 (define-jsonrpc-endpoint eth_newBlockFilter (-> hex-string?))
 (define-jsonrpc-endpoint eth_newPendingTransactionFilter (-> hex-string?))
 (define-jsonrpc-endpoint eth_getFilterChanges (-> hex-string? (listof (or/c hex-string? hash?))))
-(define-jsonrpc-endpoint eth_getFilterLogs (-> hex-string? logs/c))
+(define-jsonrpc-endpoint eth_getFilterLogs (-> hex-string? objects/c))
 (define-jsonrpc-endpoint eth_uninstallFilter (-> hex-string? boolean?))
 
 ;; Poll until the receipt exists.  Nodes (anvil included) may return

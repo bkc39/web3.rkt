@@ -12,13 +12,13 @@
          (only-in (submod "abi/event-type.rkt" private) spec->abi-event/who)
          "address.rkt"
          (only-in (submod "address.rkt" private) digest->address)
-         (only-in "eth.rkt" block-param/c)
          "event.rkt"
          (only-in "rlp.rkt" natural->rlp-scalar rlp-encode)
          "rpc.rkt"
          "private/abi-json.rkt"
          "private/bindings.rkt"
          "private/contract-call.rkt"
+         (only-in "private/eth-params.rkt" block-param/c)
          "private/exn.rkt"
          (only-in "private/hex.rkt" hex-data-string?)
          (only-in "private/contracts.rkt" errors/c from/c provider/c receipt/c)

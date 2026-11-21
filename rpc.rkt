@@ -13,6 +13,7 @@
          racket/port
          racket/string
          racket/tcp
+         (only-in syntax/location quote-module-name quote-srcloc)
          syntax/parse/define
          "private/exn.rkt"
          "private/hex.rkt"
@@ -330,7 +331,24 @@
 (begin-for-syntax
   (define-syntax-class arg-spec
     (pattern [contract:expr ->param:expr])
-    (pattern contract:expr #:with ->param #'values)))
+    (pattern contract:expr #:with ->param #'values))
+
+  (define (expand-endpoint-use endpoint stx)
+    (define checked
+      #`(#,(endpoint-transformer-checked-for endpoint)
+         #,(syntax-local-lift-expression #'(quote-module-name))))
+    (syntax-parse stx
+      [_:id checked]
+      [(_ . args) (quasisyntax/loc stx (#,checked . args))]))
+
+  (struct endpoint-transformer (checked-for) #:property prop:procedure expand-endpoint-use))
+
+(define (endpoint-checker signature procedure positive name srcloc)
+  (define checked (make-hash))
+  (lambda (negative)
+    (hash-ref! checked
+               negative
+               (lambda () (contract signature procedure positive negative name srcloc)))))
 
 (define-syntax-parse-rule
   (define-jsonrpc-endpoint rpc-name:id
@@ -339,25 +357,20 @@
   #:with fn-name (format-id #'rpc-name "~a" (->kebab-case (syntax-e #'rpc-name)))
   #:with method (datum->syntax #'rpc-name (symbol->string (syntax-e #'rpc-name)))
   #:with (arg ...) (generate-temporaries #'(p ...))
-  #:with result? (generate-temporary #'rpc-name)
-  #:with unchecked (generate-temporary #'rpc-name)
-  #:with signature #'(->* (p.contract ...) (#:provider (or/c #f provider?)) any)
+  #:with (result? unchecked signature checked-for)
+  (generate-temporaries '(result? unchecked signature checked-for))
   #:with procedure
   (syntax-property #'(lambda (arg ... #:provider [provider (current-provider)])
                        (call-endpoint method (list (p.->param arg) ...) provider transform result?))
                    'inferred-name
                    (syntax-e #'fn-name))
-  #:with definition
-  (if (eq? (syntax-local-context) 'module)
-      #'(begin
-          (define unchecked procedure)
-          (define-module-boundary-contract fn-name unchecked signature
-            #:name-for-blame fn-name
-            #:lift-to-end? #f))
-      #'(define/contract fn-name signature procedure))
   (begin
     (define result? (flat-contract-predicate (coerce-flat-contract 'fn-name result-contract)))
-    definition))
+    (define unchecked procedure)
+    (define signature (->* (p.contract ...) (#:provider (or/c #f provider?)) any))
+    (define checked-for
+      (endpoint-checker signature unchecked (quote-module-name) 'fn-name (quote-srcloc rpc-name)))
+    (define-syntax fn-name (endpoint-transformer (quote-syntax checked-for)))))
 
 ;; The node's result is untrusted: one the transform rejects or the result
 ;; contract refuses is the node's fault, not the caller's.
@@ -442,7 +455,8 @@
         (thread (lambda ()
                   (let accept ()
                     (define-values (in out) (tcp-accept listener))
-                    (thread (lambda () (with-handlers ([exn:fail? void]) (serve-requests in out arrived))))
+                    (thread (lambda ()
+                              (with-handlers ([exn:fail? void]) (serve-requests in out arrived))))
                     (accept))))
         (define-values (_host port _rhost _rport) (tcp-addresses listener #t))
         port))

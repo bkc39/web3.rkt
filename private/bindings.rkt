@@ -12,10 +12,10 @@
          syntax/parse/define
          "../abi.rkt"
          (only-in (submod "../abi/description.rkt" private) bytecode/c)
-         (only-in "../eth.rkt" block-param/c)
          (only-in "../rpc.rkt" current-provider)
          "binding-rules.rkt"
          "contract-call.rkt"
+         (only-in "eth-params.rkt" block-param/c)
          "exn.rkt"
          (only-in "contracts.rkt" errors/c from/c provider/c))
 

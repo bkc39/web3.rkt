@@ -2,10 +2,11 @@
 
 (module+ test
   (require json
+           (only-in racket/contract flat-contract-predicate)
            (only-in racket/match match-define)
            rackunit
            web3
-           (only-in "util.rkt" check-blames-here filled-hash max-word))
+           (only-in "util.rkt" check-blames-here filled-hash max-word raised))
 
   (define addr "0x00000000000000000000000000000000000c0de0")
   (define a-block (hasheq 'number "0x10" 'hash (filled-hash #\b) 'transactions '()))
@@ -137,6 +138,8 @@
       [,eth-fee-history (1 "newest" ())]
       [,eth-fee-history (1 "latest" (101))]
       [,eth-fee-history (1 "latest" (75 25))]
+      [,eth-fee-history (1 "latest" (50 50))]
+      [,eth-fee-history (1 "latest" (0.3333333333333333 1/3))]
       [,eth-fee-history (1 "latest" (+nan.0))]
       [,eth-fee-history (1 "latest" (-1))]
       [,eth-get-block-by-hash ("0xbb" yes)]
@@ -161,11 +164,25 @@
       (match-define (list procedure arguments _ _ _ _) row)
       (check-blames-here (apply procedure arguments #:provider 'nope))))
 
-  (test-case "E5: the wrong number of arguments is an arity error naming the endpoint"
-    (define e (with-handlers ([exn:fail:contract:arity? values])
-                (eth-fee-history 1 "latest" #:provider (mock-provider (hash)))))
+  (test-case "the wrong number of arguments is an arity error naming the endpoint"
+    (define e (raised (lambda () (eth-fee-history 1 "latest" #:provider (mock-provider (hash))))))
     (check-pred exn:fail:contract:arity? e)
-    (check-regexp-match #rx"eth-fee-history" (exn-message e)))
+    (check-regexp-match #rx"procedure: eth-fee-history\n" (exn-message e)))
+
+  (test-case "a bad argument's blame points at the endpoint's definition"
+    (define message (exn-message (raised (lambda () (eth-chain-id #:provider 'nope)))))
+    (check-regexp-match #rx"at:[ \n]+[^\n]*/eth[.]rkt:[0-9]+[.:][0-9]+" message)
+    (check-false (regexp-match? #rx"rpc[.]rkt" message)))
+
+  (test-case "an endpoint is a first-class procedure"
+    (define node (mock-provider (hash "eth_chainId" "0x7a69" "eth_getBalance" "0x1")))
+    (check-equal? (object-name eth-chain-id) 'eth-chain-id)
+    (check-equal? (procedure-arity eth-get-balance) 2)
+    (check-equal? (keyword-apply eth-chain-id '(#:provider) (list node) '()) 31337)
+    (check-equal? (apply eth-get-balance addr '("latest") #:provider node) 1)
+    (with-provider node
+      (check-equal? (map eth-get-balance (list addr addr) '(1 "latest")) '(1 1))
+      (check-blames-here (map eth-get-balance (list addr) '("head")))))
 
   (test-case "E6: existing endpoints blame the caller"
     (parameterize ([current-provider (mock-provider (hash "eth_getBalance" "0x0"))])
@@ -206,11 +223,30 @@
       (check-equal? (unexpected-message procedure '() method sixty-five-digits)
                     (format "~a: unexpected result ~s" method sixty-five-digits))))
 
-  (test-case "E11: block-param/c is named"
-    (check-equal? (object-name block-param/c) 'block-param/c)
-    (define e (with-handlers ([exn:fail:contract? values])
-                (eth-get-balance addr "head" #:provider (mock-provider (hash)))))
+  (test-case "E11: a bad block parameter's violation says block-param/c"
+    (define e (raised (lambda () (eth-get-balance addr "head" #:provider (mock-provider (hash))))))
     (check-regexp-match #rx"expected: block-param/c" (exn-message e)))
+
+  (define (passes? contract value)
+    ((flat-contract-predicate contract) value))
+
+  (test-case "reward percentiles increase strictly as the node reads them"
+    (for ([percentiles (in-list '(() (0) (1/2 25 75.5) (0 100)))])
+      (check-true (passes? reward-percentiles/c percentiles) (format "~s" percentiles)))
+    (for ([percentiles (in-list '((50 50) (0.3333333333333333 1/3) (25 1/2) (101) x))])
+      (check-false (passes? reward-percentiles/c percentiles) (format "~s" percentiles)))
+    (define e (raised (lambda ()
+                        (eth-fee-history 1 "latest" '(50 50) #:provider (mock-provider (hash))))))
+    (check-regexp-match #rx"expected: reward-percentiles/c" (exn-message e)))
+
+  (test-case "a storage slot is a 256-bit word"
+    (for ([slot (in-list (list 0 max-word))])
+      (check-true (passes? storage-slot/c slot)))
+    (for ([slot (in-list (list -1 (add1 max-word) "0x0"))])
+      (check-false (passes? storage-slot/c slot)))
+    (define e (raised (lambda ()
+                        (eth-get-proof addr '(-1) "latest" #:provider (mock-provider (hash))))))
+    (check-regexp-match #rx"expected: storage-slot/c" (exn-message e)))
 
   (test-case "E12: logs are hash tables"
     (check-equal? (unexpected-message eth-get-logs (list a-query) "eth_getLogs" '("0xaa"))

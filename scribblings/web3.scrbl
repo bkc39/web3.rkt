@@ -746,10 +746,11 @@ response's @tt{result}.  Raises @racket[exn:fail:web3] when
 Defines a function for the JSON-RPC method @racket[rpc-name], named
 after it in kebab-case (@racket[eth_getBalance] defines
 @racket[eth-get-balance]).  The function takes one positional argument
-per @racket[arg-spec] and an optional @racket[#:provider].
+per @racket[arg-spec] and an optional @racket[#:provider].  The name is bound as syntax that
+stands for the function wherever it appears, so it cannot be @racket[set!].
 
 Each argument is checked against its @racket[contract-expr], which blames the
-caller, and, when the spec gives a @racket[->param-expr], converted by it into
+module of the call, and, when the spec gives a @racket[->param-expr], converted by it into
 the JSON parameter.  The response's @tt{result} goes through
 @racket[transform-expr] (default @racket[values]) and is checked against
 @racket[result-contract-expr], a flat contract.  A result that
@@ -926,6 +927,14 @@ A block to query: a block number or one of the named block tags.}
 @defproc[(block-param->string [block block-param/c]) string?]{
 Writes a block number as a hex quantity and passes tags through.}
 
+@defthing[reward-percentiles/c flat-contract?]{
+Percentiles for @racket[eth-fee-history]: a list of reals between 0 and 100, strictly increasing
+once each non-integer is written as a flonum, as the node reads them.}
+
+@defthing[storage-slot/c flat-contract?
+          #:value (integer-in 0 (sub1 (expt 2 256)))]{
+A storage slot: a 256-bit word.}
+
 @subsection{Node and Chain}
 
 @deftogether[(
@@ -962,12 +971,12 @@ the node reports it, a decimal string.}
 
 @defproc[(eth-fee-history [block-count exact-positive-integer?]
                           [newest-block block-param/c]
-                          [reward-percentiles (listof (real-in 0 100))]
+                          [reward-percentiles reward-percentiles/c]
                           [#:provider provider (or/c #f provider?) (current-provider)])
          hash?]{
 Base fees and gas used ratios of the @racket[block-count] blocks ending at @racket[newest-block],
-and the priority fee paid at each of @racket[reward-percentiles], which are non-decreasing.  The
-result is the node's JSON; @racket['baseFeePerGas] has one more entry, for the next block.
+and the priority fee paid at each of @racket[reward-percentiles].  The result is the node's JSON;
+@racket['baseFeePerGas] has one more entry, for the next block.
 
 @examples[#:eval eth-eval
           (define node
@@ -1018,7 +1027,7 @@ The number of transactions sent from @racket[address]: its next nonce.}
 The 32-byte word at storage @racket[slot] of @racket[address].}
 
 @defproc[(eth-get-proof [address string?]
-                        [slots (listof (integer-in 0 (sub1 (expt 2 256))))]
+                        [slots (listof storage-slot/c)]
                         [block block-param/c]
                         [#:provider provider (or/c #f provider?) (current-provider)])
          hash?]{
@@ -1138,8 +1147,9 @@ A transaction, or its receipt once it has been mined.}
           [tx-hash hex-string?]
           [#:provider provider (or/c #f provider?) (current-provider)])
          (or/c 'null hex-string?)]{
-The signed, serialized transaction, as @racket[eth-send-raw-transaction] takes it, or
-@racket['null] for an unknown one; see @racket[bytes->signed-transaction].}
+The signed, serialized transaction, an even number of hex digits as
+@racket[eth-send-raw-transaction] takes it, or @racket['null] for an unknown one; see
+@racket[bytes->signed-transaction].}
 
 @defproc[(eth-get-logs [filter (and/c hash? jsexpr?)]
                        [#:provider provider (or/c #f provider?) (current-provider)])
