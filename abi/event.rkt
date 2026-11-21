@@ -220,8 +220,7 @@
          (indexed-value p i)))
      (define plain-values
        (abi-decode/who who (map abi-event-parameter-type plain) bs (* 32 (length topics))))
-     (apply event-log
-            (append (log->list l) (list event (interleave ps indexed-values plain-values))))]))
+     (apply event-log (log->list l event (interleave ps indexed-values plain-values)))]))
 
 (define/who (decode-log who spec l)
   (decode-as who (spec->abi-event/who who spec) l))

@@ -232,6 +232,15 @@
                              "outcome unknown: "))
      (exn-message lost)))
 
+  (test-case "F17: a signed send whose receipt is for another transaction raises"
+    (define-values (e _calls)
+      (filled (filling #:polled-hash? #f) '() #:procedure send-signed-transaction/receipt))
+    (check-pred exn:fail:web3? e)
+    (check-regexp-match
+     (pregexp (string-append "^send-signed-transaction/receipt: malformed receipt transaction hash "
+                             "of transaction 0x[0-9a-f]{64} from the node: "))
+     (exn-message e)))
+
   (test-case "F18: sends in a row read the pending count each time and get consecutive nonces"
     (define sent (box 0))
     (define base (filling))

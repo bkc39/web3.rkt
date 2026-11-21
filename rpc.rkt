@@ -373,8 +373,7 @@
     (define-syntax fn-name (endpoint-transformer (quote-syntax checked-for)))))
 
 ;; The node's result is untrusted: one the transform rejects or the result
-;; contract refuses is the node's fault, not the caller's.  A transform that
-;; raises exn:fail:web3 has named what is wrong, so its error stands.
+;; contract refuses is the node's fault, not the caller's.
 (define (call-endpoint method params provider transform ok?)
   (define raw (rpc-call method params #:provider provider))
   (match (with-handlers ([exn:fail:web3? raise]

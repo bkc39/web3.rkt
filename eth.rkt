@@ -16,6 +16,8 @@
                   storage-slots->jsexpr)
          (only-in "private/hex.rkt" hex-data-string?)
          (only-in "private/node.rkt" node-quantity->number node-quantity?)
+         (only-in "private/record.rkt" list-field read-field record-field)
+         "private/who.rkt"
          "rpc.rkt")
 
 (provide (all-from-out "eth/log.rkt" "eth/receipt.rkt")
@@ -77,7 +79,7 @@
           [send-transaction/receipt (->* (object/c) (#:provider (or/c #f provider?)) receipt?)]))
 
 (module* internal #f
-  (provide poll-receipt/who))
+  (provide wait-for-receipt/who))
 
 (define (empty-data->null v)
   (if (equal? v "0x") 'null v))
@@ -91,8 +93,10 @@
     [(shape? v) (reader who v)]
     [else v]))
 
-(define ((list-reader reader) who v)
-  (map (lambda (element) (reader who element)) v))
+(define receipts-field (list-field (record-field jsexpr->receipt/who receipt?)))
+
+(define (read-receipts who v)
+  (read-field receipts-field who "receipts" v))
 
 (define (count-or-null->number v)
   (if (eq? v 'null) 0 (quantity->number v)))
@@ -155,7 +159,7 @@
 (define-jsonrpc-endpoint eth_getBlockByHash (-> hex-string? boolean? (or/c 'null hash?)))
 (define-jsonrpc-endpoint eth_getBlockReceipts
   (-> [block-param/c block-param->string] (or/c #f (listof receipt?)))
-  #:result-transform (nullable (list-reader jsexpr->receipt/who) "eth_getBlockReceipts" list?))
+  #:result-transform (nullable read-receipts "eth_getBlockReceipts" list?))
 (define-jsonrpc-endpoint eth_getTransactionByBlockHashAndIndex
   (-> hex-string? [exact-nonnegative-integer? number->hex-string] (or/c 'null hash?)))
 (define-jsonrpc-endpoint eth_getTransactionByBlockNumberAndIndex
@@ -191,9 +195,10 @@
 (define-jsonrpc-endpoint eth_getFilterLogs (-> hex-string? objects/c))
 (define-jsonrpc-endpoint eth_uninstallFilter (-> hex-string? boolean?))
 
-;; Nodes (anvil included) may return eth_sendTransaction before the receipt
-;; is queryable.
-(define (poll-receipt/who who tx-hash #:timeout timeout #:interval interval #:provider provider)
+(define receipt-poll-interval 0.002)
+
+;; A node may answer eth_sendTransaction before the receipt is queryable.
+(define (poll-receipt who tx-hash timeout interval provider)
   (define deadline (+ (current-inexact-milliseconds) (* 1000 timeout)))
   (let loop ([interval interval])
     (define raw (rpc-call "eth_getTransactionReceipt" (list tx-hash) #:provider provider))
@@ -207,14 +212,13 @@
        (sleep interval)
        (loop (min 0.25 (* 2 interval)))])))
 
-(define (wait-for-receipt tx-hash
-                          #:timeout [timeout 30.0]
-                          #:interval [interval 0.002]
-                          #:provider [provider (current-provider)])
-  (jsexpr->receipt-of 'wait-for-receipt
-                      tx-hash
-                      (poll-receipt/who 'wait-for-receipt tx-hash
-                                        #:timeout timeout #:interval interval #:provider provider)))
+(define/who (wait-for-receipt who
+                              tx-hash
+                              [read-receipt #:public jsexpr->receipt-of]
+                              #:timeout [timeout 30.0]
+                              #:interval [interval receipt-poll-interval]
+                              #:provider [provider (current-provider)])
+  (read-receipt who tx-hash (poll-receipt who tx-hash timeout interval provider)))
 
 (define (send-transaction/receipt tx #:provider [provider (current-provider)])
   (wait-for-receipt (eth-send-transaction tx #:provider provider) #:provider provider))

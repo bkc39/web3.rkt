@@ -91,5 +91,5 @@
     (submit who (required-sender who from)
             #:to #f #:data data #:value value #:gas gas #:errors errors #:provider provider))
   (values (or (receipt-contract-address receipt)
-              (raise-node-malformed who (of-transaction "receipt contract address" tx-hash) 'null))
+              (raise-node-missing who (of-transaction "receipt contract address" tx-hash)))
           receipt))

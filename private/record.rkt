@@ -2,7 +2,7 @@
 
 (require (for-syntax racket/base
                      (only-in racket/string string-join)
-                     (only-in racket/syntax format-id)
+                     (only-in racket/syntax format-id generate-temporary)
                      syntax/parse)
          racket/contract/base
          (only-in racket/match match)
@@ -15,7 +15,8 @@
                   node-hash->string
                   node-natural
                   node-quantity->number
-                  raise-node-malformed)
+                  raise-node-malformed
+                  raise-node-missing)
          "who.rkt")
 
 (provide access-list-field
@@ -25,111 +26,138 @@
          byte-field
          data-field
          define-node-record
-         field-kind
-         field-kind-contract
-         field-kind-name
-         field-kind-reader
-         field-kind?
+         (struct-out field-kind)
+         (struct-out field-row)
          fixed-data-field
          hash-abbreviation
          hash-field
+         lenient-uint64-field
          list-field
          quantity-field
+         read-field
          record-field
          uint64-field)
 
-;; reader : (who what v) -> value, raising through raise-node-malformed.
 (struct field-kind (name reader contract))
 
-(define (hash-abbreviation hash)
-  (string-append (substring hash 0 10) "…"))
+(struct field-row (field key kind mode provided?))
+
+(define (hash-abbreviation digest)
+  (string-append (substring digest 0 10) "…"))
+
+(define (read-field kind who what v)
+  ((field-kind-reader kind) who what "" v))
+
+(define (node-kind name read contract)
+  (field-kind name (lambda (who what detail v) (read who (string-append what detail) v)) contract))
 
 (define (natural-field name bits contract)
-  (field-kind name (lambda (who what v) (node-natural who what v bits)) contract))
+  (node-kind name (lambda (who what v) (node-natural who what v bits)) contract))
 
 (define (read-boolean who what v)
   (if (boolean? v) v (raise-node-malformed who what v)))
 
-(define quantity-field (field-kind 'quantity node-quantity->number uint256/c))
+(define (read-lenient-uint64 who what v)
+  (if (and (exact-nonnegative-integer? v) (< v (expt 2 64)))
+      v
+      (node-natural who what v 64)))
+
+(define quantity-field (node-kind 'quantity node-quantity->number uint256/c))
 (define uint64-field (natural-field 'uint64 64 uint64/c))
+(define lenient-uint64-field (node-kind 'lenient-uint64 read-lenient-uint64 uint64/c))
 (define byte-field (natural-field 'byte 8 byte?))
 (define bit-field (natural-field 'bit 1 (or/c 0 1)))
-(define boolean-field (field-kind 'boolean read-boolean boolean?))
-(define address-field (field-kind 'address node-address->string checksum-address?))
-(define hash-field (field-kind 'hash node-hash->string hash-string/c))
-(define data-field (field-kind 'data node-data->bytes bytes?))
+(define boolean-field (node-kind 'boolean read-boolean boolean?))
+(define address-field (node-kind 'address node-address->string checksum-address?))
+(define hash-field (node-kind 'hash node-hash->string hash-string/c))
+(define data-field (node-kind 'data node-data->bytes bytes?))
 
 (define (fixed-data-field size)
-  (field-kind (list 'fixed-data size)
-              (lambda (who what v)
-                (define bs (node-data->bytes who what v))
-                (if (= (bytes-length bs) size) bs (raise-node-malformed who what v)))
-              (flat-named-contract (string->symbol (format "bytes~a/c" size))
-                                   (lambda (v) (and (bytes? v) (= (bytes-length v) size))))))
+  (node-kind (list 'fixed-data size)
+             (lambda (who what v)
+               (define bs (node-data->bytes who what v))
+               (if (= (bytes-length bs) size) bs (raise-node-malformed who what v)))
+             (flat-named-contract (string->symbol (format "bytes~a/c" size))
+                                  (lambda (v) (and (bytes? v) (= (bytes-length v) size))))))
 
-(define (list-field kind)
+(define (list-field kind #:max-length [max-length +inf.0])
   (define read-element (field-kind-reader kind))
-  (field-kind (list 'list (field-kind-name kind))
-              (lambda (who what v)
-                (if (list? v)
+  (define element/c (field-kind-contract kind))
+  (field-kind (list 'list (field-kind-name kind) max-length)
+              (lambda (who what detail v)
+                (if (and (list? v) (<= (length v) max-length))
                     (for/list ([element (in-list v)]
                                [index (in-naturals)])
-                      (read-element who (format "~a ~a" what index) element))
-                    (raise-node-malformed who what v)))
-              (listof (field-kind-contract kind))))
+                      (read-element who (format "~a ~a" what index) detail element))
+                    (raise-node-malformed who (string-append what detail) v)))
+              (if (= max-length +inf.0)
+                  (listof element/c)
+                  (and/c (listof element/c) (property/c length (<=/c max-length))))))
 
 (define (record-field reader/who record?)
   (field-kind (list 'record (object-name record?))
-              (lambda (who what v) (reader/who who v (string-append " in " what)))
+              (lambda (who what detail v) (reader/who who v (string-append " in " what detail)))
               record?))
 
 (define read-storage-keys (field-kind-reader (list-field (fixed-data-field 32))))
 
-(define (read-access-entry who what v)
+(define (read-access-entry who what detail v)
   (match v
     [(hash-table ('address address) ('storageKeys keys) _ ...)
-     (cons (node-address->string who (string-append what " address") address)
-           (read-storage-keys who (string-append what " storage keys") keys))]
-    [_ (raise-node-malformed who what v)]))
+     (cons (node-address->string who (string-append what " address" detail) address)
+           (read-storage-keys who (string-append what " storage keys") detail keys))]
+    [_ (raise-node-malformed who (string-append what detail) v)]))
 
 (define access-list-field
   (field-kind 'access-list
               (field-kind-reader (list-field (field-kind 'access-entry read-access-entry any/c)))
               access-list/c))
 
-(define (read-row who v key kind what optional?)
-  (define raw (hash-ref v key 'null))
-  (if (and optional? (eq? raw 'null)) #f ((field-kind-reader kind) who what raw)))
+(define absent (string->uninterned-symbol "absent"))
 
-(define (read-defaulted who v key kind what default)
-  (if (hash-has-key? v key) ((field-kind-reader kind) who what (hash-ref v key)) default))
+(define (read-row who v key kind what detail mode default)
+  (define raw (hash-ref v key absent))
+  (cond
+    [(and (eq? mode 'optional) (memq raw (list absent 'null))) #f]
+    [(and (eq? mode 'default) (eq? raw absent)) default]
+    [(eq? raw absent) (raise-node-missing who (string-append what detail))]
+    [else ((field-kind-reader kind) who what detail raw)]))
 
-(define (row-contract kind optional?)
-  (if optional? (or/c #f (field-kind-contract kind)) (field-kind-contract kind)))
+(define (row-contract kind mode)
+  (if (eq? mode 'optional) (or/c #f (field-kind-contract kind)) (field-kind-contract kind)))
 
 (define (no-check _who _detail _record)
   (void))
 
 (begin-for-syntax
-  (define-syntax-class row
-    #:description "[field json-key kind option ...]"
-    (pattern [field:id json-key:id kind:expr
-              (~alt (~optional (~or* (~and #:optional (~bind [mode #''optional] [optional? #'#t]))
-                                     (~seq #:default default:expr
-                                           (~bind [mode #''default] [optional? #'#f])))
-                               #:defaults ([mode #''required] [optional? #'#f]))
-                    (~optional (~and #:unprovided (~bind [provided? #'#f]))
-                               #:defaults ([provided? #'#t])))
-              ...]))
-
   (define (field-words noun field)
-    (string-join (cons noun (regexp-split #rx"-" (regexp-replace #rx"[?]$" field ""))) " ")))
+    (string-join (cons noun (regexp-split #rx"-" (regexp-replace #rx"[?]$" field ""))) " "))
+
+  (define (accessor-id record field)
+    (format-id record "~a-~a" record field))
+
+  (define-syntax-class (row record noun)
+    #:description "[field kind option ...]"
+    (pattern [field:id kind:expr
+              (~alt (~optional (~seq #:key key:id) #:defaults ([key #'field]))
+                    (~optional (~or* (~and #:optional (~bind [mode #''optional]))
+                                     (~seq #:default value:expr (~bind [mode #''default])))
+                               #:defaults ([mode #''required]))
+                    (~optional (~and #:unprovided (~bind [(exported 1) '()]))
+                               #:defaults ([(exported 1) (list (accessor-id record #'field))])))
+              ...]
+             #:with accessor (accessor-id record #'field)
+             #:with kind-id (generate-temporary #'field)
+             #:with record? (format-id record "~a?" record)
+             #:with (export ...) #'([exported (-> record? (row-contract kind-id mode))] ...)
+             #:with what (datum->syntax #'field
+                                        (field-words noun (symbol->string (syntax-e #'field)))))))
 
 (define-syntax-parse-rule (define-node-record name:id
                             #:noun noun:str
                             #:printer printer:expr
                             (~optional (~seq #:check check:expr) #:defaults ([check #'no-check]))
-                            row:row ...)
+                            (~var row (row #'name (syntax-e #'noun))) ...)
   #:with name-struct (format-id #'name "~a-struct" #'name)
   #:with new-name (format-id #'name "new-~a" #'name)
   #:with name? (format-id #'name "~a?" #'name)
@@ -138,22 +166,8 @@
   #:with jsexpr->name (format-id #'name "jsexpr->~a" #'name)
   #:with name->jsexpr (format-id #'name "~a->jsexpr" #'name)
   #:with name->list (format-id #'name "~a->list" #'name)
-  #:with (accessor ...) (for/list ([field (in-list (syntax->list #'(row.field ...)))])
-                          (format-id #'name "~a-~a" #'name field))
-  #:with (kind-id ...) (generate-temporaries #'(row ...))
-  #:with (what ...) (for/list ([field (in-list (syntax->list #'(row.field ...)))])
-                      (datum->syntax #'noun
-                                     (field-words (syntax-e #'noun)
-                                                  (symbol->string (syntax-e field)))))
-  #:with ((provided-accessor provided-kind provided-optional?) ...)
-  (for/list ([accessor (in-list (syntax->list #'(accessor ...)))]
-             [kind (in-list (syntax->list #'(kind-id ...)))]
-             [optional? (in-list (syntax->list #'(row.optional? ...)))]
-             [provided? (in-list (syntax->list #'(row.provided? ...)))]
-             #:when (syntax-e provided?))
-    (list accessor kind optional?))
   (begin
-    (define kind-id row.kind) ...
+    (define row.kind-id row.kind) ...
     (struct name (row.field ... raw)
       #:name name-struct
       #:constructor-name new-name
@@ -164,10 +178,8 @@
       (cond
         [(hash? v)
          (define record
-           (new-name (~? (read-defaulted who v 'row.json-key kind-id (string-append what detail)
-                                         row.default)
-                         (read-row who v 'row.json-key kind-id (string-append what detail)
-                                   row.optional?))
+           (new-name (read-row who v 'row.key row.kind-id row.what detail row.mode
+                               (~? row.value #f))
                      ...
                      v))
          (check who detail record)
@@ -175,12 +187,12 @@
         [else (raise-node-malformed who (string-append noun detail) v)]))
     (define (name->jsexpr record)
       (name-raw record))
-    (define (name->list record)
-      (list (accessor record) ... (name-raw record)))
+    (define (name->list record . more)
+      (list* (row.accessor record) ... (name-raw record) more))
     (define name-fields
-      (list (list 'row.field 'row.json-key kind-id row.mode row.provided?) ...))
+      (list (field-row 'row.field 'row.key row.kind-id row.mode (pair? '(row.exported ...))) ...))
     (provide (contract-out
               [name? (-> any/c boolean?)]
-              [provided-accessor (-> name? (row-contract provided-kind provided-optional?))] ...
+              row.export ... ...
               [jsexpr->name (-> any/c name?)]
               [name->jsexpr (-> name? hash?)]))))

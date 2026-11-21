@@ -333,7 +333,23 @@
       (check-malformed (sending #:receipt receipt) send 'contract-send
                        (of-transaction "contract-send: malformed receipt block number")))
     (check-malformed (sending #:receipt 42) send 'contract-send
-                     (of-transaction "contract-send: malformed receipt")))
+                     (of-transaction "contract-send: malformed receipt"))
+    (define bad-log (hash-set (first (hash-ref mined 'logs)) 'data "0x1"))
+    (check-malformed (sending #:receipt (hash-set mined 'logs (list bad-log))) send 'contract-send
+                     (format "^contract-send: malformed log data in receipt logs 0 of transaction ~a"
+                             tx-hash)))
+
+  (test-case "a send returns its receipt when fields it does not use are legacy or anvil's"
+    (define mined-log (first (hash-ref mined 'logs)))
+    (for ([receipt (list (hash-remove mined 'effectiveGasPrice)
+                         (hash-set mined 'logs (list (hash-set mined-log 'blockTimestamp 1795291989))))])
+      (define-values (result _calls)
+        (run-mock (sending #:receipt receipt)
+                  (lambda () (contract-send token "transfer(address,uint256)" anvil-bob 1
+                                            #:from anvil-alice))))
+      (check-pred list? result (format "~s" result))
+      (when (list? result)
+        (check-eq? (receipt->jsexpr (first result)) receipt))))
 
   (test-case "receipt-succeeded? reads the status, and a receipt with only a root has none"
     (check-true (receipt-succeeded? (jsexpr->receipt mined)))

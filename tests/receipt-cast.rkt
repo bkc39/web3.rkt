@@ -5,6 +5,7 @@
            rackunit
            web3
            (only-in (submod web3/eth/receipt internal) receipt-fields)
+           (only-in web3/private/record field-row field-row-provided?)
            "../examples/common.rkt"
            (only-in "cast.rkt" cast-path run-cast)
            (only-in "util.rkt" anvil-alice anvil-bob))
@@ -22,8 +23,8 @@
     (define fields (struct->vector receipt))
     (for ([row (in-list receipt-fields)]
           [index (in-naturals 1)]
-          #:when (list-ref row 4))
-      (match-define (list field key _ _ _) row)
+          #:when (field-row-provided? row))
+      (match-define (field-row field key _ _ _) row)
       (check-equal? (run-cast "receipt" (receipt-transaction-hash receipt) (symbol->string key)
                               "--rpc-url" url)
                     (cast-text key (vector-ref fields index))

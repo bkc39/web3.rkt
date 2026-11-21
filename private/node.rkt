@@ -10,11 +10,15 @@
          node-natural
          node-quantity->number
          node-quantity?
-         raise-node-malformed)
+         raise-node-malformed
+         raise-node-missing)
 
 (define (raise-node-malformed who what v #:origin [origin " from the node"])
   (raise (exn:fail:web3 (format "~a: malformed ~a~a: ~e" who what origin v)
                         (current-continuation-marks))))
+
+(define (raise-node-missing who what)
+  (raise-node-malformed who what 'null))
 
 (define (node-string? rx v)
   (and (string? v) (regexp-match? rx v)))

@@ -46,7 +46,39 @@
 @(define provider-guide-eval (make-base-eval '(require racket/generic racket/match web3)))
 @(define abi-guide-eval (make-base-eval '(require web3)))
 @(define event-guide-eval (make-base-eval '(require web3)))
-@(define results-eval (make-base-eval '(require web3 web3/tests/helpers/results)))
+@(define results-eval
+   (make-base-eval
+    '(require web3)
+    '(define log-json
+       (hasheq 'address "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+               'topics
+               '("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+                 "0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+                 "0x00000000000000000000000070997970c51812dc3a010c7d01b50e0d17dc79c8")
+               'data "0x00000000000000000000000000000000000000000000000000000000000000fa"
+               'blockNumber "0x2"
+               'blockHash "0x78e3cb19177d24232982259d6717f8ea45cfae5f369be21280af7b8e535146b5"
+               'transactionHash "0xf6530f5992a7b2b0ff8b8014dc54ad20e0f16ae89343cfb98640c6a7d94cf5d4"
+               'transactionIndex "0x0"
+               'logIndex "0x0"
+               'removed #f))
+    '(define receipt-json
+       (hasheq 'transactionHash "0xf6530f5992a7b2b0ff8b8014dc54ad20e0f16ae89343cfb98640c6a7d94cf5d4"
+               'transactionIndex "0x0"
+               'blockHash "0x78e3cb19177d24232982259d6717f8ea45cfae5f369be21280af7b8e535146b5"
+               'blockNumber "0x2"
+               'from "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+               'to "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+               'type "0x2"
+               'status "0x1"
+               'cumulativeGasUsed "0xcbf6"
+               'gasUsed "0xcbf6"
+               'effectiveGasPrice "0x705f9991"
+               'contractAddress 'null
+               'logs (list log-json)
+               'logsBloom (string-append "0x" (make-string 512 #\0))))))
+
+@(define hash-string-contract @racket[(and/c string? #px"^0x[0-9a-f]{64}$")])
 
 @(define-syntax-parse-rule (defproc/filling (name:id positional ...) result:expr body ...)
    (defproc (name positional ...
@@ -114,8 +146,8 @@ Results come back decoded where the encoding is unambiguous:
        nonnegative integers;}
  @item{receipts and logs are values with accessors, @racket[receipt?] and @racket[log?]:
        their addresses are checksummed, their hashes lowercase @racket["0x..."] strings and
-       their data bytes, and the node's object is kept in @racket[receipt->jsexpr] and
-       @racket[log->jsexpr];}
+       their data bytes, and the node's object is kept, not copied, in
+       @racket[receipt->jsexpr] and @racket[log->jsexpr], so it must not be mutated;}
  @item{transactions and blocks are @racket[jsexpr?] hash tables with symbol keys, as read by
        @racketmodname[json], and other data, hashes and addresses are @racket["0x..."]
        strings;}
@@ -1066,7 +1098,8 @@ The block, with full transaction objects when
 @defproc[(eth-get-block-receipts [block block-param/c]
                                  [#:provider provider (or/c #f provider?) (current-provider)])
          (or/c #f (listof receipt?))]{
-The receipts of the block's transactions, in order, or @racket[#f] for an unknown block.}
+The receipts of the block's transactions, in order, or @racket[#f] for an unknown block.  A
+receipt the node gets wrong raises @racket[exn:fail:web3] naming its index and the field.}
 
 @deftogether[(
 @defproc[(eth-get-transaction-by-block-hash-and-index
@@ -1246,18 +1279,18 @@ here.  In the examples, @racket[receipt-json] is a token transfer's receipt as a
 Recognizes receipts.  A receipt prints with its transaction hash, place, status and gas used.}
 
 @deftogether[(@defproc[(receipt-transaction-hash [r receipt?])
-                       (and/c string? #px"^0x[0-9a-f]{64}$")]
+                       #,hash-string-contract]
               @defproc[(receipt-transaction-index [r receipt?]) uint64/c]
-              @defproc[(receipt-block-hash [r receipt?]) (and/c string? #px"^0x[0-9a-f]{64}$")]
+              @defproc[(receipt-block-hash [r receipt?]) #,hash-string-contract]
               @defproc[(receipt-block-number [r receipt?]) uint64/c]
               @defproc[(receipt-from [r receipt?]) checksum-address?]
               @defproc[(receipt-to [r receipt?]) (or/c #f checksum-address?)]
               @defproc[(receipt-type [r receipt?]) (or/c #f byte?)]
               @defproc[(receipt-status [r receipt?]) (or/c #f 0 1)]
-              @defproc[(receipt-root [r receipt?]) (or/c #f (and/c string? #px"^0x[0-9a-f]{64}$"))]
+              @defproc[(receipt-root [r receipt?]) (or/c #f #,hash-string-contract)]
               @defproc[(receipt-cumulative-gas-used [r receipt?]) uint64/c]
               @defproc[(receipt-gas-used [r receipt?]) uint64/c]
-              @defproc[(receipt-effective-gas-price [r receipt?]) uint256/c]
+              @defproc[(receipt-effective-gas-price [r receipt?]) (or/c #f uint256/c)]
               @defproc[(receipt-contract-address [r receipt?]) (or/c #f checksum-address?)]
               @defproc[(receipt-logs-bloom [r receipt?])
                        (and/c bytes? (property/c bytes-length (=/c 256)))]
@@ -1266,8 +1299,9 @@ Recognizes receipts.  A receipt prints with its transaction hash, place, status 
 The fields of a receipt, each the node's field of the same name in camelCase.  @racket[#f] is a
 field the node leaves out or sends as @tt{null}: @racket[receipt-to] for a contract creation,
 @racket[receipt-contract-address] for anything else, the blob fields for other transactions,
-@racket[receipt-type] from nodes before Berlin, @racket[receipt-root] after Byzantium and
-@racket[receipt-status] before it.  The logs are @racket[receipt-logs].}
+@racket[receipt-type] from nodes before Berlin, @racket[receipt-effective-gas-price] from nodes
+before London, @racket[receipt-root] after Byzantium and @racket[receipt-status] before it.  The
+logs are @racket[receipt-logs].}
 
 @defproc[(receipt-succeeded? [r receipt?]) boolean?]{
 Whether @racket[(receipt-status r)] is @racket[1].  A receipt with only a root raises
@@ -1702,7 +1736,7 @@ Whether @racket[v] is a signed transaction.}
               @defproc[(signed-transaction-signature [stx signed-transaction?]) signature?]
               @defproc[(signed-transaction-sender [stx signed-transaction?]) checksum-address?]
               @defproc[(signed-transaction-hash [stx signed-transaction?])
-                       (and/c string? #px"^0x[0-9a-f]{64}$")])]{
+                       #,hash-string-contract])]{
 The transaction, its signature, the address that signed it, and its hash: the Keccak-256 hash of
 its raw bytes, which identifies it to a node.}
 
@@ -1863,7 +1897,7 @@ type 2 and another, the latest block decides: 2 when it has a base fee, else 0, 
 
 @deftogether[(@defproc/filling[(send-signed-transaction [signer signer?]
                                                         [to (or/c #f (abi-value/c 'address))])
-                               (and/c string? #px"^0x[0-9a-f]{64}$")]
+                               #,hash-string-contract]
               @defproc/filling[(send-signed-transaction/receipt
                                 [signer signer?]
                                 [to (or/c #f (abi-value/c 'address))])
@@ -2857,14 +2891,14 @@ abbreviated topics.}
 
 @deftogether[(@defproc[(log-address [l log?]) checksum-address?]
               @defproc[(log-topics [l log?])
-                       (and/c (listof (and/c string? #px"^0x[0-9a-f]{64}$"))
+                       (and/c (listof #,hash-string-contract)
                               (property/c length (<=/c 4)))]
               @defproc[(log-data [l log?]) bytes?]
               @defproc[(log-block-number [l log?]) (or/c #f uint64/c)]
-              @defproc[(log-block-hash [l log?]) (or/c #f (and/c string? #px"^0x[0-9a-f]{64}$"))]
+              @defproc[(log-block-hash [l log?]) (or/c #f #,hash-string-contract)]
               @defproc[(log-block-timestamp [l log?]) (or/c #f uint64/c)]
               @defproc[(log-transaction-hash [l log?])
-                       (or/c #f (and/c string? #px"^0x[0-9a-f]{64}$"))]
+                       (or/c #f #,hash-string-contract)]
               @defproc[(log-transaction-index [l log?]) (or/c #f uint64/c)]
               @defproc[(log-index [l log?]) (or/c #f uint64/c)]
               @defproc[(log-removed? [l log?]) boolean?])]{

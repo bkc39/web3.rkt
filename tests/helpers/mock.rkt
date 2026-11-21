@@ -88,6 +88,7 @@
                  #:gas-price [gas-price "0x77359400"]
                  #:raw [raw raw-answer]
                  #:receipt [receipt mined]
+                 #:polled-hash? [polled-hash? #t]
                  #:replay [replay "0x"])
   (hash "eth_chainId" chain-id
         "eth_estimateGas" estimate
@@ -96,14 +97,12 @@
         "eth_maxPriorityFeePerGas" priority
         "eth_gasPrice" gas-price
         "eth_sendRawTransaction" raw
-        "eth_getTransactionReceipt" (receipt-of-polled receipt)
+        "eth_getTransactionReceipt" (if polled-hash? (receipt-of-polled receipt) receipt)
         "eth_call" replay))
 
-;; A signed send's hash is the signed transaction's, so its receipt names
-;; the hash polled for.
 (define ((receipt-of-polled receipt) params)
   (match* (receipt params)
-    [((? hash?) (list hash)) (hash-set receipt 'transactionHash hash)]
+    [((? hash?) (list polled)) (hash-set receipt 'transactionHash polled)]
     [((? procedure?) _) (receipt params)]
     [(_ _) receipt]))
 

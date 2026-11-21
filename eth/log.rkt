@@ -2,7 +2,6 @@
 
 (require racket/contract/base
          (only-in racket/string string-join)
-         (only-in "../private/node.rkt" raise-node-malformed)
          "../private/record.rkt")
 
 (define (log-tail entry [detail ""])
@@ -21,30 +20,17 @@
                                    size
                                    (if (= size 1) "" "s")))))
 
-(define hashes-field (list-field hash-field))
-
-(define (at-most-four? topics)
-  (<= (length topics) 4))
-
-(define topics-field
-  (field-kind 'topics
-              (lambda (who what v)
-                (if (and (list? v) (at-most-four? v))
-                    ((field-kind-reader hashes-field) who what v)
-                    (raise-node-malformed who what v)))
-              (and/c (field-kind-contract hashes-field) at-most-four?)))
-
 (define-node-record log #:noun "log" #:printer write-log
-  [address address address-field]
-  [topics topics topics-field]
-  [data data data-field]
-  [block-number blockNumber uint64-field #:optional]
-  [block-hash blockHash hash-field #:optional]
-  [block-timestamp blockTimestamp uint64-field #:optional]
-  [transaction-hash transactionHash hash-field #:optional]
-  [transaction-index transactionIndex uint64-field #:optional]
-  [index logIndex uint64-field #:optional]
-  [removed? removed boolean-field #:default #f])
+  [address address-field]
+  [topics (list-field hash-field #:max-length 4)]
+  [data data-field]
+  [block-number uint64-field #:key blockNumber #:optional]
+  [block-hash hash-field #:key blockHash #:optional]
+  [block-timestamp lenient-uint64-field #:key blockTimestamp #:optional]
+  [transaction-hash hash-field #:key transactionHash #:optional]
+  [transaction-index uint64-field #:key transactionIndex #:optional]
+  [index uint64-field #:key logIndex #:optional]
+  [removed? boolean-field #:key removed #:default #f])
 
 (module* internal #f
   (provide jsexpr->log/who

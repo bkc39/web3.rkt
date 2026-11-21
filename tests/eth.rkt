@@ -110,12 +110,12 @@
       [,eth-get-block-by-hash ("0xbb" #f) "eth_getBlockByHash" "0xbb"
                               "eth_getBlockByHash: unexpected result \"0xbb\""]
       [,eth-get-block-receipts ("latest") "eth_getBlockReceipts" ("0xaa")
-                               "eth_getBlockReceipts: malformed receipt from the node: \"0xaa\""]
+                               "eth_getBlockReceipts: malformed receipt in receipts 0 from the node: \"0xaa\""]
       [,eth-get-block-receipts ("latest") "eth_getBlockReceipts" ,(hasheq)
                                "eth_getBlockReceipts: unexpected result '#hasheq()"]
       [,eth-get-block-receipts ("latest") "eth_getBlockReceipts"
                                (,(hash-set receipt-json 'gasUsed "zz"))
-                               "eth_getBlockReceipts: malformed receipt gas used from the node: \"zz\""]
+                               "eth_getBlockReceipts: malformed receipt gas used in receipts 0 from the node: \"zz\""]
       [,eth-get-transaction-receipt ("0xaa") "eth_getTransactionReceipt"
                                     ,(hash-set receipt-json 'gasUsed "zz")
                                     "eth_getTransactionReceipt: malformed receipt gas used from the node: \"zz\""]

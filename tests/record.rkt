@@ -39,35 +39,74 @@
   (define (random-hash prng)
     (string-append "0x" (mixed-case prng (substring (hex (random-bytes prng 32)) 2))))
 
-  ;; A random value of a kind: the JSON the node sends and a check of what reads.
-  (define (sample prng kind)
-    (match (field-kind-name kind)
-      ['uint64 (natural-sample prng 64)]
-      ['quantity (natural-sample prng 256)]
-      ['byte (natural-sample prng 8)]
-      ['bit (natural-sample prng 1)]
-      ['boolean (define b (zero? (random 2 prng))) (list b (lambda (v) (eq? v b)))]
-      ['address
-       (define json (hex (random-bytes prng 20)))
-       (list json (lambda (v) (and (checksum-address? v) (equal? (string-downcase v) json))))]
-      ['hash (define json (random-hash prng))
-             (list json (lambda (v) (equal? v (string-downcase json))))]
-      ['data (data-sample prng (random 70 prng))]
-      [(list 'fixed-data size) (data-sample prng size)]
-      ['topics
-       (define json (for/list ([_ (in-range (random 5 prng))]) (random-hash prng)))
-       (list json (lambda (v) (equal? v (map string-downcase json))))]
-      [(list 'list (list 'record 'log?))
-       (define json (make-list (random 4 prng) log-json))
-       (list json (lambda (v) (equal? (map log->jsexpr v) json)))]))
+  (define (random-max-or-natural prng bits)
+    (if (zero? (random 4 prng)) (sub1 (expt 2 bits)) (random-natural prng bits)))
 
-  (define (natural-sample prng bits)
-    (define n (if (zero? (random 4 prng)) (sub1 (expt 2 bits)) (random-natural prng bits)))
+  (define ((natural-sample bits) prng)
+    (define n (random-max-or-natural prng bits))
     (list (quantity n) (lambda (v) (eqv? v n))))
 
-  (define (data-sample prng size)
-    (define bs (random-bytes prng size))
+  (define (lenient-sample prng)
+    (define n (random-max-or-natural prng 64))
+    (list (if (zero? (random 2 prng)) n (quantity n)) (lambda (v) (eqv? v n))))
+
+  (define (boolean-sample prng)
+    (define b (zero? (random 2 prng)))
+    (list b (lambda (v) (eq? v b))))
+
+  (define (address-sample prng)
+    (define json (hex (random-bytes prng 20)))
+    (list json (lambda (v) (and (checksum-address? v) (equal? (string-downcase v) json)))))
+
+  (define (hash-sample prng)
+    (define json (random-hash prng))
+    (list json (lambda (v) (equal? v (string-downcase json)))))
+
+  (define ((data-sample size) prng)
+    (define bs (random-bytes prng (or size (random 70 prng))))
     (list (hex bs) (lambda (v) (equal? v bs))))
+
+  (define (topics-sample prng)
+    (define json (for/list ([_ (in-range (random 5 prng))]) (random-hash prng)))
+    (list json (lambda (v) (equal? v (map string-downcase json)))))
+
+  (define (logs-sample prng)
+    (define json (make-list (random 4 prng) log-json))
+    (list json (lambda (v) (equal? (map log->jsexpr v) json))))
+
+  (define samples
+    (hash 'uint64 (natural-sample 64)
+          'lenient-uint64 lenient-sample
+          'quantity (natural-sample 256)
+          'byte (natural-sample 8)
+          'bit (natural-sample 1)
+          'boolean boolean-sample
+          'address address-sample
+          'hash hash-sample
+          'data (data-sample #f)
+          '(fixed-data 256) (data-sample 256)
+          '(list hash 4) topics-sample
+          '(list (record log?) +inf.0) logs-sample))
+
+  (define hostiles
+    (hash 'uint64 `(42 "0xzz" (1) "0x" #t ,(quantity (expt 16 64)) ,(quantity (expt 2 64)))
+          'lenient-uint64 `(-1 1.5 ,(expt 2 64) "0xzz" (1) "0x" #t ,(quantity (expt 2 64)))
+          'quantity `(42 "0xzz" (1) "0x" #t ,(quantity (expt 16 64)))
+          'byte `(42 "0xzz" (1) "0x" #t ,(quantity 256) ,(quantity (expt 2 64)))
+          'bit `(42 "0xzz" (1) "0x" #t "0x2" ,(quantity (expt 2 64)))
+          'boolean '(42 "0xzz" (1) "0x")
+          'address '(42 "0xzz" (1) "0x" #t "0x12")
+          'hash '(42 "0xzz" (1) "0x" #t "0x12")
+          'data '(42 "0xzz" (1) #t "0x1")
+          '(fixed-data 256) `(42 "0xzz" (1) "0x" #t ,(hex (make-bytes 255 0))
+                                 ,(hex (make-bytes 257 0)))
+          '(list hash 4) `(42 "0xzz" (1) "0x" #t ("0x12") ,(make-list 5 (hex (make-bytes 32 0))))
+          '(list (record log?) +inf.0) `(42 "0xzz" (1) "0x" #t (,log-json 42)
+                                            (,(hash-set log-json 'data "0x1")))))
+
+  (define (kind-entry table kind)
+    (hash-ref table (field-kind-name kind)
+              (lambda () (error 'record "no test values for kind ~e" (field-kind-name kind)))))
 
   (define (field-value record index)
     (vector-ref (struct->vector record) (add1 index)))
@@ -77,42 +116,66 @@
                ,(hash-set receipt-json 'root (hash-ref root-receipt-json 'root))]
       [log ,jsexpr->log ,log-fields ,log-json]))
 
+  (define (table-rows table)
+    (match-define (list _ _ rows _) table)
+    rows)
+
+  (define (indexed-rows rows)
+    (for/list ([row (in-list rows)]
+               [index (in-naturals)])
+      (cons index row)))
+
+  (define messages
+    (hasheq
+     'receipt
+     '((transaction-hash "receipt transaction hash")
+       (transaction-index "receipt transaction index")
+       (block-hash "receipt block hash")
+       (block-number "receipt block number")
+       (from "receipt from")
+       (to "receipt to")
+       (type "receipt type")
+       (status "receipt status")
+       (root "receipt root")
+       (cumulative-gas-used "receipt cumulative gas used")
+       (gas-used "receipt gas used")
+       (effective-gas-price "receipt effective gas price")
+       (contract-address "receipt contract address")
+       (logs "receipt logs|log (?:data )?in receipt logs [0-9]+")
+       (logs-bloom "receipt logs bloom")
+       (blob-gas-used "receipt blob gas used")
+       (blob-gas-price "receipt blob gas price"))
+     'log
+     '((address "log address")
+       (topics "log topics(?: [0-9]+)?")
+       (data "log data")
+       (block-number "log block number")
+       (block-hash "log block hash")
+       (block-timestamp "log block timestamp")
+       (transaction-hash "log transaction hash")
+       (transaction-index "log transaction index")
+       (index "log index")
+       (removed? "log removed"))))
+
+  (define (field-message noun field)
+    (match (assq field (hash-ref messages noun))
+      [(list _ words) words]
+      [#f (error 'record "no message for ~a ~a" noun field)]))
+
   (test-case "R2: every row reads its key with its kind"
     (define prng (seeded 41 42 43 44 45 46))
     (for* ([table (in-list tables)]
-           [indexed (in-list (for/list ([row (in-list (caddr table))]
-                                        [index (in-naturals)])
-                               (cons index row)))]
+           [indexed (in-list (indexed-rows (table-rows table)))]
            [_ (in-range 20)])
       (match-define (list noun reader _ base) table)
-      (match-define (list index field key kind mode _) indexed)
-      (match-define (list json good?) (sample prng kind))
+      (match-define (cons index (field-row field key kind mode _)) indexed)
+      (check-not-false (memq mode '(required optional default)) (~a noun " " field))
+      (match-define (list json good?) ((kind-entry samples kind) prng))
       (define record (reader (hash-set base key json)))
       (check-true (good? (field-value record index)) (~a noun " " field " " (~e json)))
       (when (eq? mode 'optional)
         (check-false (field-value (reader (hash-remove base key)) index) (~a field))
         (check-false (field-value (reader (hash-set base key 'null)) index) (~a field)))))
-
-  (define (field-words field)
-    (regexp-replace* #rx"-" (regexp-replace #rx"[?]$" (symbol->string field) "") " "))
-
-  (define (hostile kind mode)
-    (append '(42 "0xzz" (1))
-            (if (eq? (field-kind-name kind) 'data) '() '("0x"))
-            (if (eq? (field-kind-name kind) 'boolean) '() '(#t))
-            (if (memq mode '(required default)) '(null) '())
-            (match (field-kind-name kind)
-              [(or 'uint64 'byte 'bit 'quantity) (list (quantity (expt 16 64)))]
-              [_ '()])
-            (match (field-kind-name kind)
-              [(or 'uint64 'byte 'bit) (list (quantity (expt 2 64)))]
-              [_ '()])
-            (match (field-kind-name kind)
-              ['bit '("0x2")]
-              [(list 'fixed-data size) (map (lambda (n) (hex (make-bytes n 0))) (list (sub1 size)
-                                                                                     (add1 size)))]
-              [(list 'list _) (list (list log-json 42) (list (hash-set log-json 'data "0x1")))]
-              [_ '()])))
 
   (define (check-malformed thunk pattern label)
     (define e (raised thunk))
@@ -123,14 +186,15 @@
 
   (test-case "R3: hostile fields raise exn:fail:web3 naming the field"
     (for* ([table (in-list tables)]
-           [row (in-list (caddr table))])
+           [row (in-list (table-rows table))])
       (match-define (list noun reader _ base) table)
-      (match-define (list field key kind mode _) row)
+      (match-define (field-row field key kind mode _) row)
       (define pattern
-        (pregexp (format "^jsexpr->~a: malformed (?:.* in )?~a ~a(?: [0-9]+)? from the node: "
-                         noun noun (field-words field))))
+        (pregexp (format "^jsexpr->~a: malformed (?:~a) from the node: "
+                         noun (field-message noun field))))
+      (define nulls (if (eq? mode 'optional) '() '(null)))
       (define removed (if (eq? mode 'required) (list (hash-remove base key)) '()))
-      (for ([bad (in-list (append (for/list ([v (in-list (hostile kind mode))])
+      (for ([bad (in-list (append (for/list ([v (in-list (append (kind-entry hostiles kind) nulls))])
                                     (hash-set base key v))
                                   removed))])
         (check-malformed (lambda () (reader bad)) pattern (~a noun " " field " " (~e bad))))))
@@ -147,7 +211,7 @@
   (define entry (hasheq 'address (hash-ref log-json 'address) 'storageKeys (list storage-key)))
 
   (define (read-access-list v)
-    ((field-kind-reader access-list-field) 'reader "access list" v))
+    (read-field access-list-field 'reader "access list" v))
 
   (test-case "an access list reads into addresses and storage keys"
     (define entries (read-access-list (list entry)))

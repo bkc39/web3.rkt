@@ -2,14 +2,16 @@
 
 (module+ test
   (require racket/format
-           (only-in racket/list first)
+           (only-in racket/file file->string)
+           (only-in racket/match match match-define)
            rackunit
            web3/eth/receipt
            (only-in (submod web3/eth/receipt internal) receipt-fields)
-           (only-in web3/eth eth-get-transaction-receipt wait-for-receipt)
-           (only-in web3/eth/log log-address log?)
+           (only-in web3/eth eth-get-block-receipts eth-get-transaction-receipt wait-for-receipt)
+           (only-in web3/eth/log jsexpr->log log-address log-block-timestamp log?)
            (only-in web3/event receipt-logs)
-           (only-in web3/rpc exn:fail:web3? mock-provider)
+           (only-in web3/private/record field-row-field field-row-provided?)
+           (only-in web3/rpc exn:fail:web3? hex-string->bytes mock-provider)
            "helpers/results.rkt"
            "modules.rkt"
            "util.rkt")
@@ -24,18 +26,37 @@
     (check-pred exn:fail:web3? e)
     (and e (exn-message e)))
 
+  (define expected-fields
+    `([transaction-hash ,tx-hash]
+      [transaction-index 0]
+      [block-hash ,block-hash]
+      [block-number 2]
+      [from "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"]
+      [to ,token]
+      [type 2]
+      [status 1]
+      [root #f]
+      [cumulative-gas-used #xcbf6]
+      [gas-used #xcbf6]
+      [effective-gas-price #x705f9991]
+      [contract-address #f]
+      [logs-bloom ,(hex-string->bytes (hash-ref receipt-json 'logsBloom))]
+      [blob-gas-used #f]
+      [blob-gas-price #f]))
+
+  (define (accessor-name row)
+    (string->symbol (~a "receipt-" (field-row-field row))))
+
+  (define provided-rows (filter field-row-provided? receipt-fields))
+
   (test-case "R1: a node's receipt reads into its fields"
     (define receipt (jsexpr->receipt receipt-json))
-    (check-equal?
-     (map (lambda (accessor) (accessor receipt))
-          (list receipt-transaction-hash receipt-transaction-index receipt-block-hash
-                receipt-block-number receipt-from receipt-to receipt-type receipt-status
-                receipt-root receipt-cumulative-gas-used receipt-gas-used
-                receipt-effective-gas-price receipt-contract-address receipt-blob-gas-used
-                receipt-blob-gas-price))
-     `(,tx-hash 0 ,block-hash 2 "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" ,token
-                2 1 #f #xcbf6 #xcbf6 #x705f9991 #f #f #f))
-    (check-equal? (bytes-length (receipt-logs-bloom receipt)) 256)
+    (for ([row (in-list provided-rows)])
+      (match (assq (field-row-field row) expected-fields)
+        [(list _ value)
+         (check-equal? ((dynamic-require 'web3 (accessor-name row)) receipt) value
+                       (~a (field-row-field row)))]
+        [#f (fail (~a "no expected value for " (field-row-field row)))]))
     (check-equal? (map log-address (receipt-logs receipt)) (list token))
     (check-true (receipt-succeeded? receipt))
     (check-false (receipt-succeeded? (jsexpr->receipt (hash-set receipt-json 'status "0x0"))))
@@ -75,8 +96,8 @@
 
   (test-case "R6: a receipt prints its hash, place, outcome and gas in every mode"
     (for ([row (in-list printed)])
-      (define receipt (jsexpr->receipt (first row)))
-      (define text (cadr row))
+      (match-define (list json text) row)
+      (define receipt (jsexpr->receipt json))
       (for ([mode (in-list (list ~a ~s ~v))])
         (check-equal? (mode receipt) text)
         (check-equal? (mode (list receipt)) (if (eq? mode ~v) (~a "(list " text ")") (~a "(" text ")"))))))
@@ -117,17 +138,28 @@
                                        tx-hash
                                        #:provider (answering (hash-set receipt-json 'gasUsed "zz")))))))
 
-  (define provided-accessors
-    (for/list ([row (in-list receipt-fields)]
-               #:when (list-ref row 4))
-      (string->symbol (~a "receipt-" (car row)))))
+  (test-case "every accessor the field table provides is in web3 and the manual"
+    (define manual (file->string (collection-file-path "scribblings/web3.scrbl" "web3")))
+    (define names (exported-names 'web3))
+    (for ([row (in-list provided-rows)])
+      (define name (accessor-name row))
+      (check-not-false (memq name names) (~a name))
+      (check-regexp-match (regexp (~a "@defproc\\[\\(" (regexp-quote (~a name)) " ")) manual
+                          (~a name)))
+    (check-false (memq 'receipt-logs (exported-names 'web3/eth/receipt))))
 
-  (test-case "the module exports the names the field table derives"
-    (check-equal? (sort (exported-names 'web3/eth/receipt) symbol<?)
-                  (sort (append '(receipt? jsexpr->receipt receipt->jsexpr receipt-succeeded?)
-                                provided-accessors)
-                        symbol<?))
-    (check-false (memq 'receipt-logs provided-accessors)))
+  (test-case "A1: a receipt without an effective gas price, and a numeric log timestamp, read"
+    (check-false (receipt-effective-gas-price
+                  (jsexpr->receipt (hash-remove receipt-json 'effectiveGasPrice))))
+    (check-equal? (log-block-timestamp (jsexpr->log (hash-set log-json 'blockTimestamp 1795291989)))
+                  1795291989))
+
+  (test-case "A5: eth-get-block-receipts names the receipt it could not read"
+    (define bad (list receipt-json (hash-set receipt-json 'gasUsed "zz")))
+    (check-equal? (message-of (lambda ()
+                                (eth-get-block-receipts
+                                 2 #:provider (mock-provider (hash "eth_getBlockReceipts" bad)))))
+                  "eth_getBlockReceipts: malformed receipt gas used in receipts 1 from the node: \"zz\""))
 
   (test-case "R13: web3 provides every name web3/eth/receipt does"
     (define all (exported-names 'web3))

@@ -10,7 +10,7 @@
          (submod "../abi.rkt" internal)
          (only-in "../address.rkt" address->checksum-string)
          (only-in "../eth.rkt" eth-call eth-send-transaction)
-         (only-in (submod "../eth.rkt" internal) poll-receipt/who)
+         (only-in (submod "../eth.rkt" internal) wait-for-receipt/who)
          (only-in "../eth/receipt.rkt" receipt-block-number receipt-status)
          (only-in (submod "../eth/receipt.rkt" internal) jsexpr->receipt-of)
          "../rpc.rkt"
@@ -162,8 +162,11 @@
                    (lambda (e)
                      (raise (with-message e (format "~a: sent transaction ~a, outcome unknown: ~a"
                                                     who tx-hash (exn-message e)))))])
-    (poll-receipt/who 'wait-for-receipt tx-hash
-                      #:timeout (receipt-timeout) #:interval 0.002 #:provider provider)))
+    (wait-for-receipt/who 'wait-for-receipt tx-hash unread-receipt
+                          #:timeout (receipt-timeout) #:provider provider)))
+
+(define (unread-receipt _who _tx-hash raw)
+  raw)
 
 (define (settle who tx-hash tx errors provider)
   (define raw (wait-for-outcome who tx-hash provider))
@@ -178,7 +181,7 @@
              (current-continuation-marks)
              receipt
              revert))]
-    [#f (raise-node-malformed who (of-transaction "receipt status" tx-hash) 'null)]))
+    [#f (raise-node-missing who (of-transaction "receipt status" tx-hash))]))
 
 (define (rpc-replay-outcome e errors)
   (cond

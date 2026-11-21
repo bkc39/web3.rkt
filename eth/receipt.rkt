@@ -3,7 +3,7 @@
 (require racket/contract/base
          (only-in racket/match match)
          "../private/exn.rkt"
-         (only-in "../private/node.rkt" raise-node-malformed)
+         (only-in "../private/node.rkt" raise-node-malformed raise-node-missing)
          "../private/record.rkt"
          (only-in "log.rkt" log?)
          (only-in (submod "log.rkt" internal) jsexpr->log/who))
@@ -25,26 +25,26 @@
 
 (define (check-receipt who detail receipt)
   (unless (or (receipt-status receipt) (receipt-root receipt))
-    (raise-node-malformed who (string-append "receipt status" detail) 'null)))
+    (raise-node-missing who (string-append "receipt status" detail))))
 
 (define-node-record receipt #:noun "receipt" #:printer write-receipt #:check check-receipt
-  [transaction-hash transactionHash hash-field]
-  [transaction-index transactionIndex uint64-field]
-  [block-hash blockHash hash-field]
-  [block-number blockNumber uint64-field]
-  [from from address-field]
-  [to to address-field #:optional]
-  [type type byte-field #:optional]
-  [status status bit-field #:optional]
-  [root root hash-field #:optional]
-  [cumulative-gas-used cumulativeGasUsed uint64-field]
-  [gas-used gasUsed uint64-field]
-  [effective-gas-price effectiveGasPrice quantity-field]
-  [contract-address contractAddress address-field #:optional]
-  [logs logs (list-field (record-field jsexpr->log/who log?)) #:unprovided]
-  [logs-bloom logsBloom (fixed-data-field 256)]
-  [blob-gas-used blobGasUsed uint64-field #:optional]
-  [blob-gas-price blobGasPrice quantity-field #:optional])
+  [transaction-hash hash-field #:key transactionHash]
+  [transaction-index uint64-field #:key transactionIndex]
+  [block-hash hash-field #:key blockHash]
+  [block-number uint64-field #:key blockNumber]
+  [from address-field]
+  [to address-field #:optional]
+  [type byte-field #:optional]
+  [status bit-field #:optional]
+  [root hash-field #:optional]
+  [cumulative-gas-used uint64-field #:key cumulativeGasUsed]
+  [gas-used uint64-field #:key gasUsed]
+  [effective-gas-price quantity-field #:key effectiveGasPrice #:optional]
+  [contract-address address-field #:key contractAddress #:optional]
+  [logs (list-field (record-field jsexpr->log/who log?)) #:unprovided]
+  [logs-bloom (fixed-data-field 256) #:key logsBloom]
+  [blob-gas-used uint64-field #:key blobGasUsed #:optional]
+  [blob-gas-price quantity-field #:key blobGasPrice #:optional])
 
 (define (receipt-succeeded? receipt)
   (match (receipt-status receipt)

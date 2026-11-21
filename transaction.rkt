@@ -112,10 +112,20 @@
                         access-list y-parity r s)))
 
 (define field-kinds
-  (hasheq 'chain-id 'u64 'nonce 'u64 'gas-limit 'u64
-          'gas-price 'u256 'max-priority-fee-per-gas 'u256 'max-fee-per-gas 'u256 'value 'u256
-          'to 'to 'data 'data 'access-list 'access-list
-          'v 'v 'y-parity 'y-parity 'r 'curve-scalar 's 'curve-scalar))
+  (hasheq 'chain-id 'u64
+          'nonce 'u64
+          'gas-price 'u256
+          'max-priority-fee-per-gas 'u256
+          'max-fee-per-gas 'u256
+          'gas-limit 'u64
+          'to 'to
+          'value 'u256
+          'data 'data
+          'access-list 'access-list
+          'v 'v
+          'y-parity 'y-parity
+          'r 'curve-scalar
+          's 'curve-scalar))
 
 (define (unsigned-fields type)
   (drop-right (hash-ref wire-fields type) 3))

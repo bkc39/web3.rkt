@@ -4,8 +4,6 @@
          receipt-json
          root-receipt-json)
 
-;; Captured from the pinned anvil: a Token transfer and its one log.  The
-;; receipt's blockTimestamp is a JSON number, its log's a hex quantity.
 (define log-json
   '#hasheq((address . "0x5fbdb2315678afecb367f032d93f642f64180aa3")
            (blockHash . "0x78e3cb19177d24232982259d6717f8ea45cfae5f369be21280af7b8e535146b5")
