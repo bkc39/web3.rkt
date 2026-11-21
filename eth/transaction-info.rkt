@@ -114,7 +114,8 @@
   (match type
     [0
      (legacy-transaction #:chain-id chain-id #:nonce nonce
-                         #:gas-price (needed (transaction-info-gas-price info) "transaction gas price")
+                         #:gas-price (needed (transaction-info-gas-price info)
+                                             "transaction gas price")
                          #:gas-limit gas-limit #:to to #:value value #:data data)]
     [1
      (eip2930-transaction #:chain-id (needed chain-id "transaction chain id") #:nonce nonce
@@ -149,7 +150,8 @@
   (define r (curve-scalar (transaction-info-r info) "transaction r"))
   (define s (curve-scalar (transaction-info-s info) "transaction s"))
   (define stx (signed-transaction tx (signature r s y-parity)))
-  (check-claim "hash" (transaction-info-hash info) "the transaction's" (signed-transaction-hash stx))
+  (check-claim "hash" (transaction-info-hash info) "the transaction's"
+               (signed-transaction-hash stx))
   (check-claim "from" (transaction-info-from info) "the signature's sender"
                (signed-transaction-sender stx))
   stx)

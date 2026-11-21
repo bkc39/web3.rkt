@@ -154,7 +154,7 @@
       (check-equal? (eth-get-storage-at me 16 "pending") "0x2a")
       (check-equal? (eth-get-block-transaction-count-by-hash "0xbb") 0)
       (check-equal? (eth-get-block-transaction-count-by-number 255) 3)
-      (check-equal? (eth-get-block-by-number "latest" #t) 'null)
+      (check-false (eth-get-block-by-number "latest" #t))
       (check-equal? (net-peer-count) 0))
     (check-equal? (mock-provider-calls p)
                   `(("eth_getBalance" ,me "0x5")
