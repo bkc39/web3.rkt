@@ -6,7 +6,6 @@
          (only-in keccak keccak256)
          (only-in racket/list drop-right)
          (only-in racket/match define-match-expander match match* match-define match-lambda)
-         (only-in "abi/type.rkt" abi-value/c)
          (only-in "account.rkt"
                   recover-address
                   secp256k1-order
@@ -16,22 +15,13 @@
          (only-in (submod "account.rkt" private) sign-digest/who)
          (only-in "address.rkt" address->checksum-string checksum-address?)
          "private/exn.rkt"
+         (only-in "private/field-contracts.rkt"
+                  access-list/c bytes32/c hash-string/c to/c uint256/c uint64/c)
          (only-in "private/hex.rkt" bytes->hex bytes->natural hex->bytes natural->hex)
          (only-in "private/opaque.rkt" address/c opaque-> opaque/c secret-key/c)
          "private/who.rkt"
          (only-in "rlp.rkt" natural->rlp-scalar rlp-encode)
          (only-in (submod "rlp.rkt" internal) rlp-decode/who))
-
-(define uint64/c (flat-named-contract 'uint64/c (integer-in 0 (sub1 (expt 2 64)))))
-(define uint256/c (flat-named-contract 'uint256/c (integer-in 0 (sub1 (expt 2 256)))))
-(define bytes32/c
-  (flat-named-contract 'bytes32/c (lambda (v) (and (bytes? v) (= (bytes-length v) 32)))))
-(define to/c (or/c #f (abi-value/c 'address)))
-(define access-list/c
-  (flat-named-contract 'access-list/c (listof (cons/c (abi-value/c 'address) (listof bytes32/c)))))
-(define transaction-hash/c
-  (flat-named-contract 'transaction-hash/c
-                       (lambda (v) (and (string? v) (regexp-match? #px"^0x[0-9a-f]{64}$" v)))))
 
 (provide (struct-out exn:fail:web3:raw-transaction)
          signed-transaction
@@ -86,7 +76,7 @@
           [signed-transaction-transaction (-> signed-transaction? transaction?)]
           [signed-transaction-signature (-> signed-transaction? signature?)]
           [signed-transaction-sender (-> signed-transaction? checksum-address?)]
-          [signed-transaction-hash (-> signed-transaction? transaction-hash/c)]
+          [signed-transaction-hash (-> signed-transaction? hash-string/c)]
           [signed-transaction->bytes (-> signed-transaction? bytes?)]
           [bytes->signed-transaction (-> bytes? signed-transaction?)]
           [transaction->jsexpr (opaque-> transaction/c #:from address/c hash?)]))
@@ -96,7 +86,7 @@
            raw-transaction-reason/c
            transaction/c
            transaction-difference
-           transaction-hash/c
+           (rename-out [hash-string/c transaction-hash/c])
            wire-fields))
 
 (define raw-transaction-phrases
@@ -122,20 +112,10 @@
                         access-list y-parity r s)))
 
 (define field-kinds
-  (hasheq 'chain-id 'u64
-          'nonce 'u64
-          'gas-price 'u256
-          'max-priority-fee-per-gas 'u256
-          'max-fee-per-gas 'u256
-          'gas-limit 'u64
-          'to 'to
-          'value 'u256
-          'data 'data
-          'access-list 'access-list
-          'v 'v
-          'y-parity 'y-parity
-          'r 'curve-scalar
-          's 'curve-scalar))
+  (hasheq 'chain-id 'u64 'nonce 'u64 'gas-limit 'u64
+          'gas-price 'u256 'max-priority-fee-per-gas 'u256 'max-fee-per-gas 'u256 'value 'u256
+          'to 'to 'data 'data 'access-list 'access-list
+          'v 'v 'y-parity 'y-parity 'r 'curve-scalar 's 'curve-scalar))
 
 (define (unsigned-fields type)
   (drop-right (hash-ref wire-fields type) 3))
