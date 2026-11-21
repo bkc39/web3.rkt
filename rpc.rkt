@@ -109,7 +109,7 @@
 
 (define (url->http-provider url-string #:ssl-context [ssl-context #f])
   (define u (string->url url-string))
-  (define ssl? (https-url? url-string))
+  (define https? (https-url? url-string))
   (define path
     (cond
       [(regexp-match #px"^[a-zA-Z]+://[^/]+(/.+)$" url-string) => cadr]
@@ -117,11 +117,19 @@
   (http-provider url-string
                  path
                  (url-host u)
-                 (or (url-port u) (if ssl? 443 80))
-                 ssl?
+                 (or (url-port u) (if https? 443 80))
+                 (provider-ssl-context https? ssl-context)
                  (box #f)
                  (box #f)
                  (box 0)))
+
+(define (provider-ssl-context https? ssl-context)
+  (cond
+    [(not https?) #f]
+    [ssl-context ssl-context]
+    [(not ssl-available?)
+     (raise-web3-error 'url->http-provider "TLS is not available: ~a" ssl-load-fail-reason)]
+    [else (ssl-secure-client-context)]))
 
 ;; `link` holds the open connection, or #f.  A connection is never reopened
 ;; in place: net/http-client's body readers keep the `http-conn` and close
@@ -179,14 +187,38 @@
               (byte-ready? (link-in l))))))
 
 (define (open-link! p)
-  (match-define (struct* http-provider ([host host] [port port] [ssl-context ssl?])) p)
-  (define-values (in out) ((if ssl? ssl-connect tcp-connect) host port))
+  (match-define (struct* http-provider ([host host] [port port] [ssl-context ssl-context])) p)
+  (define-values (tcp-in tcp-out) (tcp-connect host port))
+  (define-values (in out abandon)
+    (cond
+      [ssl-context
+       (define-values (ssl-in ssl-out) (tls-handshake host port ssl-context tcp-in tcp-out))
+       (values ssl-in ssl-out ssl-abandon-port)]
+      [else (values tcp-in tcp-out tcp-abandon-port)]))
   (define conn (http-conn))
   (http-conn-open! conn host
                    #:port port
-                   #:ssl? (list ssl? in out (if ssl? ssl-abandon-port tcp-abandon-port)))
+                   #:ssl? (list (and ssl-context #t) in out abandon))
   (set-box! (http-provider-link p) (link conn in))
   conn)
+
+;; The message names the host and port only: the URL may carry an API key.
+(define (tls-handshake host port ssl-context in out)
+  (with-handlers ([(lambda (_) #t)
+                   (lambda (e)
+                     (tcp-abandon-port in)
+                     (tcp-abandon-port out)
+                     (raise (if (exn:fail? e)
+                                (exn:fail:web3 (format "TLS handshake with ~a:~a failed: ~a"
+                                                       host port (exn-message e))
+                                               (current-continuation-marks))
+                                e)))])
+    (ports->ssl-ports in out
+                      #:mode 'connect
+                      #:context ssl-context
+                      #:hostname host
+                      #:close-original? #t
+                      #:shutdown-on-close? #f)))
 
 ;; Closing flushes, which fails on a broken connection; abandoning it
 ;; releases the socket anyway.
