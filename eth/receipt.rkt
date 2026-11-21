@@ -52,11 +52,8 @@
                               (current-continuation-marks)))]
     [status (eqv? status 1)]))
 
-(define (jsexpr->receipt-of who tx-hash v [detail ""])
-  (define receipt (jsexpr->receipt/who who v detail))
-  (check-asked-hash who (string-append "receipt transaction hash" detail) tx-hash
-                    (receipt-transaction-hash receipt))
-  receipt)
+(define jsexpr->receipt-of
+  (asked-reader jsexpr->receipt/who receipt-transaction-hash "receipt transaction hash"))
 
 (module* internal #f
   (provide jsexpr->receipt-of

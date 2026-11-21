@@ -83,10 +83,14 @@
 
 (module* internal #f
   (provide bytes->signed-transaction/who
+           curve-scalar?
+           legacy-v?
            raw-transaction-reason/c
            transaction/c
            transaction-difference
            (rename-out [hash-string/c transaction-hash/c])
+           v-chain-id
+           v-y-parity
            wire-fields))
 
 (define raw-transaction-phrases

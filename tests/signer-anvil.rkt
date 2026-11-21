@@ -104,7 +104,7 @@
            (match-define (list stx hash receipt recipient) (send-with signer))
            (check-true (receipt-succeeded? receipt))
            (check-equal? hash (signed-transaction-hash stx))
-           (check-equal? (string-downcase (hash-ref (eth-get-transaction-by-hash hash) 'from))
+           (check-equal? (string-downcase (transaction-info-from (eth-get-transaction-by-hash hash)))
                          (string-downcase (signer-address signer)))
            (check-equal? (eth-get-balance recipient "latest") (ether->wei 1))
            (check-true (< (eth-get-balance (signer-address signer) "latest") before))))
@@ -125,12 +125,21 @@
          (define hash (eth-send-transaction json))
          (check-true (receipt-succeeded? (wait-for-receipt hash)))
          (define mined (eth-get-transaction-by-hash hash))
-         (for ([key (in-list '(type nonce gas maxPriorityFeePerGas maxFeePerGas value chainId))])
-           (check-equal? (hex-string->number (hash-ref mined key))
-                         (hex-string->number (hash-ref json key))
-                         (format "~a" key)))
-         (check-equal? (string-downcase (hash-ref mined 'to)) (string-downcase (hash-ref json 'to)))
-         (check-equal? (hash-ref mined 'input) (hash-ref json 'data)))
+         (check-equal? (map (lambda (field) (field mined))
+                            (list transaction-info-type transaction-info-nonce
+                                  transaction-info-gas-limit
+                                  transaction-info-max-priority-fee-per-gas
+                                  transaction-info-max-fee-per-gas transaction-info-value
+                                  transaction-info-chain-id transaction-info-to
+                                  transaction-info-data))
+                       (map (lambda (field) (field tx))
+                            (list transaction-type transaction-nonce transaction-gas-limit
+                                  transaction-max-priority-fee-per-gas transaction-max-fee-per-gas
+                                  transaction-value transaction-chain-id transaction-to
+                                  transaction-data)))
+         (check-equal? (string-downcase (transaction-info-from mined)) (string-downcase impersonated))
+         (check-exn #rx"^transaction-info->signed-transaction: the node's hash "
+                    (lambda () (transaction-info->signed-transaction mined))))
 
        (test-case "N6: an address the node does not hold is the node's error"
          (define stranger (node-signer (fresh-address)))

@@ -53,14 +53,17 @@
      (test-case "A4: a transaction by block and index is the transaction by hash"
        (with-anvil ()
          (match-define (list tx-hash receipt) (mined-transfer))
-         (define block-hash (receipt-block-hash receipt))
+         (define mined-in (receipt-block-hash receipt))
          (define height (receipt-block-number receipt))
          (define transaction (eth-get-transaction-by-hash tx-hash))
-         (check-equal? (eth-get-transaction-by-block-hash-and-index block-hash 0) transaction)
+         (check-equal? (transaction-info-hash transaction) tx-hash)
+         (check-equal? (transaction-info-block-hash transaction) mined-in)
+         (check-equal? (eth-get-transaction-by-block-hash-and-index mined-in 0) transaction)
          (check-equal? (eth-get-transaction-by-block-number-and-index height 0) transaction)
-         (check-equal? (eth-get-transaction-by-block-hash-and-index block-hash 1) 'null)
-         (check-equal? (eth-get-transaction-by-block-number-and-index height 1) 'null)
-         (check-equal? (eth-get-block-transaction-count-by-hash block-hash) 1)))
+         (check-false (eth-get-transaction-by-block-hash-and-index mined-in 1))
+         (check-false (eth-get-transaction-by-block-number-and-index height 1))
+         (check-false (eth-get-transaction-by-hash (filled-hash #\a)))
+         (check-equal? (eth-get-block-transaction-count-by-hash mined-in) 1)))
 
      (test-case "A5: fee history covers the requested blocks"
        (with-anvil ()

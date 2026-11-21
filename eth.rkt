@@ -4,7 +4,11 @@
          (only-in racket/match match)
          "eth/log.rkt"
          "eth/receipt.rkt"
+         "eth/transaction-info.rkt"
          (only-in (submod "eth/receipt.rkt" internal) jsexpr->receipt-of jsexpr->receipt/who)
+         (only-in (submod "eth/transaction-info.rkt" internal)
+                  jsexpr->transaction-info-of
+                  jsexpr->transaction-info/who)
          (only-in "private/eth-params.rkt"
                   block-param/c
                   block-param->string
@@ -20,7 +24,7 @@
          "private/who.rkt"
          "rpc.rkt")
 
-(provide (all-from-out "eth/log.rkt" "eth/receipt.rkt")
+(provide (all-from-out "eth/log.rkt" "eth/receipt.rkt" "eth/transaction-info.rkt")
          block-param/c
          block-param->string
          reward-percentiles/c
@@ -161,10 +165,14 @@
   (-> [block-param/c block-param->string] (or/c #f (listof receipt?)))
   #:result-transform (nullable read-receipts "eth_getBlockReceipts" list?))
 (define-jsonrpc-endpoint eth_getTransactionByBlockHashAndIndex
-  (-> hex-string? [exact-nonnegative-integer? number->hex-string] (or/c 'null hash?)))
+  (-> hex-string? [exact-nonnegative-integer? number->hex-string] (or/c #f transaction-info?))
+  #:result-transform
+  (nullable jsexpr->transaction-info/who "eth_getTransactionByBlockHashAndIndex" hash?))
 (define-jsonrpc-endpoint eth_getTransactionByBlockNumberAndIndex
   (-> [block-param/c block-param->string] [exact-nonnegative-integer? number->hex-string]
-      (or/c 'null hash?)))
+      (or/c #f transaction-info?))
+  #:result-transform
+  (nullable jsexpr->transaction-info/who "eth_getTransactionByBlockNumberAndIndex" hash?))
 
 ;; Calls and transactions take a transaction object, e.g.
 ;;   (hasheq 'from a 'to b 'data "0x...")
@@ -180,7 +188,9 @@
 (define-jsonrpc-endpoint eth_sign (-> string? hex-string? hex-string?))
 (define-jsonrpc-endpoint eth_signTransaction (-> object/c hex-string?)
   #:result-transform signed-transaction-result)
-(define-jsonrpc-endpoint eth_getTransactionByHash (-> hex-string? (or/c 'null hash?)))
+(define-jsonrpc-endpoint eth_getTransactionByHash (-> hex-string? (or/c #f transaction-info?))
+  #:result-transform/arguments
+  (nullable jsexpr->transaction-info-of "eth_getTransactionByHash" hash?))
 (define-jsonrpc-endpoint eth_getTransactionReceipt (-> hex-string? (or/c #f receipt?))
   #:result-transform/arguments (nullable jsexpr->receipt-of "eth_getTransactionReceipt" hash?))
 (define-jsonrpc-endpoint eth_getRawTransactionByHash

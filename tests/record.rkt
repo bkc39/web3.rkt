@@ -10,6 +10,8 @@
            (only-in web3/eth/log jsexpr->log log->jsexpr)
            (only-in (submod web3/eth/log internal) log-fields)
            (only-in web3/eth/receipt jsexpr->receipt)
+           (only-in web3/eth/transaction-info jsexpr->transaction-info)
+           (only-in (submod web3/eth/transaction-info internal) transaction-info-fields)
            (only-in (submod web3/eth/receipt internal) receipt-fields)
            (only-in web3/rpc exn:fail:web3?)
            web3/private/record
@@ -66,9 +68,23 @@
     (define bs (random-bytes prng (or size (random 70 prng))))
     (list (hex bs) (lambda (v) (equal? v bs))))
 
-  (define (topics-sample prng)
-    (define json (for/list ([_ (in-range (random 5 prng))]) (random-hash prng)))
+  (define ((hashes-sample most) prng)
+    (define json (for/list ([_ (in-range (random (add1 most) prng))]) (random-hash prng)))
     (list json (lambda (v) (equal? v (map string-downcase json)))))
+
+  (define (access-list-sample prng)
+    (define entries
+      (for/list ([_ (in-range (random 3 prng))])
+        (cons (hex (random-bytes prng 20))
+              (for/list ([_ (in-range (random 3 prng))]) (random-bytes prng 32)))))
+    (list (for/list ([entry (in-list entries)])
+            (match-define (cons address keys) entry)
+            (hasheq 'address address 'storageKeys (map hex keys)))
+          (lambda (v)
+            (equal? (for/list ([entry (in-list v)])
+                      (match-define (cons address keys) entry)
+                      (cons (string-downcase address) keys))
+                    entries))))
 
   (define (logs-sample prng)
     (define json (make-list (random 4 prng) log-json))
@@ -85,7 +101,9 @@
           'hash hash-sample
           'data (data-sample #f)
           '(fixed-data 256) (data-sample 256)
-          '(list hash 4) topics-sample
+          '(list hash 4) (hashes-sample 4)
+          '(list hash +inf.0) (hashes-sample 6)
+          'access-list access-list-sample
           '(list (record log?) +inf.0) logs-sample))
 
   (define hostiles
@@ -101,6 +119,10 @@
           '(fixed-data 256) `(42 "0xzz" (1) "0x" #t ,(hex (make-bytes 255 0))
                                  ,(hex (make-bytes 257 0)))
           '(list hash 4) `(42 "0xzz" (1) "0x" #t ("0x12") ,(make-list 5 (hex (make-bytes 32 0))))
+          '(list hash +inf.0) '(42 "0xzz" (1) "0x" #t ("0x12"))
+          'access-list `(42 "0xzz" (1) "0x" #t (42)
+                            (,(hasheq 'address "0x12" 'storageKeys '()))
+                            (,(hasheq 'address (hex (make-bytes 20 1)) 'storageKeys '("0x12"))))
           '(list (record log?) +inf.0) `(42 "0xzz" (1) "0x" #t (,log-json 42)
                                             (,(hash-set log-json 'data "0x1")))))
 
@@ -114,7 +136,12 @@
   (define tables
     `([receipt ,jsexpr->receipt ,receipt-fields
                ,(hash-set receipt-json 'root (hash-ref root-receipt-json 'root))]
-      [log ,jsexpr->log ,log-fields ,log-json]))
+      [log ,jsexpr->log ,log-fields ,log-json]
+      [transaction-info ,jsexpr->transaction-info ,transaction-info-fields
+                        ,transaction-info-json/1]))
+
+  (define nouns
+    (hasheq 'transaction-info "transaction"))
 
   (define (table-rows table)
     (match-define (list _ _ rows _) table)
@@ -155,7 +182,31 @@
        (transaction-hash "log transaction hash")
        (transaction-index "log transaction index")
        (index "log index")
-       (removed? "log removed"))))
+       (removed? "log removed"))
+     'transaction-info
+     '((hash "transaction hash")
+       (block-hash "transaction block hash")
+       (block-number "transaction block number")
+       (block-timestamp "transaction block timestamp")
+       (transaction-index "transaction transaction index")
+       (from "transaction from")
+       (type "transaction type")
+       (chain-id "transaction chain id")
+       (nonce "transaction nonce")
+       (to "transaction to")
+       (value "transaction value")
+       (data "transaction data")
+       (gas-limit "transaction gas limit")
+       (gas-price "transaction gas price")
+       (max-priority-fee-per-gas "transaction max priority fee per gas")
+       (max-fee-per-gas "transaction max fee per gas")
+       (max-fee-per-blob-gas "transaction max fee per blob gas")
+       (access-list "transaction access list(?: [0-9]+(?: address| storage keys(?: [0-9]+)?)?)?")
+       (blob-versioned-hashes "transaction blob versioned hashes(?: [0-9]+)?")
+       (v "transaction v")
+       (y-parity "transaction y parity")
+       (r "transaction r")
+       (s "transaction s"))))
 
   (define (field-message noun field)
     (match (assq field (hash-ref messages noun))
@@ -204,7 +255,8 @@
            [v (in-list '(42 null ()))])
       (match-define (list noun reader _ _) table)
       (check-malformed (lambda () (reader v))
-                       (pregexp (format "^jsexpr->~a: malformed ~a from the node: " noun noun))
+                       (pregexp (format "^jsexpr->~a: malformed ~a from the node: "
+                                        noun (hash-ref nouns noun noun)))
                        (~a noun " " (~e v)))))
 
   (define storage-key (hex (make-bytes 32 7)))

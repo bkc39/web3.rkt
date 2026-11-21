@@ -148,22 +148,22 @@
          [e (raise e)])])))
 
 ;; "pending" is read as the latest block: nodes refuse a range past it.
-(define (block-number who tag provider)
+(define (tag->block-number who tag provider)
   (match tag
     [(? exact-nonnegative-integer?) tag]
     ["earliest" 0]
     [(or "latest" "pending") (eth-block-number #:provider provider)]
     [_
-     (match (eth-get-block-by-number tag #f #:provider provider)
+     (match (rpc-call "eth_getBlockByNumber" (list tag #f) #:provider provider)
        [(? hash? block) (node-quantity->number who "block number" (hash-ref block 'number #f))]
        [block (raise-node-malformed who (format "~a block" tag) block)])]))
 
 (define (resolved-range who f provider)
-  (define from (block-number who (log-filter-from f) provider))
+  (define from (tag->block-number who (log-filter-from f) provider))
   (define to
     (if (equal? (log-filter-to f) (log-filter-from f))
         from
-        (block-number who (log-filter-to f) provider)))
+        (tag->block-number who (log-filter-to f) provider)))
   (values from to))
 
 (define (fetch-range who from to span provider f)

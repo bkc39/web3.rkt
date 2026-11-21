@@ -6,14 +6,15 @@
            (only-in racket/match match-define)
            rackunit
            web3
-           (only-in "helpers/results.rkt" receipt-json)
+           (only-in "helpers/results.rkt" receipt-json transaction-info-json/0)
            (only-in "util.rkt" check-blames-here filled-hash max-word raised))
 
   (define addr "0x00000000000000000000000000000000000c0de0")
   (define a-block (hasheq 'number "0x10" 'hash (filled-hash #\b) 'transactions '()))
-  (define a-transaction (hasheq 'hash (filled-hash #\a) 'nonce "0x0"))
+  (define a-transaction (jsexpr->transaction-info transaction-info-json/0))
   (define a-receipt (jsexpr->receipt receipt-json))
   (define receipt-hash (hash-ref receipt-json 'transactionHash))
+  (define transaction-hash (hash-ref transaction-info-json/0 'hash))
   (define a-log (hasheq 'address addr 'topics '() 'data "0x"))
   (define a-tx (hasheq 'from addr 'to addr 'data "0x"))
   (define a-query (hasheq 'address addr 'fromBlock "earliest"))
@@ -38,10 +39,12 @@
       [,eth-get-block-receipts ("safe") "eth_getBlockReceipts" ("safe") () ()]
       [,eth-get-transaction-by-block-hash-and-index
        ("0xbb" 2) "eth_getTransactionByBlockHashAndIndex" ("0xbb" "0x2")
-       ,a-transaction ,a-transaction]
+       ,transaction-info-json/0 ,a-transaction]
       [,eth-get-transaction-by-block-number-and-index
        ("latest" 0) "eth_getTransactionByBlockNumberAndIndex" ("latest" "0x0")
-       ,a-transaction ,a-transaction]
+       ,transaction-info-json/0 ,a-transaction]
+      [,eth-get-transaction-by-hash (,transaction-hash) "eth_getTransactionByHash"
+                                    (,transaction-hash) ,transaction-info-json/0 ,a-transaction]
       [,eth-get-raw-transaction-by-hash ("0xaa") "eth_getRawTransactionByHash" ("0xaa")
                                         "0x02f8" "0x02f8"]
       [,eth-create-access-list (,a-tx "pending") "eth_createAccessList" (,a-tx "pending")
@@ -77,17 +80,18 @@
       (match-define (list result _) (call-mocked procedure arguments method answer))
       (check-equal? result expected method)))
 
-  (test-case "E3: a missing receipt is #f, and any other missing object 'null"
+  (test-case "E3: a missing typed object is #f, and any other missing object 'null"
     (for ([row (in-list `([,eth-get-block-receipts ("latest") "eth_getBlockReceipts" null]
-                          [,eth-get-transaction-receipt ("0xaa") "eth_getTransactionReceipt" null]))])
+                          [,eth-get-transaction-receipt ("0xaa") "eth_getTransactionReceipt" null]
+                          [,eth-get-transaction-by-hash ("0xaa") "eth_getTransactionByHash" null]
+                          [,eth-get-transaction-by-block-hash-and-index
+                           ("0xbb" 0) "eth_getTransactionByBlockHashAndIndex" null]
+                          [,eth-get-transaction-by-block-number-and-index
+                           (16 0) "eth_getTransactionByBlockNumberAndIndex" null]))])
       (match-define (list procedure arguments method answer) row)
       (match-define (list result _) (call-mocked procedure arguments method answer))
       (check-false result method))
     (for ([row (in-list `([,eth-get-block-by-hash ("0xbb" #f) "eth_getBlockByHash" null]
-                          [,eth-get-transaction-by-block-hash-and-index
-                           ("0xbb" 0) "eth_getTransactionByBlockHashAndIndex" null]
-                          [,eth-get-transaction-by-block-number-and-index
-                           (16 0) "eth_getTransactionByBlockNumberAndIndex" null]
                           [,eth-get-raw-transaction-by-hash ("0xaa") "eth_getRawTransactionByHash"
                                                             null]
                           [,eth-get-raw-transaction-by-hash ("0xaa") "eth_getRawTransactionByHash"
@@ -125,6 +129,18 @@
       [,eth-get-transaction-by-block-hash-and-index
        ("0xbb" 0) "eth_getTransactionByBlockHashAndIndex" ()
        "eth_getTransactionByBlockHashAndIndex: unexpected result '()"]
+      [,eth-get-transaction-by-block-hash-and-index
+       ("0xbb" 0) "eth_getTransactionByBlockHashAndIndex" ,(hash-set transaction-info-json/0 'gas "zz")
+       "eth_getTransactionByBlockHashAndIndex: malformed transaction gas limit from the node: \"zz\""]
+      [,eth-get-transaction-by-hash (,transaction-hash) "eth_getTransactionByHash"
+                                    ,(hash-set transaction-info-json/0 'gas "zz")
+                                    "eth_getTransactionByHash: malformed transaction gas limit from the node: \"zz\""]
+      [,eth-get-transaction-by-hash ("0xaa") "eth_getTransactionByHash" "0xaa"
+                                    "eth_getTransactionByHash: unexpected result \"0xaa\""]
+      [,eth-get-transaction-by-hash (,(filled-hash #\c)) "eth_getTransactionByHash"
+                                    ,transaction-info-json/0
+                                    ,(format "eth_getTransactionByHash: malformed transaction hash from the node: ~s"
+                                             transaction-hash)]
       [,eth-get-transaction-by-block-number-and-index
        (16 0) "eth_getTransactionByBlockNumberAndIndex" ()
        "eth_getTransactionByBlockNumberAndIndex: unexpected result '()"]

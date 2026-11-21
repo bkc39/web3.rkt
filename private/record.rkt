@@ -21,10 +21,10 @@
 
 (provide access-list-field
          address-field
+         asked-reader
          bit-field
          boolean-field
          byte-field
-         check-asked-hash
          data-field
          define-node-record
          (struct-out field-kind)
@@ -46,9 +46,12 @@
 (define (hash-abbreviation digest)
   (string-append (substring digest 0 10) "…"))
 
-(define (check-asked-hash who what asked received)
-  (unless (equal? received (string-downcase asked))
-    (raise-node-malformed who what received)))
+(define ((asked-reader reader/who record-hash what) who asked v [detail ""])
+  (define record (reader/who who v detail))
+  (define received (record-hash record))
+  (if (equal? received (string-downcase asked))
+      record
+      (raise-node-malformed who (string-append what detail) received)))
 
 (define (read-field kind who what v)
   ((field-kind-reader kind) who what "" v))
