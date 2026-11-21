@@ -9,7 +9,7 @@
            racket/generic
            rackunit
            web3
-           (only-in "util.rkt" raised))
+           (only-in "util.rkt" check-blames-here raised))
 
   (define (rpc-error thunk)
     (with-handlers ([exn:fail:web3:rpc? (lambda (e)
@@ -79,7 +79,7 @@
     (check-true (blames-caller? (lambda () (current-provider 'nope))))
     (check-true (blames-caller? (lambda () (parameterize ([current-provider 5]) (void)))))
     (check-true (blames-caller? (lambda () (with-provider "http://localhost" (void)))))
-    (check-exn exn:fail:contract? (lambda () (eth-chain-id #:provider 'nope)))
+    (check-blames-here (eth-chain-id #:provider 'nope))
     (check-exn exn:fail:contract? (lambda () (rpc-call "eth_chainId" '() #:provider 'nope)))
     (check-exn exn:fail:contract? (lambda () (provider-request 'nope "eth_chainId" '())))
     (check-exn exn:fail:contract? (lambda () (provider-close 'nope)))
