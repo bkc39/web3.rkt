@@ -343,6 +343,9 @@
 
   (struct endpoint-transformer (checked-for) #:property prop:procedure expand-endpoint-use))
 
+(define ((ignoring-arguments transform) raw . _arguments)
+  (transform raw))
+
 (define (endpoint-checker signature procedure positive name srcloc)
   (define checked (make-hash))
   (lambda (negative)
@@ -353,18 +356,23 @@
 (define-syntax-parse-rule
   (define-jsonrpc-endpoint rpc-name:id
     ((~datum ->) p:arg-spec ... result-contract:expr)
-    (~optional (~seq #:result-transform transform:expr) #:defaults ([transform #'values])))
+    (~optional (~or* (~seq #:result-transform transform:expr)
+                     (~seq #:result-transform/arguments arguments-transform:expr))
+               #:defaults ([transform #'values])))
   #:with fn-name (format-id #'rpc-name "~a" (->kebab-case (syntax-e #'rpc-name)))
   #:with method (datum->syntax #'rpc-name (symbol->string (syntax-e #'rpc-name)))
   #:with (arg ...) (generate-temporaries #'(p ...))
-  #:with (result? unchecked signature checked-for)
-  (generate-temporaries '(result? unchecked signature checked-for))
+  #:with (result? transformer unchecked signature checked-for)
+  (generate-temporaries '(result? transformer unchecked signature checked-for))
   #:with procedure
   (syntax-property #'(lambda (arg ... #:provider [provider (current-provider)])
-                       (call-endpoint method (list (p.->param arg) ...) provider transform result?))
+                       (call-endpoint method (list (p.->param arg) ...) provider
+                                      (lambda (raw) (transformer raw arg ...))
+                                      result?))
                    'inferred-name
                    (syntax-e #'fn-name))
   (begin
+    (define transformer (~? (ignoring-arguments transform) arguments-transform))
     (define result? (flat-contract-predicate (coerce-flat-contract 'fn-name result-contract)))
     (define unchecked procedure)
     (define signature (->* (p.contract ...) (#:provider (or/c #f provider?)) any))

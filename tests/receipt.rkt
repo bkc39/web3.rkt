@@ -125,6 +125,15 @@
                                       (eth-get-transaction-receipt
                                        tx-hash #:provider (answering "0xaa"))))))
 
+  (test-case "eth-get-transaction-receipt reads the receipt of the transaction asked"
+    (check-equal? (eth-get-transaction-receipt shouted-hash #:provider (answering receipt-json))
+                  (jsexpr->receipt receipt-json))
+    (check-equal? (message-of (lambda ()
+                                (eth-get-transaction-receipt (filled-hash #\c)
+                                                             #:provider (answering receipt-json))))
+                  (~a "eth_getTransactionReceipt: malformed receipt transaction hash from the node: "
+                      (~s tx-hash))))
+
   (test-case "R10: wait-for-receipt reads the receipt of its own transaction"
     (check-equal? (wait-for-receipt shouted-hash #:provider (answering receipt-json))
                   (jsexpr->receipt receipt-json))

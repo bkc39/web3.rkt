@@ -13,6 +13,7 @@
   (define a-block (hasheq 'number "0x10" 'hash (filled-hash #\b) 'transactions '()))
   (define a-transaction (hasheq 'hash (filled-hash #\a) 'nonce "0x0"))
   (define a-receipt (jsexpr->receipt receipt-json))
+  (define receipt-hash (hash-ref receipt-json 'transactionHash))
   (define a-log (hasheq 'address addr 'topics '() 'data "0x"))
   (define a-tx (hasheq 'from addr 'to addr 'data "0x"))
   (define a-query (hasheq 'address addr 'fromBlock "earliest"))
@@ -32,7 +33,7 @@
                       "eth_getProof" (,addr (,zero-word ,word-255) "latest") ,a-proof ,a-proof]
       [,eth-get-block-by-hash ("0xbb" #t) "eth_getBlockByHash" ("0xbb" #t) ,a-block ,a-block]
       [,eth-get-block-receipts (16) "eth_getBlockReceipts" ("0x10") (,receipt-json) (,a-receipt)]
-      [,eth-get-transaction-receipt ("0xaa") "eth_getTransactionReceipt" ("0xaa")
+      [,eth-get-transaction-receipt (,receipt-hash) "eth_getTransactionReceipt" (,receipt-hash)
                                     ,receipt-json ,a-receipt]
       [,eth-get-block-receipts ("safe") "eth_getBlockReceipts" ("safe") () ()]
       [,eth-get-transaction-by-block-hash-and-index

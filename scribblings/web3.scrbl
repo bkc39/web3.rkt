@@ -780,7 +780,8 @@ response's @tt{result}.  Raises @racket[exn:fail:web3] when
          #:grammar ([arg-spec contract-expr
                               [contract-expr ->param-expr]]
                     [maybe-transform (code:line)
-                                     (code:line #:result-transform transform-expr)])]{
+                                     (code:line #:result-transform transform-expr)
+                                     (code:line #:result-transform/arguments transform-expr)])]{
 
 Defines a function for the JSON-RPC method @racket[rpc-name], named
 after it in kebab-case (@racket[eth_getBalance] defines
@@ -796,7 +797,9 @@ the JSON parameter.  The response's @tt{result} goes through
 @racket[transform-expr] raises on or that fails the contract raises
 @racket[exn:fail:web3] with the message
 @racket["method: unexpected result value"], unless @racket[transform-expr] raises
-@racket[exn:fail:web3] itself, which is raised as it is.
+@racket[exn:fail:web3] itself, which is raised as it is.  With
+@racket[#:result-transform/arguments], @racket[transform-expr] is applied to the result and the
+function's positional arguments, before their conversion.
 
 @racketblock[
 (define-jsonrpc-endpoint eth_getBalance

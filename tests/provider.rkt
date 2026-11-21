@@ -212,6 +212,26 @@
     (check-pred exn:fail:web3? unexpected)
     (check-equal? (exn-message unexpected) "eth_getUncleCountByBlockHash: unexpected result 'null"))
 
+  (define-jsonrpc-endpoint eth_getUncleByBlockNumberAndIndex
+    (-> [exact-nonnegative-integer? number->hex-string] [exact-nonnegative-integer? number->hex-string]
+        (list/c string? exact-nonnegative-integer? exact-nonnegative-integer?))
+    #:result-transform/arguments list)
+
+  (test-case "a transform by arguments sees the result and the arguments before conversion"
+    (define p (mock-provider (hash "eth_getUncleByBlockNumberAndIndex" "0xaa")))
+    (check-equal? (eth-get-uncle-by-block-number-and-index 16 3 #:provider p) '("0xaa" 16 3))
+    (check-equal? (mock-provider-calls p) '(("eth_getUncleByBlockNumberAndIndex" "0x10" "0x3"))))
+
+  (test-case "an endpoint takes one result transform"
+    (check-exn exn:fail:syntax?
+               (lambda ()
+                 (parameterize ([current-namespace (make-base-namespace)])
+                   (eval '(module two-transforms racket/base
+                            (require web3/rpc)
+                            (define-jsonrpc-endpoint eth_foo (-> string?)
+                              #:result-transform values
+                              #:result-transform/arguments values)))))))
+
   (define endpoint-modules
     '((module endpoints racket/base
         (require web3)

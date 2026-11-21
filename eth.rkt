@@ -87,10 +87,10 @@
 (define (quantity->number v)
   (and (node-quantity? v) (node-quantity->number 'quantity->number "quantity" v)))
 
-(define ((nullable reader who shape?) v)
+(define ((nullable reader who shape?) v . arguments)
   (cond
     [(eq? v 'null) #f]
-    [(shape? v) (reader who v)]
+    [(shape? v) (apply reader who (append arguments (list v)))]
     [else v]))
 
 (define receipts-field (list-field (record-field jsexpr->receipt/who receipt?)))
@@ -182,7 +182,7 @@
   #:result-transform signed-transaction-result)
 (define-jsonrpc-endpoint eth_getTransactionByHash (-> hex-string? (or/c 'null hash?)))
 (define-jsonrpc-endpoint eth_getTransactionReceipt (-> hex-string? (or/c #f receipt?))
-  #:result-transform (nullable jsexpr->receipt/who "eth_getTransactionReceipt" hash?))
+  #:result-transform/arguments (nullable jsexpr->receipt-of "eth_getTransactionReceipt" hash?))
 (define-jsonrpc-endpoint eth_getRawTransactionByHash
   (-> hex-string? (or/c 'null hex-data-string?))
   #:result-transform empty-data->null)

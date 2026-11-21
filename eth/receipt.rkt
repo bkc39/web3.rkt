@@ -3,7 +3,7 @@
 (require racket/contract/base
          (only-in racket/match match)
          "../private/exn.rkt"
-         (only-in "../private/node.rkt" raise-node-malformed raise-node-missing)
+         (only-in "../private/node.rkt" raise-node-missing)
          "../private/record.rkt"
          (only-in "log.rkt" log?)
          (only-in (submod "log.rkt" internal) jsexpr->log/who))
@@ -54,10 +54,9 @@
 
 (define (jsexpr->receipt-of who tx-hash v [detail ""])
   (define receipt (jsexpr->receipt/who who v detail))
-  (define received (receipt-transaction-hash receipt))
-  (if (equal? received (string-downcase tx-hash))
-      receipt
-      (raise-node-malformed who (string-append "receipt transaction hash" detail) received)))
+  (check-asked-hash who (string-append "receipt transaction hash" detail) tx-hash
+                    (receipt-transaction-hash receipt))
+  receipt)
 
 (module* internal #f
   (provide jsexpr->receipt-of
