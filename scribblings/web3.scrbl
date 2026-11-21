@@ -4,6 +4,8 @@
                     racket/base
                     racket/contract
                     racket/generic
+                    racket/match
+                    racket/runtime-path
                     web3
                     web3/abi
                     web3/account
@@ -37,6 +39,9 @@
 @(define transaction-eval (make-base-eval '(require web3)))
 @(define signer-eval (make-base-eval '(require web3)))
 @(define send-eval (make-base-eval '(require web3)))
+@(define provider-guide-eval (make-base-eval '(require racket/generic racket/match web3)))
+@(define abi-guide-eval (make-base-eval '(require web3)))
+@(define event-guide-eval (make-base-eval '(require web3)))
 
 @(define-syntax-parse-rule (defproc/filling (name:id positional ...) result:expr body ...)
    (defproc (name positional ...
@@ -121,6 +126,358 @@ reverts carry their payload in @racket[exn:fail:web3:rpc-data], which
 as documented raises @racket[exn:fail:web3].
 
 @section[#:tag "guide"]{Guide}
+
+@subsection[#:tag "guide-providers"]{Providers and Calls}
+
+A provider is a connection to a node: @racket[url->http-provider] makes one from the node's URL,
+and @racket[with-anvil] starts a local node and makes its provider the @racket[current-provider]
+while its body runs.  Every endpoint takes a @racket[#:provider] argument and otherwise uses the
+current one.
+
+@racket[define-jsonrpc-endpoint] defines an endpoint for a method this library lacks, with
+contracts on its arguments and a conversion of its result.  An error response raises
+@racket[exn:fail:web3:rpc], which holds the node's code, message and data.
+
+@racketblock[
+(define-jsonrpc-endpoint eth_getUncleCountByBlockNumber
+  (-> [exact-nonnegative-integer? number->hex-string] exact-nonnegative-integer?)
+  #:result-transform hex-string->number)
+
+(define (print-rpc-error e)
+  (printf "refused ~a: ~a\n" (exn:fail:web3:rpc-code e) (exn:fail:web3:rpc-rpc-message e)))]
+
+Endpoints return decoded values, and @racket[rpc-call] sends any method and returns its result as
+the node wrote it, here @racket["0x7a69"].  A method the node lacks is refused with code
+@racket[-32601].
+
+@racketblock[
+(with-anvil ()
+  (printf "chain id ~a\n" (eth-chain-id))
+  (printf "block ~a\n" (eth-block-number))
+  (printf "eth_chainId ~s\n" (rpc-call "eth_chainId" '()))
+  (printf "uncles in block 0: ~a\n" (eth-get-uncle-count-by-block-number 0))
+  (with-handlers ([exn:fail:web3:rpc? print-rpc-error])
+    (rpc-call "eth_noSuchMethod" '())))]
+
+See @filepath{examples/00-provider.rkt}.
+
+@subsection[#:tag "guide-chain-state"]{Chain State}
+
+Quantities are exact integers: balances in wei, nonces, gas and block numbers.  Addresses, hashes
+and data are @racket["0x..."] strings, and blocks, transactions and receipts are the node's JSON
+as hash tables, as in @secref["Conventions"].
+
+A node such as anvil holds keys for its accounts and signs for them.
+@racket[eth-send-transaction] sends a transaction from one of them and returns its hash, and
+@racket[wait-for-receipt] returns its receipt once it is mined.  Each transaction a sender sends
+uses its next nonce.
+
+@racketblock[
+(define (print-accounts alice bob)
+  (printf "alice nonce ~a, bob ~a ether\n"
+          (eth-get-transaction-count alice "latest")
+          (wei->string (eth-get-balance bob "latest"))))]
+
+Here alice sends bob one ether: bob's balance goes from 10000 to 10001 ether, and alice's nonce
+from 0 to 1.
+
+@racketblock[
+(with-anvil ()
+  (match-define (list alice bob _ ...) (eth-accounts))
+  (print-accounts alice bob)
+  (define tx-hash
+    (eth-send-transaction
+     (hasheq 'from alice 'to bob 'value (number->hex-string (ether->wei 1)))))
+  (define receipt (wait-for-receipt tx-hash))
+  (printf "block ~a, gas used ~a, succeeded ~a\n"
+          (hex-string->number (hash-ref receipt 'blockNumber))
+          (hex-string->number (hash-ref receipt 'gasUsed))
+          (receipt-succeeded? receipt))
+  (print-accounts alice bob))]
+
+Blocks, transactions, code and storage are read the same way; @secref["Ethereum_Endpoints"]
+lists the endpoints.  A transaction signed here, not by the node, is sent as in
+@secref["guide-sending"].
+
+See @filepath{examples/01-chain-state.rkt}.
+
+@subsection[#:tag "guide-anvil"]{Local Nodes}
+
+@racket[with-anvil] runs its body against a fresh anvil and stops it afterwards; its accounts
+start with 10000 ether each.  anvil's own methods set up state directly: the code and balance of
+any address, its storage, sends from an address whose key nobody holds, and snapshots of the
+whole chain to go back to.
+
+Here the code @racket[store-calldata-code] stores its call data in slot 0.
+
+@racketblock[
+(define contract "0x00000000000000000000000000000000000c0de0")
+(define stranger "0x000000000000000000000000000000000000beef")
+(define store-calldata-code "0x5f355f5500")
+
+(define (stored-value)
+  (hex-string->number (eth-get-storage-at contract 0 "latest")))]
+
+The stranger, funded and impersonated, sends 7 to the contract, which stores it; reverting to the
+snapshot taken before undoes the send, and slot 0 holds 0 again.
+
+@racketblock[
+(with-anvil ()
+  (anvil-set-code contract store-calldata-code)
+  (anvil-set-balance stranger (ether->wei 1))
+  (define snapshot (evm-snapshot))
+  (anvil-impersonate-account stranger)
+  (define receipt
+    (send-transaction/receipt
+     (hasheq 'from stranger 'to contract 'data (bytes->hex-string (word->bytes 7)))))
+  (anvil-stop-impersonating-account stranger)
+  (printf "sent from ~a, stored ~a\n" (hash-ref receipt 'from) (stored-value))
+  (evm-revert snapshot)
+  (printf "reverted, stored ~a\n" (stored-value)))]
+
+@secref["Local_Nodes_with_anvil"] has the rest of anvil's methods.
+
+See @filepath{examples/02-anvil.rkt}.
+
+@subsection[#:tag "guide-custom-providers"]{Writing a Provider}
+
+Anything implementing @racket[gen:provider] is a provider, so one can wrap another to log, cache
+or retry its requests.  @racket[mock-provider] answers from a table instead of a node, which tests
+code that calls a node without one.  An entry is a result, or a procedure of the request's params;
+@racket[raise-rpc-error] answers with an error, as a node does.
+
+@examples[#:eval provider-guide-eval
+          (struct logging (inner)
+            #:methods gen:provider
+            [(define/generic inner-request provider-request)
+             (define/generic inner-close provider-close)
+             (define (provider-request provider method params)
+               (printf "request ~a\n" method)
+               (inner-request (logging-inner provider) method params))
+             (define (provider-close provider)
+               (inner-close (logging-inner provider)))])]
+
+The mock holds one balance and refuses every call.  A method its table lacks raises
+@racket[exn:fail:web3:rpc] with code @racket[-32601].
+
+@examples[#:eval provider-guide-eval
+          (define alice "0x00000000000000000000000000000000000a11ce")
+          (define token "0x00000000000000000000000000000000000c0de0")
+          (define balances (hash alice "0xde0b6b3a7640000"))
+          (define node
+            (mock-provider
+             (hash "eth_chainId" "0x7a69"
+                   "eth_getBalance" (match-lambda
+                                      [(list address _block) (hash-ref balances address "0x0")])
+                   "eth_call" (match-lambda
+                                [(list _call _block)
+                                 (raise-rpc-error "eth_call" 3 "execution reverted" "0x")]))))]
+
+Every request through the wrapper is logged, then answered by the mock, which records it.
+
+@examples[#:eval provider-guide-eval
+          (with-provider (logging node)
+            (printf "chain id ~a\n" (eth-chain-id))
+            (printf "balance ~a ether\n" (wei->string (eth-get-balance alice "latest")))
+            (with-handlers ([exn:fail:web3:rpc?
+                             (lambda (e) (printf "refused: ~a\n" (exn-message e)))])
+              (eth-call (hasheq 'to token 'data "0x") "latest")))
+          (printf "the mock answered ~a requests\n" (length (mock-provider-calls node)))]
+
+See @filepath{examples/03-custom-providers.rkt}.
+
+@subsection[#:tag "guide-abi"]{Encoding and Decoding}
+
+A contract is called with call data: a four-byte selector, from the Keccak-256 hash of the
+function's canonical signature, then the arguments in the contract ABI's encoding.  Types are
+written as Solidity writes them, as s-expressions, or as @secref["ABI_Types"] structs.
+@racket[encode-call] encodes a call.  A string or an array is written after the fixed-size words,
+which hold its offset: for @tt{submit}, the string's offset, the array's, the string's length and
+bytes, then the array's length and elements.
+
+@examples[#:eval abi-guide-eval
+          (define calls
+            `(("transfer(address, uint)" "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+               ,(ether->wei 1))
+              ("submit(string,uint256[])" "hello" (1 2))))
+          (define (print-call signature . arguments)
+            (define data (apply encode-call signature arguments))
+            (printf "~a\n" (abi-signature->string (string->abi-signature signature)))
+            (printf "  selector ~a\n" (bytes->hex-string (function-selector signature)))
+            (for ([word (in-list (bytes->words (subbytes data 4)))])
+              (printf "  ~a\n" (bytes->hex-string (word->bytes word)))))
+          (for ([call (in-list calls)])
+            (apply print-call call))]
+
+See @filepath{examples/04-abi-encode.rkt}.
+
+Decoding goes the other way.  @racket[decode-result] reads what @racket[eth-call] returns, given
+the function's outputs, and @racket[decode-call] reads call data back into its arguments.  A
+revert's data is decoded by @racket[decode-revert]: @tt{Error(string)}, @tt{Panic(uint256)}, and
+the contract's own errors given in @racket[#:errors].  A call that reverts raises
+@racket[exn:fail:web3:rpc] with that data, which @racket[rpc-exn->revert] decodes the same way.
+
+@examples[#:eval abi-guide-eval
+          (define token-info "info()(string,uint256)")
+          (define transfer "transfer(address,uint256)")
+          (define errors '("InsufficientBalance(uint256,uint256)"))
+          (define result (abi-encode '(string uint256) '("Token" 1000)))
+          (define call-data
+            (encode-call transfer "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" 250))
+          (define reverts
+            (list (encode-call "Error(string)" "not the owner")
+                  (encode-call "Panic(uint256)" #x11)
+                  (encode-call "InsufficientBalance(uint256,uint256)" 250 1000)))
+          (printf "result ~s\n" (decode-result token-info result))
+          (printf "call ~s\n" (decode-call transfer call-data))
+          (for ([data (in-list reverts)])
+            (printf "revert ~a\n" (abi-revert->string (decode-revert data #:errors errors))))]
+
+What a node returns is untrusted: anything that is not an encoding raises
+@racket[exn:fail:web3:abi:decode].
+
+@examples[#:eval abi-guide-eval
+          (with-handlers ([exn:fail:web3:abi:decode?
+                           (lambda (e) (printf "refused: ~a\n" (exn-message e)))])
+            (decode-call transfer (subbytes call-data 0 36)))]
+
+See @filepath{examples/05-abi-decode.rkt}.
+
+@subsection[#:tag "guide-contracts"]{Contracts}
+
+@racket[deploy-contract] sends a contract's init code with its constructor's arguments and
+returns the new contract's address.  @racket[contract-call] calls a function without sending a
+transaction and returns its outputs, one value each; @racket[contract-send] sends a transaction
+from @racket[current-account], or @racket[#:from], and returns its receipt once mined.  A function
+is named by its signature, with its outputs for a call.  @racket[file->contract-abi] reads a
+compiled artifact, which holds the init code.
+
+A send is estimated first, so one that would revert raises @racket[exn:fail:web3:rpc:revert] and
+is not sent; one mined and failed raises @racket[exn:fail:web3:transaction].  Either way
+@racket[exn->abi-revert] gives the revert, decoded with the errors given as @racket[#:errors].
+
+@racketblock[
+(define-runtime-path token-artifact "contracts/out/Token.sol/Token.json")
+
+(define init-code (contract-abi-bytecode (file->contract-abi token-artifact)))
+(define transfer "transfer(address,uint256)")
+(define errors '("InsufficientBalance(uint256,uint256)"))
+
+(define (print-refusal e)
+  (printf "refused: ~a\n" (abi-revert->string (exn->abi-revert e))))]
+
+Alice deploys the token, which gives her all 1000 tokens, and sends bob 250.  Bob then tries to
+send alice 1000, more than he holds: the estimate reverts with @tt{InsufficientBalance(250, 1000)}
+and nothing is sent.
+
+@racketblock[
+(with-anvil ()
+  (match-define (list alice bob _ ...) (eth-accounts))
+  (parameterize ([current-account alice])
+    (define token
+      (deploy-contract init-code "constructor(string,string,uint256)" "Token" "TOK" 1000))
+    (printf "~a at ~a\n" (contract-call token "name()(string)") token)
+    (define receipt (contract-send token transfer bob 250))
+    (printf "transfer succeeded ~a\n" (receipt-succeeded? receipt))
+    (printf "balances ~s\n"
+            (contract-call token "balancesOf(address[])(uint256[])" (list alice bob)))
+    (with-handlers ([exn:fail:web3? print-refusal])
+      (contract-send token transfer alice 1000 #:from bob #:errors errors))))]
+
+A contract's ABI read once, with a procedure per function, is @secref["guide-bindings"].
+
+See @filepath{examples/06-deploy-and-call.rkt}.
+
+@subsection[#:tag "guide-events"]{Events}
+
+A contract logs what it does as events.  An event is written as Solidity declares it; its topic
+0, the hash of its signature, picks its logs out.
+
+@racket[decode-log] reads a log as an event, whose arguments @racket[event-log-ref] gives by
+name.  The token that logs here is deployed as in @secref["guide-contracts"].
+
+@racketblock[
+(define-runtime-path token-artifact "contracts/out/Token.sol/Token.json")
+
+(define init-code (contract-abi-bytecode (file->contract-abi token-artifact)))
+(define transfer "transfer(address,uint256)")]
+
+@examples[#:eval event-guide-eval
+          (define transfer-event
+            (string->abi-event
+             "event Transfer(address indexed from, address indexed to, uint256 value)"))
+          (define (print-transfer entry)
+            (printf "  ~a -> ~a ~a\n"
+                    (event-log-ref entry 'from) (event-log-ref entry 'to)
+                    (event-log-ref entry 'value)))]
+
+@racket[receipt-logs] gives a receipt's logs, and @racket[get-logs] fetches the logs a
+@racket[log-filter] matches: from an address, of an event, with given values of its indexed
+arguments.  The token's deploy is a transfer from the zero address, so every transfer is three
+here, and one of them is to bob.
+
+@racketblock[
+(with-anvil ()
+  (match-define (list alice bob carol _ ...) (eth-accounts))
+  (parameterize ([current-account alice])
+    (define token
+      (deploy-contract init-code "constructor(string,string,uint256)" "Token" "TOK" 1000))
+    (define receipt (contract-send token transfer bob 250))
+    (match-define (list raw) (receipt-logs receipt))
+    (printf "receipt\n")
+    (print-transfer (decode-log transfer-event raw))
+    (contract-send token transfer carol 100)
+    (printf "every transfer\n")
+    (for ([entry (in-list (get-logs (log-filter #:address token #:event transfer-event)))])
+      (print-transfer entry))
+    (printf "to bob\n")
+    (define to-bob (log-filter #:address token #:event transfer-event #:where (hasheq 'to bob)))
+    (for ([entry (in-list (get-logs to-bob))])
+      (print-transfer entry))))]
+
+With @racket[#:chunk], @racket[get-logs] fetches a long range of blocks in requests of that many
+blocks, and halves a request the node refuses as too large.
+
+See @filepath{examples/07-events.rkt}.
+
+@subsection[#:tag "guide-bindings"]{Contract Bindings}
+
+@racket[define-contract] reads a contract's ABI when its module is compiled, from a compiled
+artifact, from Solidity's declarations or from s-expressions, and binds a procedure for each
+function, named as in @secref["binding-contracts"].  Arguments are checked against the ABI before
+anything is sent.
+
+A @tt{view} function's procedure calls it and returns its outputs; any other sends a transaction
+and returns the receipt.  With bytecode, as in an artifact, @racketidfont{-deploy} deploys the
+contract.  Errors decode by name with no @racket[#:errors], and each event is bound with an
+@racketidfont{-event} suffix, which @racket[contract-logs] takes.
+
+@racketblock[
+(define-contract token #:file "contracts/out/Token.sol/Token.json")
+
+(define (print-refusal e)
+  (define revert (exn->abi-revert e))
+  (printf "refused ~a ~s\n" (abi-revert-name revert) (abi-revert-arguments revert)))]
+
+As in @secref["guide-contracts"], bob's transfer of 1000 is refused with
+@tt{InsufficientBalance}, here by name.
+
+@racketblock[
+(with-anvil ()
+  (match-define (list alice bob _ ...) (eth-accounts))
+  (parameterize ([current-account alice])
+    (define gold (token-deploy "Gold" "GLD" 1000))
+    (token-transfer gold bob 250)
+    (printf "~a: alice ~a, bob ~a\n"
+            (token-symbol gold) (token-balance-of gold alice) (token-balance-of gold bob))
+    (with-handlers ([exn:fail:web3? print-refusal])
+      (token-transfer gold alice 1000 #:from bob))
+    (for ([entry (in-list (contract-logs gold token-transfer-event #:where (hasheq 'to bob)))])
+      (printf "transfer to bob ~a\n" (event-log-ref entry 'value)))))]
+
+@racket[contract-instance] binds an ABI read at run time to an address instead.
+
+See @filepath{examples/08-contract-bindings.rkt}.
 
 @subsection[#:tag "guide-accounts"]{Accounts and Signatures}
 

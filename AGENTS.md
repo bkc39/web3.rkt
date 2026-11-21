@@ -45,7 +45,7 @@ bezzle, which pin it as a flake input.
 | `private/node.rkt` | checked conversions of node data (hex, quantities, addresses, hashes, receipt status, optional fields); no JSON or transport modules |
 | `private/who.rkt` | `define/who`, which defines `name` and `name/who`, the same procedure taking the `who` its messages start with |
 | `anvil.rkt` | anvil's methods and process management |
-| `examples/` | numbered scripts (`NN-name.rkt`) for reading and for the REPL |
+| `examples/` | numbered programs (`NN-name.rkt`), each with a `main` submodule; `common.rkt` reads the compiled fixture contracts for the tests |
 
 ## Commands
 
@@ -72,10 +72,12 @@ the `racket-deps` hash in `flake.nix` (the build prints the new one).
 - Fixture contracts live in `examples/contracts/`.  After editing a `.sol`,
   run `racket tests/generate-contracts.rkt` in the dev shell;
   `tests/fixtures.rkt` fails when sources and artifacts disagree.
-- Every user-visible feature has an example.  A new example takes the next
-  number, gets a row in `examples/README.md`, and is run by
-  `tests/examples.rkt`, or, for a program with a `main` submodule, by its
-  own `tests/examples/NN-name.rkt`.
+- Every user-visible feature has a test and a reference entry.  Each area of
+  the library has an example: a short program, one flow, whose `main`
+  submodule prints a few lines; a Guide subsection that describes it, shows
+  its code and names the file; a row in `examples/README.md`; and its own
+  `tests/examples/NN-name.rkt`, which checks what `main` prints.  A new
+  example takes the next number.
 - Errors a caller can meet are `exn:fail:web3` or a subtype, or
   libsecp256k1's `exn:fail:libsecp256k1:load`, which passes through
   unchanged.  No error shows a secret key or the text it was read from.

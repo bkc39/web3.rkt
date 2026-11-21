@@ -1,22 +1,31 @@
 #lang racket/base
 
-;; Runs every numbered script in examples/ against its own anvil, so the
-;; examples keep working.  Skipped when anvil is not available.
+(module ambient racket/base
+  (require racket/tcp
+           web3)
+  (module+ main
+    (define listener (tcp-listen 0 4 #t "127.0.0.1"))
+    (define-values (_host port _peer-host _peer-port) (tcp-addresses listener #t))
+    (printf "~a\n~a\n~a\n" port (current-provider) (current-account))))
 
 (module+ test
-  (require racket/list
-           racket/port
+  (require racket/file
+           racket/list
+           racket/match
            racket/runtime-path
-           racket/string
+           (only-in racket/string string-split)
+           (only-in racket/tcp tcp-connect)
            rackunit
-           web3
-           "../examples/common.rkt")
+           syntax/location
+           (only-in web3 current-account current-provider mock-provider with-provider)
+           (only-in "helpers/examples.rkt" example-lines module-output))
 
   (define-runtime-path examples-dir "../examples")
   (define-runtime-path example-tests-dir "examples")
 
   (define (example-number name)
-    (string->number (cadr (regexp-match #px"^([0-9]{2})-" name))))
+    (match (regexp-match #px"^([0-9]{2})-" name)
+      [(list _ digits) (string->number digits)]))
 
   (define example-names
     (sort (for/list ([p (in-list (directory-list examples-dir))]
@@ -24,94 +33,39 @@
             (path->string p))
           string<?))
 
-  (define (program? name)
-    (module-declared? `(submod (file ,(path->string (build-path examples-dir name))) main) #t))
+  (define (main-submodule name)
+    `(submod (file ,(path->string (build-path examples-dir name))) main))
 
-  (define-values (program-names script-names) (partition program? example-names))
-
-  (define (run-example name)
-    (define custodian (make-custodian))
-    (dynamic-wind
-      void
-      (lambda ()
-        (with-output-to-string
-          (lambda ()
-            (parameterize ([current-custodian custodian]
-                           [current-provider #f]
-                           [current-account #f])
-              (dynamic-require (build-path examples-dir name) #f)))))
-      (lambda () (custodian-shutdown-all custodian))))
+  (define (base-name name)
+    (regexp-replace #rx"[.]rkt$" name ""))
 
   (test-case "examples are numbered 00, 01, ... without gaps"
+    (check-not-equal? example-names '())
     (check-equal? (map example-number example-names)
                   (range (length example-names))))
 
-  (test-case "every program has its own test"
-    (check-not-equal? program-names '())
-    (for ([name (in-list program-names)])
-      (check-true (file-exists? (build-path example-tests-dir name)) name)))
+  (test-case "every example is a program with a main submodule"
+    (for ([name (in-list example-names)])
+      (check-true (module-declared? (main-submodule name) #t) name)))
 
-  (test-case "show indents the continuation lines of an expression"
-    (define lines
-      (string-split (with-output-to-string
-                      (lambda ()
-                        (show (string-length
-                               (string-append "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                                              "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-                                              "cccccccccccccccccccccccccccccc")))))
-                    "\n"))
-    (check-regexp-match #rx"^> [(]string-length$" (first lines))
-    (check-true (> (length lines) 2))
-    (for ([line (in-list (drop-right (rest lines) 1))])
-      (check-regexp-match #rx"^   " line))
-    (check-equal? (last lines) "90"))
+  (test-case "every example has its own test, which names it"
+    (for ([name (in-list example-names)])
+      (define test-file (build-path example-tests-dir name))
+      (check-true (and (file-exists? test-file)
+                       (regexp-match? (regexp-quote (format "\"~a\"" (base-name name)))
+                                      (file->string test-file)))
+                  name)))
 
-  (test-case "show-error prints the exception's name and message as comment lines"
-    (define out
-      (with-output-to-string
-        (lambda ()
-          (show-error (raise-user-error 'f "first\n  second")))))
-    (check-equal? out "> (raise-user-error 'f \"first\\n  second\")\n; exn:fail:user\n; f: first\n;   second\n"))
+  (test-case "an example's output is the same each time it runs"
+    (define first-run (example-lines "04-abi-encode"))
+    (check-not-equal? first-run '())
+    (check-equal? (example-lines "04-abi-encode") first-run))
 
-  (test-case "show-error #:as binds the exception"
-    (define out
-      (with-output-to-string
-        (lambda ()
-          (show-error (error 'g "boom") #:as e)
-          (check-equal? (exn-message e) "g: boom"))))
-    (check-equal? out "> (error 'g \"boom\")\n; exn:fail\n; g: boom\n"))
-
-  (test-case "show-error replaces each run of control characters in a line with an ellipsis"
-    (define out
-      (with-output-to-string
-        (lambda ()
-          (show-error (error 'h "a\0\1b\tc\r\nd\e")))))
-    (check-equal? out "> (error 'h \"a\\u0000\\u0001b\\tc\\r\\nd\\e\")\n; exn:fail\n; h: a…b…c…\n; d…\n"))
-
-  (test-case "show-error drops lines of control characters and a trailing colon before them"
-    (define out
-      (with-output-to-string
-        (lambda ()
-          (show-error (error 'eth_call "execution reverted: custom error 0xcf479181: \0\0\1\n\0\5")))))
-    (check-equal? (member "; exn:fail" (string-split out "\n" #:trim? #f))
-                  '("; exn:fail" "; eth_call: execution reverted: custom error 0xcf479181" "")))
-
-  (test-case "show-error shows a syntax error its expression raises when it expands"
-    (define out
-      (with-output-to-string
-        (lambda ()
-          (show-error (let ())))))
-    (check-equal? (take (string-split out "\n") 3)
-                  '("> (let ())" "; exn:fail:syntax" "; let: bad syntax (missing binding pairs or body)")))
-
-  (test-case "show-error fails when nothing is raised"
-    (check-exn #rx"^show-error: 1 raised no exception$"
-               (lambda () (with-output-to-string (lambda () (show-error 1))))))
-
-  (cond
-    [(not (current-anvil-path))
-     (displayln "skipping examples: anvil not found (set WEB3_ANVIL or use `nix develop`)")]
-    [else
-     (for ([name (in-list script-names)])
-       (test-case name
-         (check-regexp-match #rx"^\n;;;; " (run-example name))))]))
+  (test-case "main runs with no provider or account, and what it opens is closed after"
+    (match-define (list port provider account)
+      (parameterize ([current-account "0x00000000000000000000000000000000000a11ce"])
+        (with-provider (mock-provider (hash))
+          (string-split (module-output (quote-module-path ".." ambient main)) "\n"))))
+    (check-equal? (list provider account) '("#f" "#f"))
+    (check-exn exn:fail:network?
+               (lambda () (tcp-connect "127.0.0.1" (string->number port))))))

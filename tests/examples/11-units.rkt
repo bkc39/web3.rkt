@@ -1,9 +1,8 @@
 #lang racket/base
 
 (module+ test
-  (require racket/port
-           (only-in racket/string string-join)
-           rackunit)
+  (require rackunit
+           (only-in "../helpers/examples.rkt" example-lines))
 
   (define expected
     '("value 1500000000000000000 wei"
@@ -15,6 +14,4 @@
       "\"\": ether->wei: not a decimal number: no digits"))
 
   (test-case "main prints amounts in wei and ether, a token amount, and three refusals"
-    (check-equal? (with-output-to-string
-                    (lambda () (dynamic-require '(submod web3/examples/11-units main) #f)))
-                  (string-append (string-join expected "\n") "\n"))))
+    (check-equal? (example-lines "11-units") expected)))

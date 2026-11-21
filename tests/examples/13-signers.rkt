@@ -1,11 +1,10 @@
 #lang racket/base
 
 (module+ test
-  (require racket/port
-           (only-in racket/string string-join)
+  (require (only-in racket/string string-split)
            rackunit
-           (only-in web3 current-anvil-path)
            (only-in web3/rpc hex-string->bytes)
+           (only-in "../helpers/examples.rkt" example-output example-tests)
            (only-in "../helpers/secrets.rkt" check-no-leak))
 
   (define key
@@ -20,16 +19,11 @@
                                          "917061e67f88c7843aa77833e2")))])
       line))
 
-  (cond
-    [(not (current-anvil-path))
-     (displayln "skipping example 13: anvil not found")]
-    [else
-     (define output
-       (with-output-to-string
-         (lambda () (dynamic-require '(submod web3/examples/13-signers main) #f))))
+  (example-tests "13-signers" #:anvil
+    (define output (example-output "13-signers"))
 
-     (test-case "X1: both signers' signatures verify, and they sign the same transaction"
-       (check-equal? output (string-append (string-join expected "\n") "\n")))
+    (test-case "X1: both signers' signatures verify, and they sign the same transaction"
+      (check-equal? (string-split output "\n") expected))
 
-     (test-case "X2: the output shows no part of the key"
-       (check-no-leak output #:secret key))]))
+    (test-case "X2: the output shows no part of the key"
+      (check-no-leak output #:secret key))))

@@ -163,6 +163,23 @@
     (check-equal? (unexpected (lambda () (eth-gas-price #:provider p)))
                   "eth_gasPrice: unexpected result \"10\""))
 
+  (define-jsonrpc-endpoint eth_getUncleCountByBlockNumber
+    (-> [exact-nonnegative-integer? number->hex-string] exact-nonnegative-integer?)
+    #:result-transform hex-string->number)
+
+  (test-case "a defined endpoint converts its arguments and its result"
+    (define p (mock-provider (hash "eth_getUncleCountByBlockNumber" "0x2")))
+    (check-equal? (eth-get-uncle-count-by-block-number 16 #:provider p) 2)
+    (check-equal? (with-provider p (eth-get-uncle-count-by-block-number 0)) 2)
+    (check-equal? (mock-provider-calls p)
+                  '(("eth_getUncleCountByBlockNumber" "0x10")
+                    ("eth_getUncleCountByBlockNumber" "0x0"))))
+
+  (test-case "closing a mock does nothing, and it answers after"
+    (define p (mock-provider (hash "eth_chainId" "0x7a69")))
+    (check-equal? (provider-close p) (void))
+    (check-equal? (eth-chain-id #:provider p) 31337))
+
   (cond
     [(not (current-anvil-path))
      (displayln "skipping provider anvil test: anvil not found (set WEB3_ANVIL or use `nix develop`)")]

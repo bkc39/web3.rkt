@@ -20,6 +20,10 @@
     "error InsufficientBalance(uint256 have, uint256 want)")
   (define-contract counter #:file "../examples/contracts/out/Counter.sol/Counter.json")
   (define-contract events #:file "../examples/contracts/out/Events.sol/Events.json")
+  (define-contract sexp-counter
+    (function count () #:view #:returns ([#f uint256]))
+    (function increment ())
+    #:bytecode (contract-abi-bytecode counter))
 
   (define bezzle-items
     '((function balanceOf ([#f address]) #:view #:returns ([#f uint256]))
@@ -68,6 +72,17 @@
                               (contract-logs (contract-instance token gold) 'Transfer))
                          '(1000000 250)))
 
+         (test-case "a bound event filters get-logs, and contract-logs takes any of several values"
+           (define to-bob (get-logs (log-filter #:address gold #:event token-transfer-event
+                                                #:where (hasheq 'to anvil-bob))))
+           (check-equal? (map (lambda (l) (event-log-ref l 'value)) to-bob) '(250))
+           (check-equal? to-bob
+                         (contract-logs gold token-transfer-event #:where (hasheq 'to anvil-bob)))
+           (check-equal? (map (lambda (l) (event-log-ref l 'to))
+                              (contract-logs gold token-transfer-event
+                                             #:where (hasheq 'to (any-of anvil-alice anvil-bob))))
+                         (list anvil-alice anvil-bob)))
+
          (test-case "custom errors decode by name with no #:errors"
            (define carol-nonce (nonce anvil-carol))
            (check-reverts (lambda () (token-transfer gold anvil-alice 1 #:from anvil-carol))
@@ -99,6 +114,9 @@
            (define tally (counter-deploy))
            (counter-increment tally)
            (check-equal? (counter-count tally) 1)
+           (define sexp-tally (sexp-counter-deploy))
+           (sexp-counter-increment sexp-tally)
+           (check-equal? (sexp-counter-count sexp-tally) 1)
            (define e (events-deploy))
            (define flagged (events-flags e #t -1 #"abc"))
            (check-equal? (map event-log-arguments (receipt-logs flagged #:events (list events-flags-event)))
