@@ -40,7 +40,28 @@
         (void)]
        [(fill-transaction signer recipient #:type 2 #:provider legacy-node)
         (raises ,(string-append "fill-transaction: no base fee: the latest block has no base fee, "
-                                "so a type 2 transaction needs #:max-fee-per-gas"))])))
+                                "so a type 2 transaction needs #:max-fee-per-gas"))])
+      ([(define node-account
+          (mock-provider
+           (hash "eth_estimateGas" "0x5208"
+                 "eth_sendTransaction"
+                 "0x353911be23e52e6b62f32b2323be63d06541c4ab17382cde9ff87b3174c3c9f6")))
+        (void)]
+       [(send-transaction "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" recipient
+                          #:value (ether->wei "1.5") #:provider node-account)
+        (value "0x353911be23e52e6b62f32b2323be63d06541c4ab17382cde9ff87b3174c3c9f6")]
+       [(mock-provider-calls node-account)
+        (value (("eth_estimateGas"
+                 #hasheq((from . "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")
+                         (to . "0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
+                         (data . "0x")
+                         (value . "0x14d1120d7b160000")))
+                ("eth_sendTransaction"
+                 #hasheq((from . "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")
+                         (to . "0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
+                         (data . "0x")
+                         (value . "0x14d1120d7b160000")
+                         (gas . "0x5208")))))])))
 
   (test-case "M1: the manual's sending examples give what the manual shows"
     (check-manual-blocks blocks))

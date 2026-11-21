@@ -441,11 +441,10 @@
   (when (fill-order-chain-id order)
     (node-chain-id who order provider))
   (define gas (filled-gas-limit who order (node-object address to order #f) provider))
+  (define tx (node-object address to order gas))
   (define answer
     (call-raising-reverts errors
-                          (lambda ()
-                            (rpc-call "eth_sendTransaction" (list (node-object address to order gas))
-                                      #:provider provider))))
+                          (lambda () (rpc-call "eth_sendTransaction" (list tx) #:provider provider))))
   (values (node-hash->string who "transaction hash" answer) gas))
 
 (define (send-from-node/receipt who address to order)
