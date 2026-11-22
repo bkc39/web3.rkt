@@ -2,18 +2,16 @@
 
 (require (only-in racket/contract
                   blame-add-context
+                  blame-add-missing-party
                   blame-context
                   blame-contract
                   blame-positive
                   blame-value
                   build-chaperone-contract-property
                   build-compound-type-name
-                  contract-first-order
-                  current-blame-format
                   get/build-late-neg-projection
-                  make-chaperone-contract
-                  prop:chaperone-contract
-                  raise-blame-error)
+                  make-exn:fail:contract:blame
+                  prop:chaperone-contract)
          (only-in racket/match == match match-define)
          (only-in racket/string string-join string-prefix? string-trim)
          (only-in setup/path-to-relative path->relative-string/library)
@@ -23,9 +21,15 @@
          (only-in "signer.rkt" signer?))
 
 (provide address/c
+         address-or/c
+         address-refusal
+         argument/c
+         argument-contract?
          describe-value
          hash-argument/c
-         one-or-more/c)
+         one-or-more/c
+         ordinal
+         register-describer!)
 
 (define (describe-value v)
   (cond
@@ -39,62 +43,94 @@
     [(exact-integer? v) "an exact integer"]
     [(boolean? v) "a boolean"]
     [(symbol? v) "a symbol"]
+    [(null? v) "an empty list"]
     [else "a value of another kind"]))
 
-;; Addresses and hashes are public, so their refusals show the value: one line saying why, then
-;; where, what and whom, never the whole contract.  A string that could hold a secret key, 64 hex
-;; digits in a row, is described instead, and so is every value that is not a string.
-(struct public-contract (name noun accepts? reason)
+;; private/opaque.rkt registers the describer that knows secret and public keys; this module
+;; cannot require libsecp256k1, and any key a caller holds was made after that module ran.
+(define describer describe-value)
+
+(define (register-describer! describe)
+  (set! describer describe))
+
+(define (ordinal i)
+  (case i
+    [(1) "1st"]
+    [(2) "2nd"]
+    [(3) "3rd"]
+    [else (format "~ath" i)]))
+
+;; Addresses and hashes are public, so a refusal shows the value when it is no more than an
+;; address could be: 0x and at most 40 hex digits.  Anything else, which could be a secret key or
+;; the text one was read from, is described.  The one short message says why, then where, what
+;; and whom, never the whole contract.  opaque-> passes these contracts through as they are, and
+;; no other contract that is not flat.
+(struct argument-contract (name noun accepts? reason project)
   #:property prop:chaperone-contract
   (build-chaperone-contract-property
-   #:name (lambda (c) (public-contract-name c))
-   #:first-order (lambda (c) (public-contract-accepts? c))
-   #:late-neg-projection
-   (lambda (c)
-     (match-define (public-contract _ noun accepts? reason) c)
-     (lambda (blame)
-       (lambda (v neg)
-         (if (accepts? v)
-             v
-             (parameterize ([current-blame-format refusal-format])
-               (raise-blame-error blame #:missing-party neg v "not ~a: ~a" noun (reason v)))))))))
+   #:name (lambda (c) (argument-contract-name c))
+   #:first-order (lambda (c) (argument-contract-accepts? c))
+   #:late-neg-projection (lambda (c) ((argument-contract-project c) c))))
+
+(define (refuse blame neg v noun reason)
+  (define complete (blame-add-missing-party blame neg))
+  (define message (refusal-message complete v (format "not ~a: ~a" noun reason)))
+  (raise (make-exn:fail:contract:blame message (current-continuation-marks) complete)))
+
+(define ((refusing c) blame)
+  (match-define (argument-contract _ noun accepts? reason _) c)
+  (lambda (v neg)
+    (if (accepts? v) v (refuse blame neg v noun (reason v)))))
+
+(define (argument/c name noun accepts? reason)
+  (argument-contract name noun accepts? reason refusing))
 
 (define (shown v)
-  (if (and (string? v) (not (regexp-match? #px"[0-9a-fA-F]{64}" v)))
+  (if (and (string? v) (regexp-match? #px"^0x[0-9a-fA-F]{0,40}$" v))
       (format "~s" v)
-      (describe-value v)))
+      (describer v)))
 
 (define (party-text party)
   (if (path? party) (path->relative-string/library party) (format "~a" party)))
 
-;; ->i names an argument by its variable; the keyword it is bound to is in the contract's name.
-(define (argument-label argument contract)
-  (define named (string->symbol argument))
-  (or (let search ([v contract])
-        (match v
-          [(list* (? keyword? kw) (cons (== named) _) _) kw]
-          [(cons head tail) (or (search head) (search tail))]
-          [_ #f]))
-      argument))
+;; ->i names an argument by its variable; its position, or the keyword it is bound to, is in the
+;; mandatory and optional lists of the ->i's own name.
+(define (i-argument-label variable specs)
+  (let search ([specs specs] [position 1])
+    (match specs
+      [(list* (? keyword? kw) (cons (== variable) _) _) kw]
+      [(list* (? keyword?) _ more) (search more position)]
+      [(cons (cons (== variable) _) _) (ordinal position)]
+      [(cons _ more) (search more (add1 position))]
+      [_ #f])))
 
-(define (context-line context contract)
-  (match context
-    [(pregexp #px"^the (.+) argument of$" (list _ argument))
-     (format "argument: ~a" (argument-label argument contract))]
-    [(pregexp #px"^the (.+) field of$" (list _ field)) (format "field: ~a" field)]
-    [_ (format "in: ~a" context)]))
+(define (argument-label argument contract)
+  (match contract
+    [(list* '->i (? list? mandatory) more)
+     (define optional (match more [(cons (? list? specs) _) specs] [_ '()]))
+     (or (i-argument-label (string->symbol argument) (append mandatory optional)) argument)]
+    [_ argument]))
 
 (define (structural? context)
   (or (string-prefix? context "a part of the or/c of")
       (regexp-match? #px"^the [0-9]+(?:st|nd|rd|th) conjunct of$" context)))
 
-(define (refusal-format blame v reason)
-  (define where
-    (for/list ([context (in-list (reverse (blame-context blame)))]
-               #:unless (structural? context))
-      (context-line context (blame-contract blame))))
+;; Only the outermost argument is one of the top contract's own.
+(define (where-lines contexts contract)
+  (let loop ([contexts contexts] [outermost? #t])
+    (match contexts
+      ['() '()]
+      [(cons (? structural?) more) (loop more outermost?)]
+      [(cons (pregexp #px"^the (.+) argument of$" (list _ argument)) more)
+       (cons (format "argument: ~a" (if outermost? (argument-label argument contract) argument))
+             (loop more #f))]
+      [(cons (pregexp #px"^the (.+) field of$" (list _ field)) more)
+       (cons (format "field: ~a" field) (loop more outermost?))]
+      [(cons context more) (cons (format "in: ~a" context) (loop more outermost?))])))
+
+(define (refusal-message blame v reason)
   (define details
-    (append where
+    (append (where-lines (reverse (blame-context blame)) (blame-contract blame))
             (list (format "given: ~a" (shown v))
                   (format "blaming: ~a" (party-text (blame-positive blame))))))
   (string-join (cons (format "~a: ~a" (or (blame-value blame) "contract violation") reason)
@@ -110,24 +146,34 @@
 (define (hash-refusal v)
   (if (string? v) "not 0x and 64 hex digits" "not a string"))
 
-(define address/c (public-contract 'address? "an address" address? address-refusal))
-(define hash-argument/c
-  (public-contract `(and/c string? ,hash-hex-pattern) "a hash" hash-hex-string? hash-refusal))
+(define address/c (argument/c 'address? "an address" address? address-refusal))
 
-(define (one-or-more/c item/c)
-  (define item? (contract-first-order item/c))
-  (define project (get/build-late-neg-projection item/c))
-  (make-chaperone-contract
-   #:name (build-compound-type-name 'or/c item/c (build-compound-type-name 'non-empty-listof item/c))
-   #:first-order (lambda (v) (or (item? v) (and (pair? v) (list? v) (andmap item? v))))
-   #:late-neg-projection
-   (lambda (blame)
-     (define one (project blame))
-     (define each (project (blame-add-context blame "an element of")))
-     (lambda (v neg)
-       (cond
-         [(and (pair? v) (list? v))
-          (for ([item (in-list v)])
-            (each item neg))
-          v]
-         [else (one v neg)])))))
+(define (address-or/c name other? other-noun)
+  (argument/c name (string-append "an address or " other-noun)
+              (lambda (v) (or (address? v) (other? v)))
+              (lambda (v)
+                (if (string? v)
+                    (address-refusal v)
+                    (string-append "neither a string nor " other-noun)))))
+(define hash-argument/c
+  (argument/c `(and/c string? ,hash-hex-pattern) "a hash" hash-hex-string? hash-refusal))
+
+(define (one-or-more/c item/c noun)
+  (match-define (argument-contract _ _ item? item-reason _) item/c)
+  (define (accepts? v)
+    (or (item? v) (and (pair? v) (list? v) (andmap item? v))))
+  (define (reason v)
+    (if (null? v) "the list is empty" (item-reason v)))
+  (define ((project _) blame)
+    (define each ((get/build-late-neg-projection item/c) (blame-add-context blame "an element of")))
+    (lambda (v neg)
+      (cond
+        [(and (pair? v) (list? v))
+         (for ([item (in-list v)])
+           (each item neg))
+         v]
+        [(item? v) v]
+        [else (refuse blame neg v noun (reason v))])))
+  (define name
+    (build-compound-type-name 'or/c item/c (build-compound-type-name 'non-empty-listof item/c)))
+  (argument-contract name noun accepts? reason project))

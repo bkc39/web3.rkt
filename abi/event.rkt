@@ -39,7 +39,8 @@
   [event-log-ref (->i ([el event-log?] [key (el) (event-log-key/c el)]) [_ any/c])]))
 
 (define topic-positions/c
-  (rename-contract (and/c (listof (or/c #f (one-or-more/c hash-argument/c)))
+  (rename-contract (and/c (listof (or/c #f (one-or-more/c hash-argument/c
+                                                          "a hash or a non-empty list of hashes")))
                           (property/c length (<=/c 4)))
                    'topic-positions/c))
 

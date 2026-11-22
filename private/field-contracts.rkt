@@ -2,7 +2,7 @@
 
 (require racket/contract/base
          (only-in "../address.rkt" address?)
-         (only-in "argument.rkt" address/c)
+         (only-in "argument.rkt" address-refusal argument/c)
          (only-in "hex.rkt" hash-hex-string?))
 
 (provide access-list/c
@@ -16,7 +16,9 @@
 (define uint256/c (flat-named-contract 'uint256/c (integer-in 0 (sub1 (expt 2 256)))))
 (define bytes32/c
   (flat-named-contract 'bytes32/c (lambda (v) (and (bytes? v) (= (bytes-length v) 32)))))
-(define to/c (or/c #f address/c))
+(define to/c
+  (argument/c '(or/c #f address?) "an address" (lambda (v) (or (not v) (address? v)))
+              address-refusal))
 (define access-list/c
   (flat-named-contract 'access-list/c (listof (cons/c address? (listof bytes32/c)))))
 (define hash-string/c

@@ -204,8 +204,10 @@ An address argument is an @racket[address?]: @racket["0x"] and 40 hex digits, al
 all uppercase or in their EIP-55 checksum, so a mixed-case address with a wrong checksum is a
 contract violation.  A hash argument is @racket["0x"] and 64 hex digits in either case.
 A refused address or hash raises @racket[exn:fail:contract:blame] whose message names the
-procedure, the argument (and the field of an object), the value and why it is refused; a value
-that could hold a secret key is described, not shown:
+procedure, the argument (and the field of an object), the value and why it is refused.  The
+value is shown only when it is a string of @racket["0x"] and at most 40 hex digits; any other
+value, which could be a secret key or the text one was read from, is described by its kind, such
+as @tt{a secret key} or @tt{a string of 65 characters}:
 
 @examples[#:eval contract-eval #:label #f
 (eval:error (eth-get-balance "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD" "latest"))]

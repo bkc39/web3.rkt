@@ -11,8 +11,8 @@
                   blame-swap
                   build-compound-type-name
                   build-flat-contract-property
-                  chaperone-contract?
                   coerce-flat-contract
+                  contract?
                   contract-name
                   flat-contract?
                   flat-contract-predicate
@@ -24,7 +24,7 @@
          (only-in racket/match match-define match-lambda)
          (only-in racket/string string-join)
          syntax/parse/define
-         (only-in "argument.rkt" describe-value))
+         (only-in "argument.rkt" argument-contract? describe-value ordinal register-describer!))
 
 (provide describe-kind
          digest/c
@@ -38,6 +38,8 @@
     [(secret-key? v) "a secret key"]
     [(public-key? v) "a public key"]
     [else (describe-value v)]))
+
+(register-describer! describe-kind)
 
 (struct opaque-contract (name expected accepts?)
   #:property prop:flat-contract
@@ -62,11 +64,15 @@
 (define message/c
   (opaque-contract 'message/c "a byte string or a string" (lambda (v) (or (bytes? v) (string? v)))))
 
-;; A contract that is not flat, such as one built from address/c, reports by its own projection.
+;; Racket's own combinators report a value by printing it, so a contract that is not flat is
+;; refused here unless private/argument.rkt built it.
 (define (opaque v)
   (cond
     [(opaque-contract? v) v]
-    [(and (chaperone-contract? v) (not (flat-contract? v))) v]
+    [(argument-contract? v) v]
+    [(and (contract? v) (not (flat-contract? v)))
+     (raise-arguments-error 'opaque-> "a contract that is not flat reports by printing values"
+                            "contract" (contract-name v))]
     [else
      (define c (coerce-flat-contract 'opaque-> v))
      (opaque-contract (contract-name c) (format "~a" (contract-name c))
@@ -86,13 +92,6 @@
       "no keyword arguments"
       (string-append (if (null? (cdr kws)) "keyword " "keywords ")
                      (string-join (map (lambda (k) (format "~a" k)) kws) " or "))))
-
-(define (ordinal i)
-  (case i
-    [(1) "1st"]
-    [(2) "2nd"]
-    [(3) "3rd"]
-    [else (format "~ath" i)]))
 
 (define (arity-includes? arity n)
   (if (arity-at-least? arity) (>= n (arity-at-least-value arity)) (= n arity)))
