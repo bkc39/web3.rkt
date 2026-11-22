@@ -99,16 +99,18 @@
     `((#:gas ,(expt 2 64) "#:gas is more than a transaction's 64 bits hold")
       (#:value ,(expt 2 256) "#:value is more than a transaction's 256 bits hold")))
 
-  (test-case "K14: a signer's send refuses what a transaction cannot hold, before any request"
-    (for ([row (in-list width-rows)])
+  (test-case "K14: a send refuses what a transaction cannot hold, before any request"
+    (for* ([from (list signer0 anvil-alice)]
+           [row (in-list width-rows)])
       (match-define (list kw v text) row)
+      (define name (format "~a ~a" from text))
       (define-values (e calls)
         (run-mock node (lambda ()
-                         (call-with-fields contract-send `(#:from ,signer0 ,kw ,v)
+                         (call-with-fields contract-send `(#:from ,from ,kw ,v)
                                            token "transfer(address,uint256)" anvil-bob 1))))
-      (check-true (and (exn:fail:contract? e) (not (exn:fail:contract:blame? e))) text)
-      (check-equal? (exn-message e) (string-append "contract-send: " text))
-      (check-equal? calls '() text)))
+      (check-true (and (exn:fail:contract? e) (not (exn:fail:contract:blame? e))) name)
+      (check-equal? (and (exn? e) (exn-message e)) (string-append "contract-send: " text) name)
+      (check-equal? calls '() name)))
 
   (test-case "K6: calls and estimates from a signer use its address and sign nothing"
     (for ([call (list (lambda (from) (contract-call token "balanceOf(address)(uint256)" anvil-bob

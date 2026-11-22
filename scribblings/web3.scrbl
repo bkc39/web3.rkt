@@ -198,10 +198,12 @@ Results come back decoded where the encoding is unambiguous:
  @item{a missing receipt, block or transaction (one that does not exist yet) is @racket[#f], and
        a missing raw transaction is @racket['null].}]
 
-Addresses and transaction objects are passed as the node expects them:
+Addresses and transaction objects are passed to @tt{eth_*} endpoints as the node expects them:
 addresses as @racket["0x..."] strings, and transaction or call objects
 as hash tables such as
-@racket[(hasheq 'from sender 'to contract 'data "0x...")].
+@racket[(hasheq 'from sender 'to contract 'data "0x...")].  @racket[send-transaction] and the
+other procedures of @secref["sending"] take a transaction's fields as keywords, quantities as
+exact integers and data as bytes.
 
 A JSON-RPC error response raises @racket[exn:fail:web3:rpc]; contract
 reverts carry their payload in @racket[exn:fail:web3:rpc-data], which
@@ -249,12 +251,12 @@ See @filepath{examples/00-provider.rkt}.
 
 Quantities are exact integers: balances in wei, nonces, gas and block numbers.  Receipts, blocks
 and transactions are values with accessors such as @racket[receipt-block-number], as in
-@secref["Conventions"]; a transaction or call sent to the node is the node's JSON.
+@secref["Conventions"]; @racket[eth-call] and the other endpoints take the node's JSON.
 
 A node such as anvil holds keys for its accounts and signs for them.
-@racket[eth-send-transaction] sends a transaction from one of them and returns its hash, and
-@racket[wait-for-receipt] returns its receipt once it is mined.  Each transaction a sender sends
-uses its next nonce.
+@racket[send-transaction/receipt] sends a transaction from one of them, its fields given as
+keywords, and returns its receipt once it is mined; @racket[send-transaction] returns its hash at
+once.  The node gives each transaction a sender sends its next nonce.
 
 @racketblock[
 (define (print-accounts alice bob)
@@ -269,10 +271,7 @@ from 0 to 1.
 (with-anvil ()
   (match-define (list alice bob _ ...) (eth-accounts))
   (print-accounts alice bob)
-  (define tx-hash
-    (eth-send-transaction
-     (hasheq 'from alice 'to bob 'value (number->hex-string (ether->wei 1)))))
-  (define receipt (wait-for-receipt tx-hash))
+  (define receipt (send-transaction/receipt alice bob #:value (ether->wei 1)))
   (printf "block ~a, gas used ~a, succeeded ~a\n"
           (receipt-block-number receipt)
           (receipt-gas-used receipt)
@@ -311,9 +310,7 @@ snapshot taken before undoes the send, and slot 0 holds 0 again.
   (anvil-set-balance stranger (ether->wei 1))
   (define snapshot (evm-snapshot))
   (anvil-impersonate-account stranger)
-  (define receipt
-    (send-transaction/receipt
-     (hasheq 'from stranger 'to contract 'data (bytes->hex-string (word->bytes 7)))))
+  (define receipt (send-transaction/receipt stranger contract #:data (word->bytes 7)))
   (anvil-stop-impersonating-account stranger)
   (printf "sent from ~a, stored ~a\n" (receipt-from receipt) (stored-value))
   (evm-revert snapshot)
@@ -751,8 +748,9 @@ the receipt.
 
 Contracts take a signer wherever they take a sender: as @racket[#:from], as
 @racket[current-account], or in a @racket[contract-instance].  A send from a signer is filled,
-signed here and sent raw.  A send from an address is signed by the node, which is how
-impersonated accounts send.  Calls and estimates use the signer's address and sign nothing.
+signed here and sent raw.  A send from an address is signed by the node, as with
+@racket[send-transaction], which is how impersonated accounts send.  Calls and estimates use the
+signer's address and sign nothing.
 
 @racketblock[
 (define-contract counter #:file "contracts/out/Counter.sol/Counter.json")
@@ -1207,10 +1205,11 @@ The access list and gas used of @racket[tx] at @racket[block], as the node's JSO
 
 @defproc[(eth-send-transaction [tx (and/c hash? jsexpr?)]
                                [#:provider provider (or/c #f provider?) (current-provider)])
-         hex-string?]{
+         #,hash-string-contract]{
 Asks the node to sign and send @racket[tx] from an account it manages,
 such as one of anvil's development accounts, and returns the
-transaction hash.}
+transaction hash, in lowercase.  An answer that is not a hash raises @racket[exn:fail:web3].
+@racket[send-transaction] sends from keywords.}
 
 @defproc[(eth-send-raw-transaction [signed-tx hex-string?]
                                    [#:provider provider (or/c #f provider?) (current-provider)])
@@ -1280,13 +1279,6 @@ Polls for the receipt of @racket[tx-hash], starting every
 @racket[interval] seconds and backing off to every quarter second.
 Raises @racket[exn:fail:web3] if no receipt appears within
 @racket[timeout] seconds, or if the receipt is not @racket[tx-hash]'s.}
-
-@defproc[(send-transaction/receipt [tx (and/c hash? jsexpr?)]
-                                   [#:provider provider (or/c #f provider?) (current-provider)])
-         receipt?]{
-Sends @racket[tx] with @racket[eth-send-transaction] and returns its
-receipt once mined.  For a transaction signed here, see
-@racket[send-signed-transaction/receipt].}
 
 @subsection{Filters}
 
@@ -2163,6 +2155,39 @@ another hash raises one.  Waiting and failures are as for @racket[contract-send]
 
 Each call reads the pending nonce, so sends in a row from one signer get consecutive nonces.
 Sends from one signer in several threads at once may get the same one.}
+
+@deftogether[(@defproc/filling[(send-transaction [from (abi-value/c 'address)]
+                                                 [to (or/c #f (abi-value/c 'address))])
+                               #,hash-string-contract]
+              @defproc/filling[(send-transaction/receipt
+                                [from (abi-value/c 'address)]
+                                [to (or/c #f (abi-value/c 'address))])
+                               receipt?])]{
+A transaction from @racket[from], an account the node holds, to @racket[to] (@racket[#f] creates a
+contract), signed and sent by the node with @tt{eth_sendTransaction}, returning its hash, or with
+@racket[send-transaction/receipt] its receipt once mined.  The fields given are sent, with
+@racket[from] and @racket[to] checksummed; a nonce and fees not given are left to the node.  When
+@racket[type], or the fee fields given, make the transaction type 0 or 1, as for
+@racket[fill-transaction], a gas price not given is @tt{eth_gasPrice}, and type 1 sends an empty
+access list when none is given, so the node sends that type.  A
+@racket[gas-limit] not given is @tt{eth_estimateGas} of the transaction without its type, nonce and
+fees, as for @racket[fill-transaction], and a revert there raises
+@racket[exn:fail:web3:rpc:revert], decoded against @racket[errors].  The node is asked for its
+chain id only when @racket[chain-id] is given, and one other than the node's raises
+@racket[exn:fail:web3:fill].  Fields of a type other than @racket[type], or of two types, raise
+@racket[exn:fail:contract] before any request.  An answer that is not a hash raises
+@racket[exn:fail:web3].  Waiting and failures are as for @racket[send-signed-transaction/receipt];
+a failed transaction is replayed without its nonce and fees.
+
+@examples[#:eval send-eval
+          (define node-account
+            (mock-provider
+             (hash "eth_estimateGas" "0x5208"
+                   "eth_sendTransaction"
+                   "0x353911be23e52e6b62f32b2323be63d06541c4ab17382cde9ff87b3174c3c9f6")))
+          (send-transaction "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" recipient
+                            #:value (ether->wei "1.5") #:provider node-account)
+          (mock-provider-calls node-account)]}
 
 @defstruct*[(exn:fail:web3:fill exn:fail:web3) ([reason (or/c 'chain-id 'no-base-fee 'fee-cap)])]{
 A transaction the node's answers cannot complete: a @racket[#:chain-id] other than the node's, a
@@ -3406,7 +3431,7 @@ Mines a block.}
           [address string?]
           [#:provider provider (or/c #f provider?) (current-provider)])
          void?])]{
-Lets @racket[eth-send-transaction] send from @racket[address] without
+Lets @racket[send-transaction] send from @racket[address] without
 its key, or stops doing so.}
 
 @deftogether[(

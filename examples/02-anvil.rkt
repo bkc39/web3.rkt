@@ -15,9 +15,7 @@
     (anvil-set-balance stranger (ether->wei 1))
     (define snapshot (evm-snapshot))
     (anvil-impersonate-account stranger)
-    (define receipt
-      (send-transaction/receipt
-       (hasheq 'from stranger 'to contract 'data (bytes->hex-string (word->bytes 7)))))
+    (define receipt (send-transaction/receipt stranger contract #:data (word->bytes 7)))
     (anvil-stop-impersonating-account stranger)
     (printf "sent from ~a, stored ~a\n" (receipt-from receipt) (stored-value))
     (evm-revert snapshot)

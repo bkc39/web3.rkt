@@ -81,6 +81,8 @@
   (provide bytes->signed-transaction/who
            curve-scalar?
            fee-caps-ordered?
+           field->jsexpr
+           field-json-key
            legacy-v?
            raw-transaction-reason/c
            signed-transaction/who
@@ -115,7 +117,8 @@
                         access-list y-parity r s)))
 
 (define field-kinds
-  (hasheq 'chain-id 'u64
+  (hasheq 'type 'u64
+          'chain-id 'u64
           'nonce 'u64
           'gas-price 'u256
           'max-priority-fee-per-gas 'u256
@@ -136,7 +139,7 @@
 (define (stored-fields type)
   (if (zero? type) (append (unsigned-fields type) '(chain-id)) (unsigned-fields type)))
 
-(define (json-key name)
+(define (field-json-key name)
   (match (regexp-split #rx"-" (symbol->string name))
     ['("gas" "limit") 'gas]
     [(cons head tail) (string->symbol (apply string-append head (map string-titlecase tail)))]))
@@ -330,21 +333,23 @@
 
 (define (transaction->jsexpr tx #:from from)
   (define type (transaction-type tx))
-  (for/fold ([json (hasheq 'type (natural->hex type) 'from (address->checksum-string from))])
+  (for/fold ([json (hasheq 'type (field->jsexpr 'type type)
+                           'from (address->checksum-string from))])
             ([name (in-list (stored-fields type))])
     (define value (transaction-field tx name))
     (if value
-        (hash-set json (json-key name) (field->json (hash-ref field-kinds name) value))
+        (hash-set json (field-json-key name) (field->jsexpr name value))
         json)))
 
-(define (field->json kind value)
-  (match kind
-    [(or 'u64 'u256) (natural->hex value)]
-    ['to value]
-    ['data (bytes->hex value)]
-    ['access-list (map access-entry->json value)]))
+(define (field->jsexpr name value)
+  (define kind (hash-ref field-kinds name))
+  (match* (kind (normalise kind value))
+    [((or 'u64 'u256 'v 'y-parity 'curve-scalar) natural) (natural->hex natural)]
+    [('to address) address]
+    [('data data) (bytes->hex data)]
+    [('access-list entries) (map access-entry->jsexpr entries)]))
 
-(define (access-entry->json entry)
+(define (access-entry->jsexpr entry)
   (match-define (cons address keys) entry)
   (hasheq 'address address 'storageKeys (map bytes->hex keys)))
 

@@ -6,7 +6,7 @@
            rackunit
            web3
            (only-in "helpers/accounts.rkt" anvil-addresses anvil-keys random-key)
-           (only-in "helpers/mock.rkt" recording recording-calls)
+           (only-in "helpers/mock.rkt" call-with-fields recording recording-calls)
            (only-in "helpers/transactions.rkt"
                     check-node-fields quantity random-checksummed-address slot-1)
            (only-in "util.rkt" anvil-bob seeded))
@@ -15,9 +15,12 @@
   (define-contract counter #:file "../examples/contracts/out/Counter.sol/Counter.json")
 
   (match-define (list _ key1 key2 key3 key4 _ ...) (map hex-string->secret-key anvil-keys))
-  (match-define (list _ account1 _ account3 _ ...) anvil-addresses)
+  (match-define (list _ account1 _ account3 _ account5 _ ...) anvil-addresses)
   (define token-abi
     (file->contract-abi (collection-file-path "examples/contracts/out/Token.sol/Token.json" "web3")))
+  (define counter-abi
+    (file->contract-abi
+     (collection-file-path "examples/contracts/out/Counter.sol/Counter.json" "web3")))
 
   (define prng (seeded 1 8 7 5 4 2))
   (define one-and-a-half (ether->wei "1.5"))
@@ -115,7 +118,62 @@
       (for ([tx-hash (in-list hashes)]
             [nonce (in-naturals first-nonce)])
         (check-equal? (receipt-status (wait-for-receipt tx-hash)) 1)
-        (check-equal? (transaction-info-nonce (eth-get-transaction-by-hash tx-hash)) nonce))))
+        (check-equal? (transaction-info-nonce (eth-get-transaction-by-hash tx-hash)) nonce)))
+
+    (test-case "S9: the node signs sends from its accounts, filling their nonces"
+      (define recipient (fresh-address))
+      (define first-nonce (pending account5))
+      (define receipt (send-transaction/receipt account5 recipient #:value (ether->wei 1)))
+      (check-equal? (list (receipt-status receipt) (receipt-from receipt) (receipt-to receipt))
+                    (list 1 account5 recipient))
+      (check-equal? (balance recipient) (ether->wei 1))
+      (define hashes
+        (for/list ([_ (in-range 2)])
+          (send-transaction account5 recipient #:value 1)))
+      (check-equal? (for/list ([tx-hash (in-list hashes)])
+                      (receipt-status (wait-for-receipt tx-hash)))
+                    '(1 1))
+      (check-equal? (map (lambda (tx-hash)
+                           (transaction-info-nonce (eth-get-transaction-by-hash tx-hash)))
+                         hashes)
+                    (list (+ first-nonce 1) (+ first-nonce 2)))
+      (check-equal? (balance recipient) (+ (ether->wei 1) 2))
+      (define created
+        (send-transaction/receipt account5 #f #:data (contract-abi-bytecode counter-abi)))
+      (define address (receipt-contract-address created))
+      (check-equal? address (create-address account5 (+ first-nonce 3)))
+      (check-equal? (counter-count address) 0))
+
+    (test-case "S11: a send the node signs has the type fill-transaction gives"
+      (define price (eth-gas-price))
+      (for ([row (in-list `((0 (#:type 0))
+                            (1 (#:type 1))
+                            (1 (#:type 1 #:gas-price ,price))
+                            (1 (#:gas-price ,price #:access-list ()))
+                            (2 (#:type 2))
+                            (2 ())))])
+        (match-define (list type fields) row)
+        (define name (format "~s" fields))
+        (define recipient (fresh-address))
+        (check-equal? (transaction-type
+                       (call-with-fields fill-transaction fields account5 recipient))
+                      type name)
+        (check-equal? (receipt-type (call-with-fields send-transaction/receipt fields
+                                                      account5 recipient))
+                      type name)))
+
+    (test-case "S12: a send the node signs takes a tip alone, or a fee cap alone"
+      (for ([row (in-list `(((#:max-priority-fee-per-gas ,(gwei->wei 1))
+                             ,transaction-info-max-priority-fee-per-gas)
+                            ((#:max-fee-per-gas ,(gwei->wei 100))
+                             ,transaction-info-max-fee-per-gas)))])
+        (match-define (list (and fields (list _ amount)) mined-fee) row)
+        (define name (format "~s" fields))
+        (define receipt (call-with-fields send-transaction/receipt `(#:value 1 ,@fields)
+                                          account5 (fresh-address)))
+        (check-equal? (list (receipt-status receipt) (receipt-type receipt)) '(1 2) name)
+        (check-equal? (mined-fee (eth-get-transaction-by-hash (receipt-transaction-hash receipt)))
+                      amount name))))
 
   (define (contract-cases)
     (test-case "N4, N5: a contract's sends from an address and from its key leave the same chain"

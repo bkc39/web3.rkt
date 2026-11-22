@@ -188,7 +188,7 @@
                   (format "contract-send: transaction ~a failed in block 5: reverted with InsufficientBalance(0, 5000)"
                           tx-hash))
     (match-define (list (list "eth_sendTransaction" sent) _ (list "eth_call" replayed "0x5")) calls)
-    (check-eq? replayed sent)
+    (check-equal? replayed sent)
     (check-equal? replayed (hash-set transfer-tx 'gas "0x186a0"))
     (define-values (out-of-gas _oog-calls)
       (mined-failure (lambda (_) (raise-rpc-error "eth_call" -32003 "EVM error OutOfGas"))))
@@ -368,8 +368,8 @@
     (check-blames-here (wait-for-receipt 'hash))
     (check-blames-here (wait-for-receipt tx-hash #:timeout "1"))
     (check-blames-here (wait-for-receipt tx-hash #:provider 'node))
-    (check-blames-here (send-transaction/receipt "tx"))
-    (check-blames-here (send-transaction/receipt (hasheq 'from (void)))))
+    (check-blames-here (send-transaction/receipt "tx" anvil-bob))
+    (check-blames-here (send-transaction/receipt anvil-alice (void))))
 
   (test-case "return data too short for the outputs raises a decode error under contract-call"
     (define-values (e _calls)

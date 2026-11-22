@@ -70,8 +70,7 @@
          (anvil-set-code contract store-arg)
          (define snap (evm-snapshot))
          (define receipt
-           (send-transaction/receipt
-            (hasheq 'from me 'to contract 'data (bytes->hex-string (word->bytes 7)))))
+           (send-transaction/receipt me contract #:data (word->bytes 7)))
          (check-true (receipt-succeeded? receipt))
          (check-equal? (hex-string->number (eth-get-storage-at contract 0 "latest")) 7)
          (check-true (evm-revert snap))
@@ -111,7 +110,7 @@
          (anvil-set-balance stranger (expt 10 18))
          (define payment (hasheq 'from stranger 'to me 'value (number->hex-string 1000)))
          (anvil-impersonate-account stranger)
-         (check-true (receipt-succeeded? (send-transaction/receipt payment)))
+         (check-true (receipt-succeeded? (send-transaction/receipt stranger me #:value 1000)))
          (anvil-stop-impersonating-account stranger)
          (check-exn exn:fail:web3:rpc? (lambda () (eth-send-transaction payment))))
 

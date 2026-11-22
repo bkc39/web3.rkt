@@ -168,7 +168,8 @@
            (define returned (eth-call (hasheq 'to create2-deployer 'data data) "latest"))
            (check-equal? (address->checksum-string returned) predicted)
            (check-true (receipt-succeeded?
-                        (send-transaction/receipt (hasheq 'from anvil-alice 'to create2-deployer 'data data))))
+                        (send-transaction/receipt anvil-alice create2-deployer
+                                                  #:data (hex-string->bytes data))))
            (check-equal? (string-downcase (eth-get-code predicted "latest")) (artifact-deployed-bytecode "Counter"))
            (contract-send predicted "increment()")
            (check-equal? (contract-call predicted "count()(uint256)") 1))
