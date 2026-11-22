@@ -22,7 +22,7 @@
          (only-in "private/eth-params.rkt" block-param/c)
          "private/exn.rkt"
          (only-in "private/hex.rkt" hex-data-string?)
-         (only-in "private/argument.rkt" address/c)
+         (only-in "private/argument.rkt" address/c address-or/c)
          (only-in "private/contracts.rkt" errors/c from/c provider/c)
          "private/who.rkt")
 
@@ -107,7 +107,7 @@
   (or/c (and/c bytes? (property/c bytes-length (=/c 32))) (integer-in 0 (sub1 (expt 2 256)))))
 (define nonce/c (integer-in 0 (- (expt 2 64) 2)))
 
-(define target/c (rename-contract (or/c contract-instance? address/c) 'target/c))
+(define target/c (address-or/c 'target/c contract-instance? "a contract instance"))
 
 (define named-function/c
   (flat-named-contract 'named-function/c (or/c symbol? string? abi-signature?)))

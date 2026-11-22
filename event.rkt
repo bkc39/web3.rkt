@@ -45,7 +45,8 @@
                  (listof log?))]
   [receipt-logs (->* (receipt?) (#:events (listof abi-event-spec/c)) (listof log?))]))
 
-(define address-filter/c (or/c #f (one-or-more/c address/c)))
+(define address-filter/c
+  (or/c #f (one-or-more/c address/c "an address or a non-empty list of addresses")))
 
 (define no-where/c (flat-named-contract 'no-where/c (lambda (v) (and (hash? v) (hash-empty? v)))))
 

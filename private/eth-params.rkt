@@ -107,6 +107,9 @@
             #:object? #t))
 
 (define filter-object/c
-  (fields/c 'filter-object/c (hasheq 'address (or/c null? (one-or-more/c address/c))) #:object? #t))
+  (fields/c 'filter-object/c
+            (hasheq 'address
+                    (or/c null? (one-or-more/c address/c "an address or a list of addresses")))
+            #:object? #t))
 
 (define objects/c (listof hash?))

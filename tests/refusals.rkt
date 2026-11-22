@@ -2,6 +2,10 @@
 
 (module+ test
   (require (only-in racket/contract
+                    ->
+                    ->i
+                    any
+                    any/c
                     blame-positive
                     contract
                     contract-first-order
@@ -20,7 +24,9 @@
            (only-in "util.rkt" anvil-alice anvil-bob))
 
   (define typo "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")
-  (define checksum-reason "not an address: mixed case that is not its EIP-55 checksum")
+  (define checksum-mismatch "mixed case that is not its EIP-55 checksum")
+  (define checksum-reason (string-append "not an address: " checksum-mismatch))
+  (define sender-checksum-reason (string-append "not an address or a signer: " checksum-mismatch))
 
   (define-contract c "function f(uint256 a) view returns (uint256)")
 
@@ -47,23 +53,39 @@
           `(,(string-append "send-transaction: " checksum-reason) "argument: 1st" ,(quoted typo)))
      (row "contract-call's #:from"
           (lambda () (contract-call anvil-bob "f()()" #:from typo))
-          `(,(string-append "contract-call: " checksum-reason) "argument: #:from" ,(quoted typo)))
+          `(,(string-append "contract-call: " sender-checksum-reason)
+            "argument: #:from" ,(quoted typo)))
      (row "contract-send's #:from"
           (lambda () (contract-send anvil-bob "f()" #:from typo))
-          `(,(string-append "contract-send: " checksum-reason) "argument: #:from" ,(quoted typo)))
+          `(,(string-append "contract-send: " sender-checksum-reason)
+            "argument: #:from" ,(quoted typo)))
+     (row "contract-call's target, counted like any positional argument"
+          (lambda () (contract-call typo "f()()"))
+          `(,(string-append "contract-call: not an address or a contract instance: "
+                            checksum-mismatch)
+            "argument: 1st" ,(quoted typo)))
+     (row "a secret key where fill-transaction's sender goes"
+          (lambda () (fill-transaction (integer->secret-key 7) anvil-bob))
+          '("fill-transaction: not an address or a signer: neither a string nor a signer"
+            "argument: 1st" "given: a secret key"))
+     (row "a secret key where contract-call's #:from goes"
+          (lambda () (contract-call anvil-bob "f()()" #:from (integer->secret-key 7)))
+          '("contract-call: not an address or a signer: neither a string nor a signer"
+            "argument: #:from" "given: a secret key"))
      (row "a bound procedure's address"
           (lambda () (c-f typo 1))
           `(,(string-append "c-f: " checksum-reason) "argument: 1st" ,(quoted typo)))
      (row "a bound procedure's #:from"
           (lambda () (c-f anvil-bob 1 #:from typo))
-          `(,(string-append "c-f: " checksum-reason) "argument: #:from" ,(quoted typo)))
+          `(,(string-append "c-f: " sender-checksum-reason) "argument: #:from" ,(quoted typo)))
      (row "a transaction object's to"
           (lambda () (eth-call (hasheq 'to typo) "latest"))
           `(,(string-append "eth-call: " checksum-reason)
             "argument: 1st" "field: to" ,(quoted typo)))
      (row "a filter object's address"
           (lambda () (eth-get-logs (hasheq 'address typo)))
-          `(,(string-append "eth-get-logs: " checksum-reason)
+          `(,(string-append "eth-get-logs: not an address or a list of addresses: "
+                            checksum-mismatch)
             "argument: 1st" "field: address" ,(quoted typo)))
      (row "a transaction constructor's #:to, which may be #f"
           (lambda ()
@@ -75,6 +97,10 @@
           (lambda () (log-filter #:address (list anvil-bob typo)))
           `(,(string-append "log-filter: " checksum-reason)
             "argument: #:address" "in: an element of" ,(quoted typo)))
+     (row "a log filter's empty list of addresses"
+          (lambda () (log-filter #:address '()))
+          '("log-filter: not an address or a non-empty list of addresses: the list is empty"
+            "argument: #:address" "given: an empty list"))
      (row "a hash argument"
           (lambda () (eth-get-transaction-receipt "0xaa"))
           '("eth-get-transaction-receipt: not a hash: not 0x and 64 hex digits"
@@ -131,7 +157,7 @@
     (define not-hashes
       (list (cons digits "a string of 64 characters")
             (cons (string->bytes/latin-1 digits) "a byte string of length 64")
-            (cons (integer->secret-key 7) "a value of another kind")))
+            (cons (integer->secret-key 7) "a secret key")))
     (for ([bad+given (in-list (cons (cons key "a string of 66 characters") not-hashes))])
       (match-define (cons bad given) bad+given)
       (check-described (lambda () (eth-get-balance bad "latest")) given)
@@ -139,6 +165,59 @@
     (for ([bad+given (in-list not-hashes)])
       (match-define (cons bad given) bad+given)
       (check-described (lambda () (eth-get-transaction-receipt bad)) given)))
+
+  (define mnemonic "test test test test test test test test test test test junk")
+  (define secret-texts
+    (list (cons (substring key 0 65) "a string of 65 characters")
+          (cons (string-append (substring key 0 34) " " (substring key 34))
+                "a string of 67 characters")
+          (cons mnemonic (format "a string of ~a characters" (string-length mnemonic)))))
+
+  (define (check-hidden thunk secret given)
+    (define e (refusal thunk))
+    (check-pred exn:fail:contract:blame? e given)
+    (when e
+      (define message (exn-message e))
+      (check-false (string-contains? message secret) message)
+      (check-false (regexp-match? #px"[0-9a-fA-F]{20}|test test" message) message)
+      (check-regexp-match (regexp (string-append "\n  given: " given "\n")) message)))
+
+  (test-case "text that is not 0x and at most 40 hex digits is described, never shown"
+    (for ([secret+given (in-list secret-texts)])
+      (match-define (cons secret given) secret+given)
+      (check-hidden (lambda () (send-transaction secret anvil-bob #:value 1)) secret given)
+      (check-hidden (lambda () (fill-transaction secret anvil-bob)) secret given)
+      (check-hidden (lambda () (contract-call anvil-bob "f()()" #:from secret)) secret given)
+      (check-hidden (lambda () (c-f anvil-bob 1 #:from secret)) secret given)
+      (check-hidden (lambda () (eth-get-transaction-receipt secret)) secret given)))
+
+  (test-case "a handler that runs while a refusal is raised sees Racket's own format"
+    (define integer-only (contract (-> integer? any) values 'web3 'caller 'integer-only #f))
+    (define seen #f)
+    (with-handlers ([exn:fail:contract:blame? void])
+      (call-with-exception-handler
+       (lambda (e)
+         (set! seen (with-handlers ([exn:fail:contract:blame? exn-message]) (integer-only 'x)))
+         e)
+       (lambda () (eth-get-balance typo "latest"))))
+    (check-regexp-match #rx"^integer-only: contract violation\n  expected: integer[?]\n" seen)
+    (check-equal? (length (regexp-match* #rx"given:" seen)) 1 seen))
+
+  (test-case "an ->i argument is labelled by its position or keyword in that ->i alone"
+    (define (labels thunk)
+      (for/list ([line (in-list (string-split (exn-message (refusal thunk)) "\n"))]
+                 #:when (regexp-match? #rx"^  (argument|in):" line))
+        (string-trim line)))
+    (define positional
+      (contract (->i ([a any/c] [b address/c]) ([c address/c] #:d [d address/c]) any)
+                (lambda (a b [c #f] #:d [d #f]) a) 'web3 'caller 'positional #f))
+    (check-equal? (labels (lambda () (positional 1 typo))) '("argument: 2nd"))
+    (check-equal? (labels (lambda () (positional 1 anvil-bob typo))) '("argument: 3rd"))
+    (check-equal? (labels (lambda () (positional 1 anvil-bob #:d typo))) '("argument: #:d"))
+    (define nested
+      (contract (->i ([g (->i ([x address/c]) any)]) (#:size [x integer?]) any)
+                (lambda (g #:size [x 0]) (g typo)) 'web3 'caller 'nested #f))
+    (check-equal? (labels (lambda () (nested values))) '("argument: 1st" "argument: x")))
 
   (test-case "address/c keeps address? as its first-order check, so or/c picks properly"
     (define first-order (contract-first-order address/c))

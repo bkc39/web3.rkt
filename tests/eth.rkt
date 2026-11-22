@@ -477,7 +477,8 @@
         (define e (raised (lambda () (apply procedure bad-object others
                                             #:provider (mock-provider (hash))))))
         (define refusal
-          (format "^~a: not an address: [^\n]*\n  argument: 1st\n  field: ~a\n"
+          (format (string-append "^~a: not an address(?: or a list of addresses)?: [^\n]*\n"
+                                 "  argument: 1st\n  field: ~a\n")
                   (object-name procedure) key))
         (check-regexp-match (pregexp refusal) (exn-message e) name)
         (check-equal? (sent-argument procedure 0 arguments good-object) good-object name)))))

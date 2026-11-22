@@ -2,6 +2,7 @@
 
 (module+ test
   (require (only-in racket/contract
+                    ->
                     any/c
                     blame-positive
                     contract
@@ -22,7 +23,7 @@
                     sign-message
                     transaction->jsexpr)
            web3/address
-           (only-in web3/private/argument address/c)
+           (only-in web3/private/argument address/c one-or-more/c)
            web3/private/opaque
            (only-in web3/private/signature signature)
            (only-in "helpers/transactions.rkt" example-eip1559))
@@ -71,11 +72,11 @@
 
   (test-case "describe-kind names every kind it knows and nothing else"
     (check-equal? (map describe-kind
-                       (list #t 'x 1.5 '(1) (integer->secret-key 1)
+                       (list #t 'x 1.5 '(1) '() (integer->secret-key 1)
                              (secret-key->public-key (integer->secret-key 1)) (signature 1 1 0)
                              (local-signer (integer->secret-key 1))))
                   '("a boolean" "a symbol" "a value of another kind" "a value of another kind"
-                    "a secret key" "a public key" "a signature" "a signer")))
+                    "an empty list" "a secret key" "a public key" "a signature" "a signer")))
 
   (test-case "a wrong arity names the counts, never the arguments"
     (define e (refusal (lambda () (one secret-text secret-text))))
@@ -148,13 +149,32 @@
       (check-equal? (field (exn-message e) "argument") argument)
       (check-equal? (field (exn-message e) "given") (format "~s" wrong-checksum))))
 
-  (test-case "opaque-> keeps an address contract's projection inside or/c and listof"
+  (test-case "opaque-> refuses a contract that is not flat unless private/argument.rkt built it"
+    (define e
+      (with-handlers ([exn:fail:contract? values])
+        (opaque-> (or/c #f address/c) (listof address/c) any/c)))
+    (check-pred exn:fail:contract? e)
+    (check-false (exn:fail:contract:blame? e))
+    (check-regexp-match #rx"^opaque->: a contract that is not flat" (exn-message e))
+    (check-pred exn:fail:contract? (with-handlers ([exn:fail:contract? values])
+                                     (opaque-> (listof (-> integer? any/c)) any/c))))
+
+  (test-case "opaque-> keeps private/argument.rkt's contracts as they are"
     (define senders
-      (contract (opaque-> (or/c #f address/c) (listof address/c) any/c) list
+      (contract (opaque-> address/c (one-or-more/c address/c "addresses") any/c) list
                 'provider 'caller 'senders #f))
-    (check-equal? (senders #f '()) '(#f ()))
-    (define e (refusal (lambda () (senders #f '("0x12")))))
+    (define bob "0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
+    (check-equal? (senders bob (list bob)) (list bob (list bob)))
+    (define key-hex (string-append "0x" (make-string 63 #\0) "7"))
+    (define e (refusal (lambda () (senders bob key-hex))))
     (check-equal? (exn-message e)
+                  (string-join '("senders: not addresses: not 0x and 40 hex digits"
+                                 "  argument: 2nd"
+                                 "  given: a string of 66 characters"
+                                 "  blaming: caller")
+                               "\n"))
+    (define listed (refusal (lambda () (senders bob '("0x12")))))
+    (check-equal? (exn-message listed)
                   (string-join '("senders: not an address: not 0x and 40 hex digits"
                                  "  argument: 2nd"
                                  "  in: an element of"
@@ -162,10 +182,10 @@
                                  "  blaming: caller")
                                "\n")))
 
-  (test-case "a secret key given where an address belongs is not shown"
+  (test-case "a secret key given where an address belongs is named, not shown"
     (define key (integer->secret-key 7))
     (define e (refusal (lambda () (node-signer key))))
-    (check-equal? (field (exn-message e) "given") "a value of another kind")
+    (check-equal? (field (exn-message e) "given") "a secret key")
     (define hex (string-append "0x" (make-string 63 #\0) "7"))
     (define text-e (refusal (lambda () (node-signer hex))))
     (check-equal? (field (exn-message text-e) "given") "a string of 66 characters")
