@@ -40,7 +40,8 @@
 
 (define topic-positions/c
   (argument-list/c 'topic-positions/c "a list of topic positions"
-                   (or/c #f (one-or-more/c hash-argument/c "a hash or a non-empty list of hashes"))
+                   #f
+                   (one-or-more/c hash-argument/c "a hash or a non-empty list of hashes")
                    #:most 4))
 
 ;; The index of the parameter key names, by name or position, or #f.

@@ -23,7 +23,12 @@
                     sign-message
                     transaction->jsexpr)
            web3/address
-           (only-in web3/private/argument address/c one-or-more/c)
+           (only-in web3/private/argument
+                    address/c
+                    argument-contract?
+                    argument-list/c
+                    hash-argument/c
+                    one-or-more/c)
            web3/private/opaque
            (only-in web3/private/signature signature)
            (only-in "helpers/transactions.rkt" example-eip1559))
@@ -182,6 +187,16 @@
                                  "  given: \"0x12\""
                                  "  blaming: caller")
                                "\n")))
+
+  (test-case "argument-list/c refuses an element contract whose or/c would print the value"
+    (define (built . disjuncts)
+      (with-handlers ([exn:fail:contract:blame? exn-message])
+        (apply argument-list/c 'items/c "a list of items" #:most 2 disjuncts)))
+    (check-pred argument-contract? (built #f address/c))
+    (check-pred argument-contract? (built #f string?))
+    (check-regexp-match #rx"at-most-one-argument-contract[?]" (built address/c hash-argument/c))
+    (check-regexp-match #rx"argument-contract[?]" (built #f (listof (-> any/c))))
+    (check-regexp-match #rx"non-empty-listof" (built)))
 
   (test-case "a secret key given where an address belongs is named, not shown"
     (define key (integer->secret-key 7))
