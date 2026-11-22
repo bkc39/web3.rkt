@@ -1,6 +1,9 @@
 #lang racket/base
 
 (require (only-in racket/contract
+                  ->*
+                  and/c
+                  any/c
                   blame-add-context
                   blame-add-missing-party
                   blame-context
@@ -10,8 +13,12 @@
                   build-chaperone-contract-property
                   build-compound-type-name
                   contract-first-order
+                  contract-out
+                  flat-contract?
                   get/build-late-neg-projection
                   make-exn:fail:contract:blame
+                  non-empty-listof
+                  or/c
                   prop:chaperone-contract)
          (only-in racket/match == match match-define)
          (only-in racket/string string-join string-prefix? string-trim)
@@ -26,7 +33,12 @@
          address-refusal
          argument/c
          argument-contract?
-         argument-list/c
+         (contract-out
+          [argument-list/c
+           (->* (any/c string? #:most exact-nonnegative-integer?)
+                #:rest (and/c (non-empty-listof (or/c flat-contract? argument-contract?))
+                              at-most-one-argument-contract?)
+                argument-contract?)])
          describe-value
          hash-argument/c
          one-or-more/c
@@ -182,8 +194,11 @@
     (build-compound-type-name 'or/c item/c (build-compound-type-name 'non-empty-listof item/c)))
   (argument/c name noun accepts? reason #:project project))
 
-;; item/c is an argument contract, or an or/c of flat contracts and at most one of them.
-(define (argument-list/c name noun item/c #:most most)
+(define (at-most-one-argument-contract? disjuncts)
+  (<= (length (filter argument-contract? disjuncts)) 1))
+
+(define (argument-list/c name noun #:most most . disjuncts)
+  (define item/c (apply or/c disjuncts))
   (define item? (contract-first-order item/c))
   (define (fits? v)
     (and (list? v) (<= (length v) most)))
