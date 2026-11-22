@@ -25,6 +25,7 @@ racket examples/00-provider.rkt
 | `12-transactions.rkt` | legacy, EIP-2930 and EIP-1559 transactions signed offline, their raw bytes, hashes and recovered senders, a refused truncation |
 | `13-signers.rkt` | a local key and a node account as signers: each one's EIP-191 signature verifies, and both sign the same transaction |
 | `14-sending.rkt` | a key the node does not hold: a contract deploy and send, an ether transfer |
+| `15-blocks.rkt` | a block of three kinds of transfer, its transactions, one rebuilt and its sender recovered, a fee history |
 
 03, 04, 05 and 09 to 12 need no node; the others start their own local
 [anvil](https://book.getfoundry.sh/anvil/), so nothing here touches a real
