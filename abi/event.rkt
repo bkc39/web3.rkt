@@ -14,6 +14,7 @@
          (only-in (submod "../eth/log.rkt" internal) log->list log-struct log-tail)
          (only-in "../private/abi-decode.rkt" raise-abi-decode-error)
          "../private/exn.rkt"
+         (only-in "../private/field-contracts.rkt" hash-argument/c)
          (only-in "../private/hex.rkt" bytes->hex hex->bytes)
          "../private/who.rkt")
 
@@ -36,10 +37,7 @@
   [event-log-arguments (-> event-log? list?)]
   [event-log-ref (->i ([el event-log?] [key (el) (event-log-key/c el)]) [_ any/c])]))
 
-(define (topic? v)
-  (and (string? v) (regexp-match? #px"^0x[0-9a-fA-F]{64}$" v)))
-
-(define topic/c (flat-named-contract '(and/c string? #px"^0x[0-9a-fA-F]{64}$") topic?))
+(define topic/c hash-argument/c)
 
 (define topic-positions/c
   (flat-named-contract 'topic-positions/c
@@ -111,7 +109,7 @@
 ;; The topic of v as an indexed value of t, with value errors reported at
 ;; argument index.
 (define (value->topic who t v index)
-  (match (arguments-failure (list t) (list v))
+  (match (encoding-failure (list t) (list v))
     [#f
      (bytes->hex (if (elementary? t)
                      (abi-encode/who who (list t) (list v))

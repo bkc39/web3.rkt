@@ -357,19 +357,21 @@
     [else (fail (format "out of range: expected an integer ~a" range))]))
 
 ;; #f, or (list reason type value path) for the first part of v that does
-;; not fit t.  rpath is the path to v, innermost index first.
-(define (value-failure t v rpath)
+;; not fit t.  rpath is the path to v, innermost index first.  This module
+;; cannot compute a checksum: checksum? is the encoder's check of an address's case.
+(define (value-failure t v rpath #:checksum? [checksum? any-case?])
   (define (fail reason)
     (list reason t v (reverse rpath)))
   (define (each ts)
     (for/or ([t (in-list ts)]
              [x (in-list v)]
              [i (in-naturals)])
-      (value-failure t x (cons i rpath))))
+      (value-failure t x (cons i rpath) #:checksum? checksum?)))
   (match* (t v)
     [((struct* abi-uint ([bits n])) _) (integer-failure v #f n fail)]
     [((struct* abi-int ([bits n])) _) (integer-failure v #t n fail)]
-    [((struct* abi-address ()) (? string? (pregexp #px"^0x[0-9a-fA-F]{40}$"))) #f]
+    [((struct* abi-address ()) (? string? (pregexp #px"^0x[0-9a-fA-F]{40}$")))
+     (and (not (checksum? v)) (fail "mixed case that is not the address's EIP-55 checksum"))]
     [((struct* abi-address ()) _) (fail "expected a string of 0x and 40 hex digits")]
     [((struct* abi-bool ()) (? boolean?)) #f]
     [((struct* abi-bool ()) _) (fail "expected #t or #f")]
@@ -402,13 +404,16 @@
 (define (map-abi-value f t v)
   (fold-abi-value f (lambda (_ vs) vs) t v))
 
-(define (arguments-failure ts vs)
+(define (any-case? _address)
+  #t)
+
+(define (arguments-failure ts vs #:checksum? [checksum? any-case?])
   (cond
     [(= (length ts) (length vs))
      (for/or ([t (in-list ts)]
               [v (in-list vs)]
               [i (in-naturals)])
-       (value-failure t v (list i)))]
+       (value-failure t v (list i) #:checksum? checksum?))]
     [else (list (format "expected ~a values, given ~a" (length ts) (length vs)) ts vs '())]))
 
 ;;;; the public conversions

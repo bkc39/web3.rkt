@@ -100,7 +100,8 @@
       (match-define (list t v) row)
       (check-equal? (abi-value->topic t v) (bytes->hex (abi-encode (list t) (list v))))))
 
-  (define bob-mixed "0x70997970c51812dc3A010C7d01b50e0d17dc79C8")
+  (define bob-upper "0x70997970C51812DC3A010C7D01B50E0D17DC79C8")
+  (define bob-lower "0x70997970c51812dc3a010c7d01b50e0d17dc79c8")
   (define tagged-topic (event-topic tagged))
   (define lists-topic (event-topic lists))
   (define hello-topic "0x1c8aff950685c2ed4bc3174f3472287b56d9517b9c948127319a09a7a36deac8")
@@ -112,7 +113,8 @@
       #s(positions ,transfer #hasheq((from . ,(any-of anvil-alice anvil-bob anvil-alice)))
                    (,transfer-topic (,(topic-word anvil-alice) ,(topic-word anvil-bob))))
       #s(positions ,transfer #hasheq((from . ,(any-of anvil-bob))) (,transfer-topic ,(topic-word anvil-bob)))
-      #s(positions ,transfer #hasheq((to . ,bob-mixed)) (,transfer-topic #f ,(topic-word anvil-bob)))
+      #s(positions ,transfer #hasheq((to . ,bob-upper)) (,transfer-topic #f ,(topic-word anvil-bob)))
+      #s(positions ,transfer #hasheq((to . ,bob-lower)) (,transfer-topic #f ,(topic-word anvil-bob)))
       #s(positions ,note #hasheq((sender . ,anvil-alice)) (,(topic-word anvil-alice)))
       #s(positions ,note #hasheq() ())
       #s(positions ,tagged #hasheq((tag . "hello")) (,tagged-topic ,hello-topic))
@@ -143,6 +145,17 @@
     (define out-of-range (value-error (lambda () (abi-value->topic 'uint8 256))))
     (check-equal? (exn:fail:web3:abi:value-path out-of-range) '(0))
     (check-regexp-match #rx"^abi-value->topic: " (exn-message out-of-range)))
+
+  (test-case "an indexed address in mixed case needs its EIP-55 checksum"
+    (define wrong-checksum "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")
+    (define in-where (value-error (lambda () (event-topics transfer (hasheq 'to wrong-checksum)))))
+    (check-equal? (exn:fail:web3:abi:value-path in-where) '(1))
+    (check-equal? (exn:fail:web3:abi:value-value in-where) wrong-checksum)
+    (check-regexp-match #rx"^event-topics: mixed case" (exn-message in-where))
+    (define as-topic (value-error (lambda () (abi-value->topic 'address wrong-checksum))))
+    (check-equal? (exn:fail:web3:abi:value-path as-topic) '(0))
+    (check-equal? (abi-value->topic 'address (string-downcase wrong-checksum))
+                  (abi-value->topic 'address "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed")))
 
   (test-case "web3/abi/event and web3/eth/log need no JSON or transport modules"
     (define allowed

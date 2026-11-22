@@ -9,10 +9,12 @@
          "abi/event-type.rkt"
          (only-in (submod "abi/event-type.rkt" private) spec->abi-event/who)
          "abi/type.rkt"
+         (only-in "address.rkt" address?)
          "eth.rkt"
          "eth/log.rkt"
          (only-in (submod "eth/log.rkt" internal) jsexpr->log/who)
          (only-in (submod "eth/receipt.rkt" internal) receipt-log-list)
+         (only-in "private/field-contracts.rkt" hash-argument/c)
          (only-in "private/node.rkt" raise-node-malformed)
          "rpc.rkt")
 
@@ -24,7 +26,7 @@
         (#:address [address address-filter/c]
          #:from-block [from block-param/c]
          #:to-block [to block-param/c]
-         #:block-hash [block-hash (or/c #f block-hash/c)]
+         #:block-hash [block-hash (or/c #f hash-argument/c)]
          #:topics [topics topic-positions/c]
          #:event [event (or/c #f abi-event-spec/c)]
          #:where [where (event) (where/c event)])
@@ -46,9 +48,7 @@
 
 (define address-filter/c
   (flat-named-contract 'address-filter/c
-                       (or/c #f (abi-value/c 'address) (non-empty-listof (abi-value/c 'address)))))
-
-(define block-hash/c (flat-named-contract 'block-hash/c topic/c))
+                       (or/c #f address? (non-empty-listof address?))))
 
 (define no-where/c (flat-named-contract 'no-where/c (lambda (v) (and (hash? v) (hash-empty? v)))))
 

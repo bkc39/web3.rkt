@@ -23,7 +23,7 @@
          (only-in racket/match match-define match-lambda)
          (only-in racket/string string-join string-trim)
          syntax/parse/define
-         (only-in "../abi/type.rkt" abi-value?)
+         (only-in "../address.rkt" address?)
          (only-in "signature.rkt" signature?))
 
 (provide address/c
@@ -78,7 +78,7 @@
 (define message/c
   (opaque-contract 'message/c "a byte string or a string" (lambda (v) (or (bytes? v) (string? v)))))
 (define address/c
-  (opaque-contract 'address/c "an address" (lambda (v) (abi-value? 'address v))))
+  (opaque-contract 'address/c "an address" address?))
 
 (define (opaque v)
   (if (opaque-contract? v)

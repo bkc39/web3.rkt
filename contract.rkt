@@ -44,7 +44,7 @@
           [contract-call call/c]
           [contract-send send/c]
           [contract-estimate-gas estimate/c]
-          [contract-instance (->* (contract-abi? (abi-value/c 'address))
+          [contract-instance (->* (contract-abi? address?)
                                   (#:provider (or/c #f provider?)
                                    #:from from/c)
                                   contract-instance?)]
@@ -76,8 +76,8 @@
           [deploy-contract (transaction->* (init-code/c) (signature/c) checksum-address?)]
           [deploy-contract/receipt
            (transaction->* (init-code/c) (signature/c) (values checksum-address? receipt?))]
-          [create-address (-> (abi-value/c 'address) nonce/c checksum-address?)]
-          [create2-address (-> (abi-value/c 'address) salt/c init-code/c checksum-address?)]))
+          [create-address (-> address? nonce/c checksum-address?)]
+          [create2-address (-> address? salt/c init-code/c checksum-address?)]))
 
 (define (count-of n what)
   (and (positive? n) (format "~a ~a~a" n what (if (= n 1) "" "s"))))
@@ -107,7 +107,7 @@
 (define nonce/c (integer-in 0 (- (expt 2 64) 2)))
 
 (define target/c
-  (flat-named-contract 'target/c (or/c (abi-value/c 'address) contract-instance?)))
+  (flat-named-contract 'target/c (or/c address? contract-instance?)))
 
 (define named-function/c
   (flat-named-contract 'named-function/c (or/c symbol? string? abi-signature?)))

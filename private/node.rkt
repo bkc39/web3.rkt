@@ -43,7 +43,7 @@
 
 (define (node-address->string who what v)
   (cond
-    [(node-string? #px"^0x[0-9a-fA-F]{40}$" v) (address->checksum-string v)]
+    [(address? v) (address->checksum-string v)]
     [else (raise-node-malformed who what v)]))
 
 (define (node-hash->string who what v)

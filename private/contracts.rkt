@@ -1,7 +1,8 @@
 #lang racket/base
 
 (require racket/contract/base
-         (only-in "../abi/type.rkt" abi-signature? abi-value?)
+         (only-in "../abi/type.rkt" abi-signature?)
+         (only-in "../address.rkt" address?)
          (only-in "../rpc.rkt" provider?)
          (only-in "field-contracts.rkt" to/c)
          (only-in "opaque.rkt" opaque/c)
@@ -15,7 +16,7 @@
          to/c)
 
 (define (sender? v)
-  (or (abi-value? 'address v) (signer? v)))
+  (or (address? v) (signer? v)))
 
 (define from/c
   (opaque/c 'from/c "#f, an address or a signer" (lambda (v) (or (not v) (sender? v)))))

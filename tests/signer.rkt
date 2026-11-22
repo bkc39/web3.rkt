@@ -148,6 +148,9 @@
       (digest "0x12" honest address
               ,(string-append "signer-address: malformed result: "
                               "the signer's address is a string of 4 characters, not an address"))
+      (digest "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD" honest address
+              ,(string-append "signer-address: malformed result: "
+                              "the signer's address is a string of 42 characters, not an address"))
       (digest "0x12" honest digest
               ,(string-append "signer-sign-digest: malformed result: "
                               "the signer's address is a string of 4 characters, not an address"))
@@ -472,6 +475,7 @@
        "a transaction")
       (,(lambda () (signer? 1 2)) "1 argument")
       (,(lambda () (node-signer "0x12")) "an address")
+      (,(lambda () (node-signer "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")) "an address")
       (,(lambda () (node-signer anvil-alice #:provider "http://x")) "provider")
       (,(lambda () (node-signer anvil-alice #:chain-id 1)) "keyword #:provider")))
 

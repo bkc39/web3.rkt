@@ -192,6 +192,17 @@
         (check-blames-here (procedure anvil-alice anvil-bob #:data "0x"))
         (check-blames-here (procedure anvil-alice anvil-bob #:gas 1)))))
 
+  (test-case "a mixed-case address with a wrong checksum is refused before any request"
+    (define wrong-checksum "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")
+    (define node (mock-provider (node-answers)))
+    (for* ([procedure (list send-transaction send-transaction/receipt fill-transaction)]
+           [call (list (lambda () (procedure wrong-checksum anvil-bob #:provider node))
+                       (lambda () (procedure anvil-alice wrong-checksum #:provider node))
+                       (lambda () (procedure anvil-alice anvil-bob #:type 1 #:provider node
+                                             #:access-list `((,wrong-checksum)))))])
+      (check-blames-here (call)))
+    (check-equal? (mock-provider-calls node) '()))
+
   (test-case "S10: eth-send-transaction returns the node's hash in lowercase"
     (define (answered answer)
       (with-handlers ([exn:fail:web3? exn-message])

@@ -2,13 +2,12 @@
 
 (require racket/contract/base
          (only-in racket/match match-define)
-         (only-in "abi/type.rkt" abi-value?)
          "account.rkt"
          (only-in (submod "account.rkt" private)
                   bytes->signature/who
                   message->bytes
                   sign-digest/who)
-         (only-in "address.rkt" address->checksum-string checksum-address?)
+         (only-in "address.rkt" address? address->checksum-string checksum-address?)
          (only-in "eth.rkt" eth-sign eth-sign-transaction)
          "private/exn.rkt"
          (only-in "private/hex.rkt" bytes->hex hex->bytes hex-data-string?)
@@ -123,7 +122,7 @@
 
 (define/who (signer-address who signer)
   (define address (generic-signer-address signer))
-  (if (abi-value? 'address address)
+  (if (address? address)
       (address->checksum-string address)
       (raise-signer who 'malformed "the signer's address is ~a, not an address"
                     (describe-kind address))))

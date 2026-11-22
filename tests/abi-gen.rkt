@@ -7,6 +7,7 @@
          web3/abi/description
          web3/abi/event-type
          web3/abi/type
+         (only-in web3/address address->checksum-string)
          "util.rkt")
 
 (provide noisy-jsexpr
@@ -86,9 +87,11 @@
       [(struct* abi-uint ([bits n])) (random-integer prng 0 (sub1 (expt 2 n)))]
       [(struct* abi-int ([bits n])) (random-integer prng (- (expt 2 (sub1 n))) (sub1 (expt 2 (sub1 n))))]
       [(struct* abi-address ())
-       (list->string
-        (append (list #\0 #\x)
-                (for/list ([_ (in-range 40)]) (pick prng (string->list "0123456789abcdefABCDEF")))))]
+       (define lower (random-address prng))
+       (match (random 3 prng)
+         [0 lower]
+         [1 (string-append "0x" (string-upcase (substring lower 2)))]
+         [2 (address->checksum-string lower)])]
       [(struct* abi-bool ()) (zero? (random 2 prng))]
       [(struct* abi-fixed-bytes ([size n])) (random-bytes prng n)]
       [(struct* abi-bytes ()) (random-bytes prng (random 71 prng))]

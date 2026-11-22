@@ -136,7 +136,9 @@
       (,(lambda () (sign-message marker-key "m" #:chain-id 1)) "no keyword arguments")
       (,(lambda () (hash-message 'm)) "a byte string or a string")
       (,(lambda () (recover-message-address (make-bytes 65) "m")) "a signature")
-      (,(lambda () (message-signed-by? hello-signature "m" "0x12")) "an address")))
+      (,(lambda () (message-signed-by? hello-signature "m" "0x12")) "an address")
+      (,(lambda () (message-signed-by? hello-signature "m" "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD"))
+       "an address")))
 
   (test-case "E9: refused arguments blame the caller, name their kind and show no key"
     (for ([row (in-list refused)])

@@ -107,9 +107,12 @@
           (values (cons encoded heads) tails offset))))
   (apply bytes-append (append (reverse heads) (reverse tails))))
 
+(define (encoding-failure ts vs)
+  (arguments-failure ts vs #:checksum? address?))
+
 (define (encode-arguments who ts vs)
   (cond
-    [(arguments-failure ts vs) => (lambda (failure) (raise-abi-value-error who failure))]
+    [(encoding-failure ts vs) => (lambda (failure) (raise-abi-value-error who failure))]
     [else (encode-sequence ts vs)]))
 
 (define/who (abi-encode who types vs)
@@ -141,7 +144,7 @@
      => (lambda (t)
           (raise-abi-type-error 'abi-encode-packed "not supported in packed encoding"
                                 (type->string t) #f))]
-    [(arguments-failure ts vs)
+    [(encoding-failure ts vs)
      => (lambda (failure) (raise-abi-value-error 'abi-encode-packed failure))]
     [else (apply bytes-append (map encode-packed ts vs))]))
 
@@ -189,7 +192,7 @@
     [signature
      (define inputs (abi-signature-inputs signature))
      (flat-named-contract `(arguments-of ,(abi-signature->string signature))
-                          (lambda (vs) (and (list? vs) (not (arguments-failure inputs vs)))))]
+                          (lambda (vs) (and (list? vs) (not (encoding-failure inputs vs)))))]
     [else list?]))
 
 (define-module-boundary-contract checked-abi-revert raw-abi-revert
@@ -374,6 +377,7 @@
            check-error-signatures/who
            decode-result/who
            encode-call/who
+           encoding-failure
            result-signature/who
            string->abi-signature/who))
 

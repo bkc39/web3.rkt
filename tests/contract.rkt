@@ -392,7 +392,16 @@
                    type "selector collision")
                   ((deploy-contract #"" "init(uint256)" 1) type "a constructor signature")
                   ((deploy-contract #"" "constructor(uint256)(uint256)" 1) type "a constructor signature")
-                  ((deploy-contract #"" "constructor(uint8)" 256) value (0))))])
+                  ((deploy-contract #"" "constructor(uint8)" 256) value (0))
+                  ((contract-send token "transfer(address,uint256)"
+                                  "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD" 1)
+                   value (0))
+                  ((contract-call token "f((uint8,address[]))()"
+                                  '(1 ("0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")))
+                   value (0 1 0))
+                  ((deploy-contract #"" "constructor(address)"
+                                    "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")
+                   value (0))))])
       (match-define (list form kind detail) row)
       (define who (symbol->string (first form)))
       (define-values (e calls)
@@ -429,6 +438,23 @@
     (check-blames-here (create-address token -1))
     (check-blames-here (create-address token (- (expt 2 64) 1)))
     (check-blames-here (current-account "0x12")))
+
+  (test-case "a contract address in mixed case needs its EIP-55 checksum"
+    (define wrong-checksum "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")
+    (define token-abi (contract-abi '()))
+    (define node (mock-provider (sending)))
+    (parameterize ([current-provider node])
+      (check-blames-here (contract-call wrong-checksum "f()()"))
+      (check-blames-here (contract-send wrong-checksum "f()"))
+      (check-blames-here (contract-estimate-gas wrong-checksum "f()"))
+      (check-blames-here (contract-instance token-abi wrong-checksum))
+      (check-blames-here (contract-call token "f()()" #:from wrong-checksum))
+      (check-blames-here (create-address wrong-checksum 0))
+      (check-blames-here (create2-address wrong-checksum (make-bytes 32) #"")))
+    (check-equal? (mock-provider-calls node) '())
+    (check-equal? (contract-instance-address
+                   (contract-instance token-abi (string-downcase wrong-checksum)))
+                  "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"))
 
   (test-case "passing every keyword at its default sends what passing none does"
     (define created (hash-set mined 'contractAddress (string-downcase token)))

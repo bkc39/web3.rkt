@@ -53,12 +53,8 @@
     (check-equal? (create-address anvil-alice 0) "0x5FbDB2315678afecb367f032d93F642f64180aa3")
     (check-equal? (create-address anvil-alice 1) "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"))
 
-  (test-case "addresses do not depend on the case of the inputs or the form of salt and code"
+  (test-case "addresses do not depend on the spelling of the inputs or the form of salt and code"
     (define prng (seeded 1 0 1 4 7 2))
-    (define (mixed-case s)
-      (string-append "0x"
-                     (list->string (for/list ([c (in-string s 2)])
-                                     (if (zero? (random 2 prng)) (char-upcase c) c)))))
     (for ([_ (in-range 100)])
       (define sender (random-address prng))
       (define nonce (min (random-abi-value prng 'uint64) (- (expt 2 64) 2)))
@@ -66,9 +62,11 @@
       (check-pred checksum-address? address)
       (check-equal? (create-address (string-append "0x" (string-upcase (substring sender 2))) nonce)
                     address)
-      (check-equal? (create-address (mixed-case sender) nonce) address)
+      (check-equal? (create-address (address->checksum-string sender) nonce) address)
       (define salt (random-abi-value prng 'uint256))
       (define code (random-bytes prng (random 100 prng)))
       (define create2 (create2-address sender salt code))
       (check-pred checksum-address? create2)
-      (check-equal? (create2-address (mixed-case sender) (word salt) (bytes->hex-string code)) create2))))
+      (check-equal? (create2-address (address->checksum-string sender) (word salt)
+                                     (bytes->hex-string code))
+                    create2))))

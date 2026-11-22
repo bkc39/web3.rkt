@@ -12,6 +12,7 @@
          syntax/parse/define
          "../abi.rkt"
          (only-in (submod "../abi/description.rkt" private) bytecode/c)
+         (only-in "../address.rkt" address?)
          (only-in "../rpc.rkt" current-provider)
          "binding-rules.rkt"
          "contract-call.rkt"
@@ -22,30 +23,29 @@
 (provide contract-bindings-out
          define-contract)
 
-(define address/c (abi-value/c 'address))
 (define value/c exact-nonnegative-integer?)
 (define gas/c (or/c #f exact-positive-integer?))
 
 (define view-procedure/c
-  (->* (address/c)
+  (->* (address?)
        (#:from from/c #:block block-param/c #:gas gas/c #:errors errors/c #:provider provider/c)
        #:rest list?
        any))
 
 (define nonpayable-procedure/c
-  (->* (address/c)
+  (->* (address?)
        (#:from from/c #:gas gas/c #:errors errors/c #:provider provider/c)
        #:rest list?
        any))
 
 (define payable-procedure/c
-  (->* (address/c)
+  (->* (address?)
        (#:from from/c #:value value/c #:gas gas/c #:errors errors/c #:provider provider/c)
        #:rest list?
        any))
 
 (define any-procedure/c
-  (->* (address/c)
+  (->* (address?)
        (#:from from/c #:value value/c #:block block-param/c #:gas gas/c #:errors errors/c
         #:provider provider/c)
        #:rest list?
