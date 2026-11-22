@@ -119,6 +119,7 @@
                '("0x4a02a85a61dbc92fec29ffa220781b27b2c6bc91527b22a04af286791e41c28a")))))
 
 @(define hash-string-contract @racket[(and/c string? #px"^0x[0-9a-f]{64}$")])
+@(define hash-argument-contract @racket[(and/c string? #px"^0x[0-9a-fA-F]{64}$")])
 
 @(define-syntax-parse-rule (defproc/filling (name:id positional ...) result:expr body ...)
    (defproc (name positional ...
@@ -184,6 +185,7 @@ Results come back decoded where the encoding is unambiguous:
 @itemlist[
  @item{quantities (balances, gas, block numbers, counts) are exact
        nonnegative integers;}
+ @item{the addresses of @racket[eth-accounts] and @racket[eth-coinbase] are checksummed;}
  @item{receipts, blocks, transactions on chain, fee histories and logs are values with
        accessors, @racket[receipt?], @racket[block?], @racket[transaction-info?],
        @racket[fee-history?] and @racket[log?]: their addresses are checksummed, their hashes
@@ -198,12 +200,13 @@ Results come back decoded where the encoding is unambiguous:
  @item{a missing receipt, block or transaction (one that does not exist yet) is @racket[#f], and
        a missing raw transaction is @racket['null].}]
 
-Addresses and transaction objects are passed to @tt{eth_*} endpoints as the node expects them:
-addresses as @racket["0x..."] strings, and transaction or call objects
-as hash tables such as
-@racket[(hasheq 'from sender 'to contract 'data "0x...")].  @racket[send-transaction] and the
-other procedures of @secref["sending"] take a transaction's fields as keywords, quantities as
-exact integers and data as bytes.
+An address argument is an @racket[address?]: @racket["0x"] and 40 hex digits, all lowercase,
+all uppercase or in their EIP-55 checksum, so a mixed-case address with a wrong checksum is a
+contract violation.  A hash argument is @racket["0x"] and 64 hex digits in either case.
+Transaction and call objects are passed to @tt{eth_*} endpoints as the node expects them, as hash
+tables such as @racket[(hasheq 'from sender 'to contract 'data "0x...")].
+@racket[send-transaction] and the other procedures of @secref["sending"] take a transaction's
+fields as keywords, quantities as exact integers and data as bytes.
 
 A JSON-RPC error response raises @racket[exn:fail:web3:rpc]; contract
 reverts carry their payload in @racket[exn:fail:web3:rpc-data], which
@@ -928,10 +931,11 @@ method it lacks raises @racket[exn:fail:web3:rpc] with code
 @racketblock[
 (define p (mock-provider (hash "eth_chainId" "0x1"
                                "eth_getBalance" "0xff")))
-(eth-get-balance "0xaa" 5 #:provider p)
+(define alice "0x00000000000000000000000000000000000a11ce")
+(eth-get-balance alice 5 #:provider p)
 (code:comment "=> 255")
 (mock-provider-calls p)
-(code:comment "=> '((\"eth_getBalance\" \"0xaa\" \"0x5\"))")
+(code:comment "=> '((\"eth_getBalance\" \"0x00000000000000000000000000000000000a11ce\" \"0x5\"))")
 ]}
 
 @defproc[(mock-provider? [v any/c]) boolean?]{
@@ -1040,7 +1044,7 @@ A storage slot: a 256-bit word.}
 @defproc[(eth-blob-base-fee [#:provider provider (or/c #f provider?) (current-provider)])
          exact-nonnegative-integer?]
 @defproc[(eth-accounts [#:provider provider (or/c #f provider?) (current-provider)])
-         (listof string?)]
+         (listof checksum-address?)]
 @defproc[(eth-block-number [#:provider provider (or/c #f provider?) (current-provider)])
          exact-nonnegative-integer?])]{
 
@@ -1074,7 +1078,7 @@ reward row without one fee per percentile raises @racket[exn:fail:web3].
 @defproc[(eth-protocol-version [#:provider provider (or/c #f provider?) (current-provider)])
          string?]
 @defproc[(eth-coinbase [#:provider provider (or/c #f provider?) (current-provider)])
-         string?]
+         checksum-address?]
 @defproc[(eth-mining [#:provider provider (or/c #f provider?) (current-provider)])
          boolean?]
 @defproc[(eth-hashrate [#:provider provider (or/c #f provider?) (current-provider)])
@@ -1091,26 +1095,26 @@ Keccak-256 of @racket[data], computed by the node.  To hash locally, use
 
 @subsection{State}
 
-@defproc[(eth-get-balance [address string?]
+@defproc[(eth-get-balance [address address?]
                           [block block-param/c]
                           [#:provider provider (or/c #f provider?) (current-provider)])
          exact-nonnegative-integer?]{
 The balance of @racket[address] in wei.}
 
-@defproc[(eth-get-transaction-count [address string?]
+@defproc[(eth-get-transaction-count [address address?]
                                     [block block-param/c]
                                     [#:provider provider (or/c #f provider?) (current-provider)])
          exact-nonnegative-integer?]{
 The number of transactions sent from @racket[address]: its next nonce.}
 
-@defproc[(eth-get-storage-at [address string?]
+@defproc[(eth-get-storage-at [address address?]
                              [slot exact-nonnegative-integer?]
                              [block block-param/c]
                              [#:provider provider (or/c #f provider?) (current-provider)])
          hex-string?]{
 The 32-byte word at storage @racket[slot] of @racket[address].}
 
-@defproc[(eth-get-proof [address string?]
+@defproc[(eth-get-proof [address address?]
                         [slots (listof storage-slot/c)]
                         [block block-param/c]
                         [#:provider provider (or/c #f provider?) (current-provider)])
@@ -1118,7 +1122,7 @@ The 32-byte word at storage @racket[slot] of @racket[address].}
 The Merkle proof of @racket[address] and of its storage @racket[slots] at @racket[block], as the
 node's JSON.  Slots are sent as 32-byte words.}
 
-@defproc[(eth-get-code [address string?]
+@defproc[(eth-get-code [address address?]
                        [block block-param/c]
                        [#:provider provider (or/c #f provider?) (current-provider)])
          hex-string?]{
@@ -1132,7 +1136,7 @@ without code.}
                                   [full-transactions? boolean?]
                                   [#:provider provider (or/c #f provider?) (current-provider)])
          (or/c #f block?)]
-@defproc[(eth-get-block-by-hash [block-hash hex-string?]
+@defproc[(eth-get-block-by-hash [block-hash #,hash-argument-contract]
                                 [full-transactions? boolean?]
                                 [#:provider provider (or/c #f provider?) (current-provider)])
          (or/c #f block?)])]{
@@ -1149,7 +1153,7 @@ receipt the node gets wrong raises @racket[exn:fail:web3] naming its index and t
 
 @deftogether[(
 @defproc[(eth-get-transaction-by-block-hash-and-index
-          [block-hash hex-string?]
+          [block-hash #,hash-argument-contract]
           [index exact-nonnegative-integer?]
           [#:provider provider (or/c #f provider?) (current-provider)])
          (or/c #f transaction-info?)]
@@ -1163,7 +1167,7 @@ block number or index is not the one asked for raises @racket[exn:fail:web3].}
 
 @deftogether[(
 @defproc[(eth-get-block-transaction-count-by-hash
-          [block-hash hex-string?]
+          [block-hash #,hash-argument-contract]
           [#:provider provider (or/c #f provider?) (current-provider)])
          exact-nonnegative-integer?]
 @defproc[(eth-get-block-transaction-count-by-number
@@ -1209,7 +1213,7 @@ transaction hash, in lowercase.  An answer that is not a hash raises @racket[exn
 Submits an already signed, serialized transaction and returns its hash, such as
 @racket[(bytes->hex-string (signed-transaction->bytes stx))]; see @racket[sign-transaction].}
 
-@defproc[(eth-sign [address string?] [data hex-string?]
+@defproc[(eth-sign [address address?] [data hex-string?]
                    [#:provider provider (or/c #f provider?) (current-provider)])
          hex-string?]{
 The node's EIP-191 signature of @racket[data] with an account it holds, as 65 bytes; see
@@ -1222,14 +1226,14 @@ The raw bytes of @racket[tx] signed by the account the node holds for its @racke
 that answers with an object gives its @racket['raw].  See @racket[transaction->jsexpr].}
 
 @defproc[(eth-get-transaction-by-hash
-          [tx-hash hex-string?]
+          [tx-hash #,hash-argument-contract]
           [#:provider provider (or/c #f provider?) (current-provider)])
          (or/c #f transaction-info?)]{
 A transaction, or @racket[#f] for an unknown one.  A transaction whose hash is not
 @racket[tx-hash], in any case, raises @racket[exn:fail:web3].}
 
 @defproc[(eth-get-transaction-receipt
-          [tx-hash hex-string?]
+          [tx-hash #,hash-argument-contract]
           [#:provider provider (or/c #f provider?) (current-provider)])
          (or/c #f receipt?)]{
 The receipt of a mined transaction, or @racket[#f] before it is mined.  A receipt the node gets
@@ -1248,7 +1252,7 @@ another transaction than @racket[tx-hash].
                               (hash-set receipt-json 'gasUsed "zz")))))]}
 
 @defproc[(eth-get-raw-transaction-by-hash
-          [tx-hash hex-string?]
+          [tx-hash #,hash-argument-contract]
           [#:provider provider (or/c #f provider?) (current-provider)])
          (or/c 'null hex-string?)]{
 The signed, serialized transaction, an even number of hex digits as
@@ -1262,7 +1266,7 @@ The logs matching @racket[filter], a hash table with keys such as
 @racket['address], @racket['topics], @racket['fromBlock] and
 @racket['toBlock].}
 
-@defproc[(wait-for-receipt [tx-hash hex-string?]
+@defproc[(wait-for-receipt [tx-hash #,hash-argument-contract]
                            [#:timeout timeout real? 30.0]
                            [#:interval interval real? 0.002]
                            [#:provider provider (or/c #f provider?) (current-provider)])
@@ -1558,9 +1562,19 @@ The node's object @racket[h] was read from.}
 
 @defmodule[web3/address]
 
-@defproc[(address->checksum-string [address (abi-value/c 'address)]) string?]{
+@defproc[(address? [v any/c]) boolean?]{
+Whether @racket[v] is an address: @racket["0x"] and 40 hex digits, all lowercase, all uppercase,
+or in mixed case matching their @hyperlink["https://eips.ethereum.org/EIPS/eip-55"]{EIP-55}
+checksum.  Every procedure that takes an address takes an @racket[address?].
+
+@examples[#:eval abi-eval
+          (address? "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed")
+          (address? "0x5AAEB6053F3E94C9B9A09F33669435E7EF1BEAED")
+          (address? "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed")
+          (address? "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")]}
+
+@defproc[(address->checksum-string [address address?]) string?]{
 The @hyperlink["https://eips.ethereum.org/EIPS/eip-55"]{EIP-55} form of @racket[address].
-The case of @racket[address] is ignored.
 
 @examples[#:eval abi-eval
           (address->checksum-string "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed")]}
@@ -1683,7 +1697,7 @@ No error shows @racket[key].}
 @racket[(recover-address sig (hash-message message))].}
 
 @defproc[(message-signed-by? [sig signature?] [message (or/c bytes? string?)]
-                             [address (abi-value/c 'address)])
+                             [address address?])
          boolean?]{
 Whether @racket[sig] is @racket[address]'s signature of @racket[message].  The case of
 @racket[address] is ignored, and a high @racket[s] is accepted, as by @racket[recover-address].
@@ -1841,7 +1855,7 @@ transaction's quantities.}
                              [#:nonce nonce uint64/c]
                              [#:gas-price gas-price uint256/c]
                              [#:gas-limit gas-limit uint64/c]
-                             [#:to to (or/c #f (abi-value/c 'address))]
+                             [#:to to (or/c #f address?)]
                              [#:value value uint256/c 0]
                              [#:data data bytes? #""])
          legacy-transaction?]{
@@ -1862,7 +1876,7 @@ is @racket[#f] for a transaction signed without replay protection, valid on ever
                               [#:nonce nonce uint64/c]
                               [#:gas-price gas-price uint256/c]
                               [#:gas-limit gas-limit uint64/c]
-                              [#:to to (or/c #f (abi-value/c 'address))]
+                              [#:to to (or/c #f address?)]
                               [#:value value uint256/c 0]
                               [#:data data bytes? #""]
                               [#:access-list access-list access-list/c '()])
@@ -1874,7 +1888,7 @@ A transaction of type 1, with an access list: the accounts and storage keys it w
                               [#:max-priority-fee-per-gas max-priority-fee-per-gas uint256/c]
                               [#:max-fee-per-gas max-fee-per-gas uint256/c]
                               [#:gas-limit gas-limit uint64/c]
-                              [#:to to (or/c #f (abi-value/c 'address))]
+                              [#:to to (or/c #f address?)]
                               [#:value value uint256/c 0]
                               [#:data data bytes? #""]
                               [#:access-list access-list access-list/c '()])
@@ -2004,7 +2018,7 @@ transaction's.}
 
 @subsection{Transactions as JSON}
 
-@defproc[(transaction->jsexpr [tx transaction?] [#:from from (abi-value/c 'address)]) hash?]{
+@defproc[(transaction->jsexpr [tx transaction?] [#:from from address?]) hash?]{
 @racket[tx] as the transaction object nodes take for @tt{eth_signTransaction} and
 @tt{eth_sendTransaction}, sent from @racket[from]: a @racket[jsexpr?] whose numbers are hex
 strings.  Every field is given: @racket['type],
@@ -2053,7 +2067,7 @@ Whether @racket[v] is a signer made by @racket[local-signer].}
 
 @subsection{Node Signers}
 
-@defproc[(node-signer [address (abi-value/c 'address)]
+@defproc[(node-signer [address address?]
                       [#:provider provider (or/c #f provider?) #f])
          node-signer?]{
 A signer for an account the node behind @racket[provider], or @racket[(current-provider)] when it
@@ -2099,8 +2113,8 @@ signature by its address of what was asked.}
 Completing transactions from a node, signing them with a signer, and sending them.  No error
 here shows a signer or a key.
 
-@defproc/filling[(fill-transaction [from (or/c (abi-value/c 'address) signer?)]
-                                   [to (or/c #f (abi-value/c 'address))])
+@defproc/filling[(fill-transaction [from (or/c address? signer?)]
+                                   [to (or/c #f address?)])
                  transaction?]{
 A transaction from @racket[from], an address or a signer, to @racket[to] (@racket[#f] creates a
 contract).  It has the fields given; each field given as @racket[#f] comes from the node behind
@@ -2129,11 +2143,11 @@ type 2 and another, the latest block decides: 2 when it has a base fee, else 0, 
           (eval:error (fill-transaction signer recipient #:type 2 #:provider legacy-node))]}
 
 @deftogether[(@defproc/filling[(send-signed-transaction [signer signer?]
-                                                        [to (or/c #f (abi-value/c 'address))])
+                                                        [to (or/c #f address?)])
                                #,hash-string-contract]
               @defproc/filling[(send-signed-transaction/receipt
                                 [signer signer?]
-                                [to (or/c #f (abi-value/c 'address))])
+                                [to (or/c #f address?)])
                                receipt?])]{
 @racket[(fill-transaction signer to ....)] signed by @racket[signer] and sent with
 @tt{eth_sendRawTransaction}, returning its hash, or with @racket[send-signed-transaction/receipt]
@@ -2148,12 +2162,12 @@ another hash raises one.  Waiting and failures are as for @racket[contract-send]
 Each call reads the pending nonce, so sends in a row from one signer get consecutive nonces.
 Sends from one signer in several threads at once may get the same one.}
 
-@deftogether[(@defproc/filling[(send-transaction [from (abi-value/c 'address)]
-                                                 [to (or/c #f (abi-value/c 'address))])
+@deftogether[(@defproc/filling[(send-transaction [from address?]
+                                                 [to (or/c #f address?)])
                                #,hash-string-contract]
               @defproc/filling[(send-transaction/receipt
-                                [from (abi-value/c 'address)]
-                                [to (or/c #f (abi-value/c 'address))])
+                                [from address?]
+                                [to (or/c #f address?)])
                                receipt?])]{
 A transaction from @racket[from], an account the node holds, to @racket[to] (@racket[#f] creates a
 contract), signed and sent by the node with @tt{eth_sendTransaction}, returning its hash, or with
@@ -2371,7 +2385,8 @@ The signature whose hash is the event's topic.
  (list (list @bold{type} @bold{value})
        (list @tt{uintN} @elem{an exact integer in [0, 2@superscript{N})})
        (list @tt{intN} @elem{an exact integer in [-2@superscript{N-1}, 2@superscript{N-1})})
-       (list @tt{address} @elem{a string: @tt{0x} and 40 hex digits in any case; the checksum is not checked})
+       (list @tt{address} @elem{a string: @tt{0x} and 40 hex digits in any case; the encoders take
+                                only an @racket[address?]})
        (list @tt{bool} @elem{@racket[#t] or @racket[#f]})
        (list @tt{bytesN} @elem{a byte string of exactly N bytes})
        (list @tt{bytes} @elem{a byte string})
@@ -2380,7 +2395,9 @@ The signature whose hash is the event's topic.
        (list @tt{T[k]} @elem{a list of exactly k @tt{T} values})
        (list @tt{(T1,...,Tn)} @elem{a list of n values, in order}))]
 
-Integers must be exact, and vectors are not lists.
+Integers must be exact, and vectors are not lists.  @racket[abi-value?] cannot compute a
+checksum, so it accepts a mixed-case address that the encoders, and so every call, send and
+topic, refuse with @racket[exn:fail:web3:abi:value].
 
 @subsection{Encoding}
 
@@ -2824,15 +2841,15 @@ Arguments and results are as in @secref["abi-values"].  A revert raises
 @racket[exn:fail:web3:rpc:revert], decoded against @racket[errors] and the
 built-in @tt{Error} and @tt{Panic}.
 
-@defparam[current-account account (or/c #f (abi-value/c 'address) signer?) #:value #f]{
+@defparam[current-account account (or/c #f address? signer?) #:value #f]{
 The sender when no @racket[#:from] is given: an address the node sends from, or a signer.
 Sending with no sender raises
 @racket[exn:fail:web3]; a call with none has no @tt{from}.}
 
-@defproc[(contract-call [target (or/c (abi-value/c 'address) contract-instance?)]
+@defproc[(contract-call [target (or/c address? contract-instance?)]
                         [function (or/c string? symbol? abi-signature?)]
                         [arg any/c] ...
-                        [#:from from (or/c #f (abi-value/c 'address) signer?) (current-account)]
+                        [#:from from (or/c #f address? signer?) (current-account)]
                         [#:value value exact-nonnegative-integer? 0]
                         [#:gas gas (or/c #f exact-positive-integer?) #f]
                         [#:block block block-param/c "latest"]
@@ -2869,10 +2886,10 @@ for an @racket[abi-function], or a function looked up, that is not
                           #:errors '("InsufficientBalance(uint256,uint256)")
                           #:provider refusing))]}
 
-@defproc[(contract-send [target (or/c (abi-value/c 'address) contract-instance?)]
+@defproc[(contract-send [target (or/c address? contract-instance?)]
                         [function (or/c string? symbol? abi-signature?)]
                         [arg any/c] ...
-                        [#:from from (or/c #f (abi-value/c 'address) signer?) (current-account)]
+                        [#:from from (or/c #f address? signer?) (current-account)]
                         [#:value value exact-nonnegative-integer? 0]
                         [#:gas gas (or/c #f exact-positive-integer?) #f]
                         [#:errors errors (listof (or/c string? abi-signature?)) '()]
@@ -2916,7 +2933,7 @@ node signs it (@tt{eth_sendTransaction}).  Calls and estimates from a signer use
 @defproc[(deploy-contract [init-code (or/c bytes? (and/c string? #px"^0x(?:[0-9a-fA-F]{2})*$"))]
                           [constructor (or/c string? abi-signature?) "constructor()"]
                           [arg any/c] ...
-                          [#:from from (or/c #f (abi-value/c 'address) signer?) (current-account)]
+                          [#:from from (or/c #f address? signer?) (current-account)]
                           [#:value value exact-nonnegative-integer? 0]
                           [#:gas gas (or/c #f exact-positive-integer?) #f]
                           [#:errors errors (listof (or/c string? abi-signature?)) '()]
@@ -2926,7 +2943,7 @@ node signs it (@tt{eth_sendTransaction}).  Calls and estimates from a signer use
           [init-code (or/c bytes? (and/c string? #px"^0x(?:[0-9a-fA-F]{2})*$"))]
           [constructor (or/c string? abi-signature?) "constructor()"]
           [arg any/c] ...
-          [#:from from (or/c #f (abi-value/c 'address) signer?) (current-account)]
+          [#:from from (or/c #f address? signer?) (current-account)]
           [#:value value exact-nonnegative-integer? 0]
           [#:gas gas (or/c #f exact-positive-integer?) #f]
           [#:errors errors (listof (or/c string? abi-signature?)) '()]
@@ -2942,7 +2959,7 @@ receipt.  Gas, senders and failures are as for @racket[contract-send].
   (deploy-contract token-code "constructor(string,string,uint256)" "Token" "TOK" 1000000))
 ]}
 
-@defproc[(create-address [sender (abi-value/c 'address)]
+@defproc[(create-address [sender address?]
                          [nonce (integer-in 0 (- (expt 2 64) 2))])
          checksum-address?]{
 The address of the contract @racket[sender] creates with @racket[nonce].  That is the last 20
@@ -2952,7 +2969,7 @@ bytes of the Keccak-256 hash of the RLP list of @racket[sender]'s bytes and
 @examples[#:eval contract-eval
           (create-address "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266" 0)]}
 
-@defproc[(create2-address [deployer (abi-value/c 'address)]
+@defproc[(create2-address [deployer address?]
                           [salt (or/c (and/c bytes? (property/c bytes-length (=/c 32)))
                                       (integer-in 0 (sub1 (expt 2 256))))]
                           [init-code (or/c bytes? (and/c string? #px"^0x(?:[0-9a-fA-F]{2})*$"))])
@@ -2973,9 +2990,9 @@ block changed the state it depends on.}
 
 @subsection{Contract Instances}
 
-@defproc[(contract-instance [abi contract-abi?] [address (abi-value/c 'address)]
+@defproc[(contract-instance [abi contract-abi?] [address address?]
                             [#:provider provider (or/c #f provider?) #f]
-                            [#:from from (or/c #f (abi-value/c 'address) signer?) #f])
+                            [#:from from (or/c #f address? signer?) #f])
          contract-instance?]{
 A contract at @racket[address] described by @racket[abi]:
 @racket[contract-call], @racket[contract-send],
@@ -3009,13 +3026,13 @@ and @racket[from], when given, replace @racket[current-provider] and
               @defproc[(contract-instance-address [i contract-instance?]) checksum-address?]
               @defproc[(contract-instance-provider [i contract-instance?]) (or/c #f provider?)]
               @defproc[(contract-instance-from [i contract-instance?])
-                       (or/c #f (abi-value/c 'address) signer?)])]{}
+                       (or/c #f address? signer?)])]{}
 
-@defproc[(contract-estimate-gas [target (or/c (abi-value/c 'address) contract-instance?)]
+@defproc[(contract-estimate-gas [target (or/c address? contract-instance?)]
                                 [function (or/c string? symbol? abi-signature?)]
                                 [arg any/c] ...
                                 [#:from from
-                                 (or/c #f (abi-value/c 'address) signer?) (current-account)]
+                                 (or/c #f address? signer?) (current-account)]
                                 [#:value value exact-nonnegative-integer? 0]
                                 [#:errors errors (listof (or/c string? abi-signature?)) '()]
                                 [#:provider provider (or/c #f provider?) (current-provider)])
@@ -3023,7 +3040,7 @@ and @racket[from], when given, replace @racket[current-provider] and
 The gas a @racket[contract-send] of the same arguments would be given.  A
 call that would revert raises @racket[exn:fail:web3:rpc:revert].}
 
-@defproc[(contract-logs [target (or/c (abi-value/c 'address) contract-instance?)]
+@defproc[(contract-logs [target (or/c address? contract-instance?)]
                         [event (or/c #f abi-event-spec/c symbol?) #f]
                         [#:where where hash? (hasheq)]
                         [#:from-block from block-param/c "earliest"]
@@ -3042,7 +3059,7 @@ that names no indexed parameter of @racket[event], raise
 @defproc[(deploy-contract-instance [abi (and/c contract-abi? contract-abi-bytecode)]
                                    [arg any/c] ...
                                    [#:from from
-                                    (or/c #f (abi-value/c 'address) signer?) (current-account)]
+                                    (or/c #f address? signer?) (current-account)]
                                    [#:value value exact-nonnegative-integer? 0]
                                    [#:gas gas (or/c #f exact-positive-integer?) #f]
                                    [#:errors errors (listof (or/c string? abi-signature?)) '()]
@@ -3270,8 +3287,8 @@ position; a key that names no parameter is a contract violation.}
 @subsection{Filters and Fetching}
 
 @defproc[(log-filter [#:address address (or/c #f
-                                              (abi-value/c 'address)
-                                              (non-empty-listof (abi-value/c 'address)))
+                                              address?
+                                              (non-empty-listof address?))
                                 #f]
                      [#:from-block from block-param/c "earliest"]
                      [#:to-block to block-param/c "latest"]
@@ -3389,19 +3406,19 @@ These wrap anvil's own methods and the hardhat-style @tt{evm_*}
 methods.  They need a node that implements them, such as one started
 with @racket[start-anvil].
 
-@defproc[(anvil-set-code [address string?]
+@defproc[(anvil-set-code [address address?]
                          [code hex-string?]
                          [#:provider provider (or/c #f provider?) (current-provider)])
          void?]{
 Replaces the code at @racket[address].}
 
-@defproc[(anvil-set-balance [address string?]
+@defproc[(anvil-set-balance [address address?]
                             [wei exact-nonnegative-integer?]
                             [#:provider provider (or/c #f provider?) (current-provider)])
          void?]{
 Sets the balance of @racket[address].}
 
-@defproc[(anvil-set-storage-at [address string?]
+@defproc[(anvil-set-storage-at [address address?]
                                [slot exact-nonnegative-integer?]
                                [value hex-string?]
                                [#:provider provider (or/c #f provider?) (current-provider)])
@@ -3415,11 +3432,11 @@ Mines a block.}
 
 @deftogether[(
 @defproc[(anvil-impersonate-account
-          [address string?]
+          [address address?]
           [#:provider provider (or/c #f provider?) (current-provider)])
          void?]
 @defproc[(anvil-stop-impersonating-account
-          [address string?]
+          [address address?]
           [#:provider provider (or/c #f provider?) (current-provider)])
          void?])]{
 Lets @racket[send-transaction] send from @racket[address] without
@@ -3442,7 +3459,7 @@ as @racket[snapshot].}
                            [options (and/c hash? jsexpr?)]
                            [#:provider provider (or/c #f provider?) (current-provider)])
          hash?]
-@defproc[(debug-trace-transaction [tx-hash hex-string?]
+@defproc[(debug-trace-transaction [tx-hash #,hash-argument-contract]
                                   [options (and/c hash? jsexpr?)]
                                   [#:provider provider (or/c #f provider?) (current-provider)])
          hash?])]{
