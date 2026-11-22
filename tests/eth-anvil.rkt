@@ -56,9 +56,11 @@
        (with-anvil ()
          (match-define (list _ receipt) (mined-transfer))
          (for ([full? (in-list '(#f #t))])
-           (check-equal? (eth-get-block-by-hash (receipt-block-hash receipt) full?)
-                         (eth-get-block-by-number (receipt-block-number receipt) full?)))
-         (check-false (eth-get-block-by-hash (filled-hash #\a) #f))))
+           (check-equal? (eth-get-block-by-hash (receipt-block-hash receipt)
+                                                #:full-transactions? full?)
+                         (eth-get-block-by-number (receipt-block-number receipt)
+                                                  #:full-transactions? full?)))
+         (check-false (eth-get-block-by-hash (filled-hash #\a)))))
 
      (test-case "A3: block receipts are the transactions' receipts"
        (with-anvil ()
@@ -136,7 +138,7 @@
          (define filter-id (eth-new-block-filter))
          (anvil-mine)
          (check-equal? (eth-get-filter-changes filter-id)
-                       (list (block-hash (eth-get-block-by-number "latest" #f))))))
+                       (list (block-hash (eth-get-block-by-number "latest"))))))
 
      (test-case "A11: a pending filter sees pending transactions"
        (with-anvil (#:args '("--no-mining"))

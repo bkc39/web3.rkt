@@ -7,7 +7,11 @@
            (only-in racket/match match match-define)
            rackunit
            web3
-           (only-in "helpers/results.rkt" full-block-json receipt-json transaction-info-json/0)
+           (only-in "helpers/results.rkt"
+                    block-json
+                    full-block-json
+                    receipt-json
+                    transaction-info-json/0)
            (only-in "util.rkt" check-blames-here filled-hash max-word raised))
 
   (define addr "0x00000000000000000000000000000000000c0de0")
@@ -39,8 +43,10 @@
                         ,(jsexpr->fee-history unrewarded)]
       [,eth-get-proof (,addr (0 255) "latest")
                       "eth_getProof" (,addr (,zero-word ,word-255) "latest") ,a-proof ,a-proof]
-      [,eth-get-block-by-hash (,mined-hash #t) "eth_getBlockByHash" (,mined-hash #t)
-                              ,full-block-json ,a-block]
+      [,eth-get-block-by-hash (,mined-hash #:full-transactions? #t) "eth_getBlockByHash"
+                              (,mined-hash #t) ,full-block-json ,a-block]
+      [,eth-get-block-by-number (1) "eth_getBlockByNumber" ("0x1" #f) ,block-json
+                                ,(jsexpr->block block-json)]
       [,eth-get-block-receipts (16) "eth_getBlockReceipts" ("0x10") (,receipt-json) (,a-receipt)]
       [,eth-get-transaction-receipt (,receipt-hash) "eth_getTransactionReceipt" (,receipt-hash)
                                     ,receipt-json ,a-receipt]
@@ -67,9 +73,19 @@
       [,eth-uninstall-filter ("0x1f") "eth_uninstallFilter" ("0x1f") #t #t]
       [,eth-uninstall-filter ("0x1f") "eth_uninstallFilter" ("0x1f") #f #f]))
 
+  (define (apply-with-provider procedure arguments provider)
+    (let split ([arguments arguments] [positional '()] [keywords `((#:provider . ,provider))])
+      (match arguments
+        ['()
+         (define sorted (sort keywords keyword<? #:key car))
+         (keyword-apply procedure (map car sorted) (map cdr sorted) (reverse positional))]
+        [(list* (? keyword? keyword) value more)
+         (split more positional (cons (cons keyword value) keywords))]
+        [(cons value more) (split more (cons value positional) keywords)])))
+
   (define (call-mocked procedure arguments method answer)
     (define node (mock-provider (hash method answer)))
-    (define result (apply procedure arguments #:provider node))
+    (define result (apply-with-provider procedure arguments node))
     (list result (mock-provider-calls node)))
 
   (define (unexpected-message procedure arguments method answer)
@@ -96,8 +112,9 @@
                            (,b-hash 0) "eth_getTransactionByBlockHashAndIndex" null]
                           [,eth-get-transaction-by-block-number-and-index
                            (16 0) "eth_getTransactionByBlockNumberAndIndex" null]
-                          [,eth-get-block-by-hash (,b-hash #f) "eth_getBlockByHash" null]
-                          [,eth-get-block-by-number ("latest" #t) "eth_getBlockByNumber" null]))])
+                          [,eth-get-block-by-hash (,b-hash) "eth_getBlockByHash" null]
+                          [,eth-get-block-by-number ("latest" #:full-transactions? #t)
+                                                    "eth_getBlockByNumber" null]))])
       (match-define (list procedure arguments method answer) row)
       (match-define (list result _) (call-mocked procedure arguments method answer))
       (check-false result method))
@@ -121,7 +138,7 @@
       [,eth-blob-base-fee () "eth_blobBaseFee" "0x" "eth_blobBaseFee: unexpected result \"0x\""]
       [,eth-blob-base-fee () "eth_blobBaseFee" "10" "eth_blobBaseFee: unexpected result \"10\""]
       [,eth-blob-base-fee () "eth_blobBaseFee" null "eth_blobBaseFee: unexpected result 'null"]
-      [,eth-get-block-by-hash (,b-hash #f) "eth_getBlockByHash" "0xbb"
+      [,eth-get-block-by-hash (,b-hash) "eth_getBlockByHash" "0xbb"
                               "eth_getBlockByHash: unexpected result \"0xbb\""]
       [,eth-get-block-receipts ("latest") "eth_getBlockReceipts" ("0xaa")
                                "eth_getBlockReceipts: malformed receipt in receipts 0 from the node: \"0xaa\""]
@@ -183,7 +200,7 @@
       [,eth-fee-history (1 "latest" (0.3333333333333333 1/3))]
       [,eth-fee-history (1 "latest" (+nan.0))]
       [,eth-fee-history (1 "latest" (-1))]
-      [,eth-get-block-by-hash (,b-hash yes)]
+      [,eth-get-block-by-hash (,b-hash #:full-transactions? yes)]
       [,eth-get-block-receipts ("head")]
       [,eth-get-block-receipts (-1)]
       [,eth-get-transaction-by-block-hash-and-index (,b-hash -1)]
@@ -200,10 +217,10 @@
     (define node (mock-provider (lambda (method params) 'null)))
     (for ([row (in-list bad-arguments)])
       (match-define (list procedure arguments) row)
-      (check-blames-here (apply procedure arguments #:provider node)))
+      (check-blames-here (apply-with-provider procedure arguments node)))
     (for ([row (in-list endpoints)])
       (match-define (list procedure arguments _ _ _ _) row)
-      (check-blames-here (apply procedure arguments #:provider 'nope))))
+      (check-blames-here (apply-with-provider procedure arguments 'nope))))
 
   (test-case "the wrong number of arguments is an arity error naming the endpoint"
     (define e (raised (lambda () (eth-fee-history 1 "latest" #:provider (mock-provider (hash))))))
@@ -318,7 +335,7 @@
       [,anvil-stop-impersonating-account 0 (,addr)]))
 
   (define hash-arguments
-    `([,eth-get-block-by-hash 0 (,mined-hash #f)]
+    `([,eth-get-block-by-hash 0 (,mined-hash)]
       [,eth-get-block-transaction-count-by-hash 0 (,mined-hash)]
       [,eth-get-transaction-by-block-hash-and-index 0 (,mined-hash 0)]
       [,eth-get-transaction-by-hash 0 (,transaction-hash)]
@@ -377,8 +394,9 @@
                                                         (,up-receipt) ,receipt-json ,a-receipt]
                           [,wait-for-receipt (,up-receipt) "eth_getTransactionReceipt"
                                              (,up-receipt) ,receipt-json ,a-receipt]
-                          [,eth-get-block-by-hash (,up-block #t) "eth_getBlockByHash"
-                                                  (,up-block #t) ,full-block-json ,a-block]
+                          [,eth-get-block-by-hash (,up-block #:full-transactions? #t)
+                                                  "eth_getBlockByHash" (,up-block #t)
+                                                  ,full-block-json ,a-block]
                           [,eth-get-transaction-by-hash (,up-transaction) "eth_getTransactionByHash"
                                                         (,up-transaction) ,transaction-info-json/0
                                                         ,a-transaction]

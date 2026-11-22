@@ -878,7 +878,8 @@ response's @tt{result}.  Raises @racket[exn:fail:web3] when
            (-> arg-spec ... result-contract-expr)
            maybe-transform)
          #:grammar ([arg-spec contract-expr
-                              [contract-expr ->param-expr]]
+                              [contract-expr ->param-expr]
+                              (code:line keyword [contract-expr #:default default-expr])]
                     [maybe-transform (code:line)
                                      (code:line #:result-transform transform-expr)
                                      (code:line #:result-reader reader-expr)])]{
@@ -886,7 +887,10 @@ response's @tt{result}.  Raises @racket[exn:fail:web3] when
 Defines a function for the JSON-RPC method @racket[rpc-name], named
 after it in kebab-case (@racket[eth_getBalance] defines
 @racket[eth-get-balance]).  The function takes one positional argument
-per @racket[arg-spec] and an optional @racket[#:provider].  The name is bound as syntax that
+per @racket[arg-spec] without a @racket[keyword], an optional keyword argument per
+@racket[arg-spec] with one, @racket[default-expr] when the call leaves it out, and an optional
+@racket[#:provider], which no @racket[arg-spec] may name.  Each argument is the JSON parameter at
+its spec's position.  The name is bound as syntax that
 stands for the function wherever it appears, so it cannot be @racket[set!].
 
 Each argument is checked against its @racket[contract-expr], which blames the
@@ -899,12 +903,16 @@ the JSON parameter.  The response's @tt{result} goes through
 @racket["method: unexpected result value"], unless @racket[transform-expr] raises
 @racket[exn:fail:web3] itself, which is raised as it is.  A @racket[reader-expr] takes the
 place of @racket[transform-expr] and is applied to the method's name, a string, the result and
-the function's positional arguments before their conversion.
+the function's arguments before their conversion, in their specs' order.
 
 @racketblock[
 (define-jsonrpc-endpoint eth_getBalance
   (-> string? [block-param/c block-param->string] exact-nonnegative-integer?)
   #:result-transform hex-string->number)
+(define-jsonrpc-endpoint eth_getBlockByNumber
+  (-> [block-param/c block-param->string] #:full-transactions? [boolean? #:default #f]
+      (or/c #f hash?))
+  #:result-transform (lambda (v) (and (hash? v) v)))
 ]}
 
 @subsection{HTTP Providers}
@@ -1191,11 +1199,11 @@ without code.}
 
 @deftogether[(
 @defproc[(eth-get-block-by-number [block block-param/c]
-                                  [full-transactions? boolean?]
+                                  [#:full-transactions? full-transactions? boolean? #f]
                                   [#:provider provider (or/c #f provider?) (current-provider)])
          (or/c #f block?)]
 @defproc[(eth-get-block-by-hash [block-hash #,hash-argument-contract]
-                                [full-transactions? boolean?]
+                                [#:full-transactions? full-transactions? boolean? #f]
                                 [#:provider provider (or/c #f provider?) (current-provider)])
          (or/c #f block?)])]{
 The block, or @racket[#f] for an unknown one.  Its @racket[block-transactions] are

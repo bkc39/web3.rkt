@@ -183,5 +183,5 @@
          (test-case "logs carry their block's timestamp and are not removed"
            (for ([l (in-list (get-logs (log-filter)))])
              (check-equal? (log-block-timestamp l)
-                           (block-timestamp (eth-get-block-by-number (log-block-number l) #f)))
+                           (block-timestamp (eth-get-block-by-number (log-block-number l))))
              (check-false (log-removed? l))))))]))
