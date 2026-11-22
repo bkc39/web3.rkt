@@ -56,7 +56,7 @@ return the call's result (quantities as exact integers), and raise
 
 ```racket
 (define-jsonrpc-endpoint eth_getBalance
-  (-> string? [block-param/c block-param->string] exact-nonnegative-integer?)
+  (-> address? [block-param/c block-param->string] exact-nonnegative-integer?)
   #:result-transform hex-string->number)
 ```
 
