@@ -65,7 +65,9 @@
                     (list (log-address l) (log-topics l) (log-data l)))
                   (receipt-contract-address receipt)
                   (let ([tx (eth-get-transaction-by-hash (receipt-transaction-hash receipt))])
-                    (map (lambda (key) (hash-ref tx key)) '(to input value gas)))))
+                    (map (lambda (field) (field tx))
+                         (list transaction-info-to transaction-info-data transaction-info-value
+                               transaction-info-gas-limit)))))
           (token-balance-of address anvil-bob)
           (token-deposits address sender)
           (token-total-supply address)
@@ -113,7 +115,7 @@
       (for ([tx-hash (in-list hashes)]
             [nonce (in-naturals first-nonce)])
         (check-equal? (receipt-status (wait-for-receipt tx-hash)) 1)
-        (check-equal? (quantity (hash-ref (eth-get-transaction-by-hash tx-hash) 'nonce)) nonce))))
+        (check-equal? (transaction-info-nonce (eth-get-transaction-by-hash tx-hash)) nonce))))
 
   (define (contract-cases)
     (test-case "N4, N5: a contract's sends from an address and from its key leave the same chain"
@@ -148,9 +150,8 @@
       (define receipt
         (contract-send address "deposit(string)" "node" #:value 1 #:from (node-signer account3)))
       (check-equal? (receipt-status receipt) 1)
-      (check-equal? (string-downcase (hash-ref (eth-get-transaction-by-hash
-                                                (receipt-transaction-hash receipt))
-                                               'from))
+      (check-equal? (string-downcase (transaction-info-from (eth-get-transaction-by-hash
+                                                             (receipt-transaction-hash receipt))))
                     (string-downcase account3))))
 
   (define refusals

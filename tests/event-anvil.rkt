@@ -12,9 +12,6 @@
            "helpers/event-fixtures.rkt"
            "util.rkt")
 
-  (define (hex->number h)
-    (string->number (substring h 2) 16))
-
   (define (arguments logs)
     (map event-log-arguments logs))
 
@@ -185,6 +182,6 @@
 
          (test-case "logs carry their block's timestamp and are not removed"
            (for ([l (in-list (get-logs (log-filter)))])
-             (define block (eth-get-block-by-number (log-block-number l) #f))
-             (check-equal? (log-block-timestamp l) (hex->number (hash-ref block 'timestamp)))
+             (check-equal? (log-block-timestamp l)
+                           (block-timestamp (eth-get-block-by-number (log-block-number l))))
              (check-false (log-removed? l))))))]))

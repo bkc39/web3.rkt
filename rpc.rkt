@@ -18,6 +18,7 @@
          "private/exn.rkt"
          "private/hex.rkt"
          (for-syntax casemate
+                     (only-in racket/list check-duplicates)
                      racket/base
                      racket/syntax))
 
@@ -64,10 +65,6 @@
                             code
                             message
                             data)))
-
-(define (raise-web3-error method fmt . args)
-  (raise (exn:fail:web3 (format "~a: ~a" method (apply format fmt args))
-                        (current-continuation-marks))))
 
 ;;;; providers
 
@@ -333,6 +330,20 @@
     (pattern [contract:expr ->param:expr])
     (pattern contract:expr #:with ->param #'values))
 
+  (define-splicing-syntax-class param-spec
+    #:attributes (positional keyword contract ->param default)
+    (pattern (~seq keyword:keyword [contract:expr #:default default:expr])
+             #:fail-when (and (eq? (syntax-e #'keyword) '#:provider) #'keyword)
+             "every endpoint takes #:provider"
+             #:with ->param #'values
+             #:attr positional #f)
+    (pattern spec:arg-spec
+             #:with contract #'spec.contract
+             #:with ->param #'spec.->param
+             #:with positional #'spec.contract
+             #:attr keyword #f
+             #:attr default #f))
+
   (define (expand-endpoint-use endpoint stx)
     (define checked
       #`(#,(endpoint-transformer-checked-for endpoint)
@@ -343,6 +354,9 @@
 
   (struct endpoint-transformer (checked-for) #:property prop:procedure expand-endpoint-use))
 
+(define ((transform->reader transform) _method raw . _arguments)
+  (transform raw))
+
 (define (endpoint-checker signature procedure positive name srcloc)
   (define checked (make-hash))
   (lambda (negative)
@@ -352,22 +366,33 @@
 
 (define-syntax-parse-rule
   (define-jsonrpc-endpoint rpc-name:id
-    ((~datum ->) p:arg-spec ... result-contract:expr)
-    (~optional (~seq #:result-transform transform:expr) #:defaults ([transform #'values])))
+    ((~datum ->) p:param-spec ... result-contract:expr)
+    (~optional (~or* (~seq #:result-transform transform:expr)
+                     (~seq #:result-reader reader:expr))
+               #:defaults ([transform #'values])))
+  #:fail-when (check-duplicates (filter values (attribute p.keyword)) #:key syntax-e)
+  "duplicate keyword spec"
   #:with fn-name (format-id #'rpc-name "~a" (->kebab-case (syntax-e #'rpc-name)))
   #:with method (datum->syntax #'rpc-name (symbol->string (syntax-e #'rpc-name)))
   #:with (arg ...) (generate-temporaries #'(p ...))
-  #:with (result? unchecked signature checked-for)
-  (generate-temporaries '(result? unchecked signature checked-for))
+  #:with (result? transformer unchecked signature checked-for)
+  (generate-temporaries '(result? transformer unchecked signature checked-for))
   #:with procedure
-  (syntax-property #'(lambda (arg ... #:provider [provider (current-provider)])
-                       (call-endpoint method (list (p.->param arg) ...) provider transform result?))
+  (syntax-property #'(lambda ((~? (~@ p.keyword [arg p.default]) arg) ...
+                              #:provider [provider (current-provider)])
+                       (call-endpoint method (list (p.->param arg) ...) provider
+                                      (lambda (raw) (transformer method raw arg ...))
+                                      result?))
                    'inferred-name
                    (syntax-e #'fn-name))
   (begin
+    (define transformer (~? (transform->reader transform) reader))
     (define result? (flat-contract-predicate (coerce-flat-contract 'fn-name result-contract)))
     (define unchecked procedure)
-    (define signature (->* (p.contract ...) (#:provider (or/c #f provider?)) any))
+    (define signature
+      (->* ((~? p.positional) ...)
+           ((~? (~@ p.keyword p.contract)) ... #:provider (or/c #f provider?))
+           any))
     (define checked-for
       (endpoint-checker signature unchecked (quote-module-name) 'fn-name (quote-srcloc rpc-name)))
     (define-syntax fn-name (endpoint-transformer (quote-syntax checked-for)))))

@@ -6,7 +6,8 @@
          (only-in racket/string string-join)
          (only-in web3/account hex-string->secret-key secp256k1-order signature)
          (only-in web3/rlp natural->rlp-scalar rlp-decode rlp-encode)
-         (only-in web3/rpc bytes->hex-string hex-string->bytes hex-string->number)
+         (only-in web3/rpc hex-string->bytes hex-string->number)
+         web3/eth/transaction-info
          web3/transaction
          (only-in (submod web3/transaction internal) wire-fields)
          (only-in web3/units ether->wei gwei->wei)
@@ -340,47 +341,43 @@
 (define (quantity text)
   (hex-string->number text))
 
-(define (check-node-fields stx node)
-  (define tx (signed-transaction-transaction stx))
-  (match-define (signature r s y-parity) (signed-transaction-signature stx))
-  (define (field key) (hash-ref node key 'null))
-  (define name (format "~s" stx))
-  (check-equal? (string-downcase (field 'from)) (string-downcase (signed-transaction-sender stx))
-                name)
-  (check-equal? (field 'hash) (signed-transaction-hash stx) name)
-  (check-equal? (quantity (field 'type)) (transaction-type tx) name)
-  (check-equal? (quantity (field 'nonce)) (transaction-nonce tx) name)
-  (check-equal? (match (field 'chainId) ['null #f] [id (quantity id)]) (transaction-chain-id tx)
-                name)
-  (check-equal? (field 'to) (match (transaction-to tx) [#f 'null] [to (string-downcase to)]) name)
-  (check-equal? (quantity (field 'value)) (transaction-value tx) name)
-  (check-equal? (field 'input) (bytes->hex-string (transaction-data tx)) name)
-  (check-equal? (quantity (field 'gas)) (transaction-gas-limit tx) name)
-  (check-equal? (quantity (field 'r)) r name)
-  (check-equal? (quantity (field 's)) s name)
-  (match (transaction-type tx)
-    [0
-     (check-equal? (quantity (field 'gasPrice)) (transaction-gas-price tx) name)
-     (check-equal? (quantity (field 'v))
-                   (match (transaction-chain-id tx)
-                     [#f (+ 27 y-parity)]
-                     [chain-id (+ 35 (* 2 chain-id) y-parity)])
-                   name)]
-    [type
-     (check-equal? (quantity (field 'yParity)) y-parity name)
-     (check-equal? (field 'accessList)
-                   (for/list ([entry (in-list (transaction-access-list tx))])
-                     (match-define (cons address keys) entry)
-                     (hasheq 'address (string-downcase address)
-                             'storageKeys (map bytes->hex-string keys)))
-                   name)
-     (if (= type 1)
-         (check-equal? (quantity (field 'gasPrice)) (transaction-gas-price tx) name)
-         (check-equal? (list (quantity (field 'maxFeePerGas))
-                             (quantity (field 'maxPriorityFeePerGas)))
-                       (list (transaction-max-fee-per-gas tx)
-                             (transaction-max-priority-fee-per-gas tx))
-                       name))]))
+(define (legacy-v transaction y-parity)
+  (match (transaction-chain-id transaction)
+    [#f (+ 27 y-parity)]
+    [chain-id (+ 35 (* 2 chain-id) y-parity)]))
+
+(define (type-node-fields transaction y-parity)
+  (match (transaction-type transaction)
+    [0 `([,transaction-info-gas-price ,(transaction-gas-price transaction)]
+         [,transaction-info-v ,(legacy-v transaction y-parity)])]
+    [1 `([,transaction-info-gas-price ,(transaction-gas-price transaction)]
+         [,transaction-info-y-parity ,y-parity]
+         [,transaction-info-access-list ,(transaction-access-list transaction)])]
+    [2 `([,transaction-info-max-fee-per-gas ,(transaction-max-fee-per-gas transaction)]
+         [,transaction-info-max-priority-fee-per-gas
+          ,(transaction-max-priority-fee-per-gas transaction)]
+         [,transaction-info-y-parity ,y-parity]
+         [,transaction-info-access-list ,(transaction-access-list transaction)])]))
+
+(define (check-node-fields signed info)
+  (define transaction (signed-transaction-transaction signed))
+  (match-define (signature signature-r signature-s y-parity) (signed-transaction-signature signed))
+  (define name (format "~s" signed))
+  (check-equal? (transaction-info->signed-transaction info) signed name)
+  (for ([row (in-list `([,transaction-info-from ,(signed-transaction-sender signed)]
+                        [,transaction-info-hash ,(signed-transaction-hash signed)]
+                        [,transaction-info-type ,(transaction-type transaction)]
+                        [,transaction-info-nonce ,(transaction-nonce transaction)]
+                        [,transaction-info-chain-id ,(transaction-chain-id transaction)]
+                        [,transaction-info-to ,(transaction-to transaction)]
+                        [,transaction-info-value ,(transaction-value transaction)]
+                        [,transaction-info-data ,(transaction-data transaction)]
+                        [,transaction-info-gas-limit ,(transaction-gas-limit transaction)]
+                        [,transaction-info-r ,signature-r]
+                        [,transaction-info-s ,signature-s]
+                        ,@(type-node-fields transaction y-parity)))])
+    (match-define (list accessor expected) row)
+    (check-equal? (accessor info) expected (format "~a ~a" (object-name accessor) name))))
 
 (define (maybe prng kw make)
   (if (zero? (random 2 prng)) '() (list kw (make))))

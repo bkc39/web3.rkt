@@ -3,21 +3,30 @@
 (module+ test
   (require json
            (only-in racket/contract flat-contract-predicate)
-           (only-in racket/match match-define)
+           (only-in racket/match match match-define)
            rackunit
            web3
-           (only-in "helpers/results.rkt" receipt-json)
+           (only-in "helpers/results.rkt"
+                    block-json
+                    full-block-json
+                    receipt-json
+                    transaction-info-json/0)
            (only-in "util.rkt" check-blames-here filled-hash max-word raised))
 
   (define addr "0x00000000000000000000000000000000000c0de0")
-  (define a-block (hasheq 'number "0x10" 'hash (filled-hash #\b) 'transactions '()))
-  (define a-transaction (hasheq 'hash (filled-hash #\a) 'nonce "0x0"))
+  (define mined-hash (hash-ref full-block-json 'hash))
+  (define a-block (jsexpr->block full-block-json))
+  (define a-transaction (jsexpr->transaction-info transaction-info-json/0))
   (define a-receipt (jsexpr->receipt receipt-json))
+  (define receipt-hash (hash-ref receipt-json 'transactionHash))
+  (define transaction-hash (hash-ref transaction-info-json/0 'hash))
   (define a-log (hasheq 'address addr 'topics '() 'data "0x"))
   (define a-tx (hasheq 'from addr 'to addr 'data "0x"))
   (define a-query (hasheq 'address addr 'fromBlock "earliest"))
   (define history (hasheq 'oldestBlock "0x10" 'baseFeePerGas '("0x7" "0x7")
-                          'gasUsedRatio '(0.5) 'reward '(("0x1" "0x2"))))
+                          'gasUsedRatio '(0.5) 'reward '(("0x1" "0x2" "0x3"))))
+  (define a-history (jsexpr->fee-history history))
+  (define unrewarded (hash-remove history 'reward))
   (define a-proof (hasheq 'address addr 'accountProof '("0xf8") 'storageProof '()))
   (define an-access-list (hasheq 'accessList '() 'gasUsed "0x5208"))
   (define zero-word (filled-hash #\0))
@@ -26,21 +35,27 @@
   (define endpoints
     `([,eth-blob-base-fee () "eth_blobBaseFee" () "0x1" 1]
       [,eth-fee-history (4 16 (1/2 25 75.5)) "eth_feeHistory" ("0x4" "0x10" (0.5 25 75.5))
-                        ,history ,history]
-      [,eth-fee-history (1 "latest" ()) "eth_feeHistory" ("0x1" "latest" ()) ,history ,history]
+                        ,history ,a-history]
+      [,eth-fee-history (1 "latest" ()) "eth_feeHistory" ("0x1" "latest" ()) ,unrewarded
+                        ,(jsexpr->fee-history unrewarded)]
       [,eth-get-proof (,addr (0 255) "latest")
                       "eth_getProof" (,addr (,zero-word ,word-255) "latest") ,a-proof ,a-proof]
-      [,eth-get-block-by-hash ("0xbb" #t) "eth_getBlockByHash" ("0xbb" #t) ,a-block ,a-block]
+      [,eth-get-block-by-hash (,mined-hash #:full-transactions? #t) "eth_getBlockByHash"
+                              (,mined-hash #t) ,full-block-json ,a-block]
+      [,eth-get-block-by-number (1) "eth_getBlockByNumber" ("0x1" #f) ,block-json
+                                ,(jsexpr->block block-json)]
       [,eth-get-block-receipts (16) "eth_getBlockReceipts" ("0x10") (,receipt-json) (,a-receipt)]
-      [,eth-get-transaction-receipt ("0xaa") "eth_getTransactionReceipt" ("0xaa")
+      [,eth-get-transaction-receipt (,receipt-hash) "eth_getTransactionReceipt" (,receipt-hash)
                                     ,receipt-json ,a-receipt]
       [,eth-get-block-receipts ("safe") "eth_getBlockReceipts" ("safe") () ()]
       [,eth-get-transaction-by-block-hash-and-index
-       ("0xbb" 2) "eth_getTransactionByBlockHashAndIndex" ("0xbb" "0x2")
-       ,a-transaction ,a-transaction]
+       (,mined-hash 0) "eth_getTransactionByBlockHashAndIndex" (,mined-hash "0x0")
+       ,transaction-info-json/0 ,a-transaction]
       [,eth-get-transaction-by-block-number-and-index
        ("latest" 0) "eth_getTransactionByBlockNumberAndIndex" ("latest" "0x0")
-       ,a-transaction ,a-transaction]
+       ,transaction-info-json/0 ,a-transaction]
+      [,eth-get-transaction-by-hash (,transaction-hash) "eth_getTransactionByHash"
+                                    (,transaction-hash) ,transaction-info-json/0 ,a-transaction]
       [,eth-get-raw-transaction-by-hash ("0xaa") "eth_getRawTransactionByHash" ("0xaa")
                                         "0x02f8" "0x02f8"]
       [,eth-create-access-list (,a-tx "pending") "eth_createAccessList" (,a-tx "pending")
@@ -55,9 +70,19 @@
       [,eth-uninstall-filter ("0x1f") "eth_uninstallFilter" ("0x1f") #t #t]
       [,eth-uninstall-filter ("0x1f") "eth_uninstallFilter" ("0x1f") #f #f]))
 
+  (define (apply-with-provider procedure arguments provider)
+    (let split ([arguments arguments] [positional '()] [keywords `((#:provider . ,provider))])
+      (match arguments
+        ['()
+         (define sorted (sort keywords keyword<? #:key car))
+         (keyword-apply procedure (map car sorted) (map cdr sorted) (reverse positional))]
+        [(list* (? keyword? keyword) value more)
+         (split more positional (cons (cons keyword value) keywords))]
+        [(cons value more) (split more (cons value positional) keywords)])))
+
   (define (call-mocked procedure arguments method answer)
     (define node (mock-provider (hash method answer)))
-    (define result (apply procedure arguments #:provider node))
+    (define result (apply-with-provider procedure arguments node))
     (list result (mock-provider-calls node)))
 
   (define (unexpected-message procedure arguments method answer)
@@ -76,18 +101,21 @@
       (match-define (list result _) (call-mocked procedure arguments method answer))
       (check-equal? result expected method)))
 
-  (test-case "E3: a missing receipt is #f, and any other missing object 'null"
+  (test-case "E3: a missing typed object is #f, and a missing raw transaction 'null"
     (for ([row (in-list `([,eth-get-block-receipts ("latest") "eth_getBlockReceipts" null]
-                          [,eth-get-transaction-receipt ("0xaa") "eth_getTransactionReceipt" null]))])
-      (match-define (list procedure arguments method answer) row)
-      (match-define (list result _) (call-mocked procedure arguments method answer))
-      (check-false result method))
-    (for ([row (in-list `([,eth-get-block-by-hash ("0xbb" #f) "eth_getBlockByHash" null]
+                          [,eth-get-transaction-receipt ("0xaa") "eth_getTransactionReceipt" null]
+                          [,eth-get-transaction-by-hash ("0xaa") "eth_getTransactionByHash" null]
                           [,eth-get-transaction-by-block-hash-and-index
                            ("0xbb" 0) "eth_getTransactionByBlockHashAndIndex" null]
                           [,eth-get-transaction-by-block-number-and-index
                            (16 0) "eth_getTransactionByBlockNumberAndIndex" null]
-                          [,eth-get-raw-transaction-by-hash ("0xaa") "eth_getRawTransactionByHash"
+                          [,eth-get-block-by-hash ("0xbb") "eth_getBlockByHash" null]
+                          [,eth-get-block-by-number ("latest" #:full-transactions? #t)
+                                                    "eth_getBlockByNumber" null]))])
+      (match-define (list procedure arguments method answer) row)
+      (match-define (list result _) (call-mocked procedure arguments method answer))
+      (check-false result method))
+    (for ([row (in-list `([,eth-get-raw-transaction-by-hash ("0xaa") "eth_getRawTransactionByHash"
                                                             null]
                           [,eth-get-raw-transaction-by-hash ("0xaa") "eth_getRawTransactionByHash"
                                                             "0x"]))])
@@ -107,7 +135,7 @@
       [,eth-blob-base-fee () "eth_blobBaseFee" "0x" "eth_blobBaseFee: unexpected result \"0x\""]
       [,eth-blob-base-fee () "eth_blobBaseFee" "10" "eth_blobBaseFee: unexpected result \"10\""]
       [,eth-blob-base-fee () "eth_blobBaseFee" null "eth_blobBaseFee: unexpected result 'null"]
-      [,eth-get-block-by-hash ("0xbb" #f) "eth_getBlockByHash" "0xbb"
+      [,eth-get-block-by-hash ("0xbb") "eth_getBlockByHash" "0xbb"
                               "eth_getBlockByHash: unexpected result \"0xbb\""]
       [,eth-get-block-receipts ("latest") "eth_getBlockReceipts" ("0xaa")
                                "eth_getBlockReceipts: malformed receipt in receipts 0 from the node: \"0xaa\""]
@@ -124,6 +152,18 @@
       [,eth-get-transaction-by-block-hash-and-index
        ("0xbb" 0) "eth_getTransactionByBlockHashAndIndex" ()
        "eth_getTransactionByBlockHashAndIndex: unexpected result '()"]
+      [,eth-get-transaction-by-block-hash-and-index
+       ("0xbb" 0) "eth_getTransactionByBlockHashAndIndex" ,(hash-set transaction-info-json/0 'gas "zz")
+       "eth_getTransactionByBlockHashAndIndex: malformed transaction gas limit from the node: \"zz\""]
+      [,eth-get-transaction-by-hash (,transaction-hash) "eth_getTransactionByHash"
+                                    ,(hash-set transaction-info-json/0 'gas "zz")
+                                    "eth_getTransactionByHash: malformed transaction gas limit from the node: \"zz\""]
+      [,eth-get-transaction-by-hash ("0xaa") "eth_getTransactionByHash" "0xaa"
+                                    "eth_getTransactionByHash: unexpected result \"0xaa\""]
+      [,eth-get-transaction-by-hash (,(filled-hash #\c)) "eth_getTransactionByHash"
+                                    ,transaction-info-json/0
+                                    ,(format "eth_getTransactionByHash: malformed transaction hash from the node: ~s"
+                                             transaction-hash)]
       [,eth-get-transaction-by-block-number-and-index
        (16 0) "eth_getTransactionByBlockNumberAndIndex" ()
        "eth_getTransactionByBlockNumberAndIndex: unexpected result '()"]
@@ -157,7 +197,7 @@
       [,eth-fee-history (1 "latest" (0.3333333333333333 1/3))]
       [,eth-fee-history (1 "latest" (+nan.0))]
       [,eth-fee-history (1 "latest" (-1))]
-      [,eth-get-block-by-hash ("0xbb" yes)]
+      [,eth-get-block-by-hash ("0xbb" #:full-transactions? yes)]
       [,eth-get-block-receipts ("head")]
       [,eth-get-block-receipts (-1)]
       [,eth-get-transaction-by-block-hash-and-index ("0xbb" -1)]
@@ -174,10 +214,10 @@
     (define node (mock-provider (lambda (method params) 'null)))
     (for ([row (in-list bad-arguments)])
       (match-define (list procedure arguments) row)
-      (check-blames-here (apply procedure arguments #:provider node)))
+      (check-blames-here (apply-with-provider procedure arguments node)))
     (for ([row (in-list endpoints)])
       (match-define (list procedure arguments _ _ _ _) row)
-      (check-blames-here (apply procedure arguments #:provider 'nope))))
+      (check-blames-here (apply-with-provider procedure arguments 'nope))))
 
   (test-case "the wrong number of arguments is an arity error naming the endpoint"
     (define e (raised (lambda () (eth-fee-history 1 "latest" #:provider (mock-provider (hash))))))

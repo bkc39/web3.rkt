@@ -10,7 +10,7 @@ bezzle, which pin it as a flake input.
 
 | module | holds |
 |---|---|
-| `rpc.rkt` | providers, `rpc-call`, errors, hex helpers, `define-jsonrpc-endpoint` |
+| `rpc.rkt` | providers, `rpc-call`, errors, hex helpers, `define-jsonrpc-endpoint` (whose argument specs may be optional keywords, and whose `#:result-reader` gets the method name, the result and the call's arguments) |
 | `eth.rkt` | `web3_*`, `net_*`, `eth_*` endpoints (fees, blocks, receipts, proofs, filters), `wait-for-receipt`; an `internal` submodule holds `poll-receipt/who`, the raw poll every wait runs |
 | `private/eth-params.rkt` | the endpoints' parameter contracts and their conversions to the node's JSON: block parameters, reward percentiles, storage slots, JSON objects; `eth.rkt` exports the documented ones |
 | `abi.rkt` | the contract ABI: encoders, decoders, selectors, reverts; an `internal` submodule of entry points that take the caller's `who` |
@@ -29,8 +29,9 @@ bezzle, which pin it as a flake input.
 | `private/signer.rkt` | the `define-generics` form of `gen:signer`, its methods exported with a `generic-` prefix so `signer.rkt` can give the public names to the checked procedures; racket/base and racket/generic only |
 | `rlp.rkt` | RLP: `rlp-encode`, strict `rlp-decode`, scalars; an `internal` submodule of entry points that take the caller's `who`; requires only `racket/base` libraries and `private/exn`, `hex`, `who` |
 | `units.rkt` | amounts: decimal strings and exact numbers in wei, gwei, ether or a token's decimals, and back; requires only `racket/base` libraries and `private/exn.rkt` |
-| `transaction.rkt` | legacy, EIP-2930 and EIP-1559 transactions: values, encodings, signing, strict parsing; `transaction->jsexpr`, built without JSON modules; an `internal` submodule holds the parser under the caller's `who`, its reasons, the wire field table, `transaction/c` and `transaction-difference`, none of them public names; no network or JSON modules |
+| `transaction.rkt` | legacy, EIP-2930 and EIP-1559 transactions: values, encodings, signing, strict parsing; `transaction->jsexpr`, built without JSON modules; an `internal` submodule holds the parser under the caller's `who`, its reasons, the wire field table, `fields->transaction` (a transaction from a table of its fields, unchecked), `signed-transaction/who`, the scalar rules of `private/transaction-rules.rkt`, `transaction/c` and `transaction-difference`, none of them public names; no network or JSON modules |
 | `private/opaque.rkt` | `opaque/c` and `opaque->`, contracts whose errors name the kind of value, never the value; copied from libsecp256k1, which does not export them, with `web3-kinds`, the kinds only web3 has, and required keyword arguments added. Also the contracts web3's modules share: `secret-key/c` (`account.rkt`, `transaction.rkt`, `signer.rkt`), and the digest, message and address contracts (`account.rkt`, `transaction.rkt`, `signer.rkt`) |
+| `private/transaction-rules.rkt` | the rules on a transaction's scalars that `transaction.rkt` and `eth/transaction-info.rkt` share: legacy `v`, y-parity, curve scalars, fee caps; requires only `account.rkt` |
 | `private/signature.rkt` | the unchecked `signature` struct, its printer and its 65 bytes, shared by `account.rkt`, which exports it under contracts, and `private/opaque.rkt` |
 | `abi/type.rkt` | ABI types, signatures and value checks; phase-1 safe, so it requires only `racket/base` libraries and `private/exn.rkt`; a `private` submodule holds the reader and contracts other modules share |
 | `abi/event-type.rkt` | event descriptions (`abi-event`, string and s-expression forms); phase-1 safe like `abi/type.rkt`, plus `private/who.rkt`; a `private` submodule holds the readers under their caller's `who` |
@@ -38,14 +39,16 @@ bezzle, which pin it as a flake input.
 | `abi/event.rkt` | event topics, `event-topics`, decoding logs into `event-log`s; an `internal` submodule of entry points that take the caller's `who` |
 | `eth/log.rkt` | logs, a `define-node-record` table (the struct is `log-struct`; nothing binds `log`); an `internal` submodule holds the reader under the caller's `who`, the table and what `abi/event.rkt` extends |
 | `eth/receipt.rkt` | receipts, a `define-node-record` table, and `receipt-succeeded?`; an `internal` submodule holds the reader under the caller's `who`, the check of a receipt's transaction hash, the table and the logs accessor `event.rkt` uses |
-| `private/record.rkt` | `define-node-record`: one field table per node object, from which its struct, accessors, contracts, reader, printer hook and `T-fields`, its `field-row`s, come; the field kinds, each a reader under the caller's `who` and a contract |
+| `eth/transaction-info.rkt` | transactions as a node describes them, a `define-node-record` table, and `transaction-info->signed-transaction`, which rebuilds the signed transaction and checks the node's hash and sender against it; an `internal` submodule holds the readers under the caller's `who`, the checks of the asked hash, block and index, the table and its noun |
+| `eth/block.rkt` | blocks, withdrawals and fee histories, three `define-node-record` tables; a block's transactions are all hashes or all `transaction-info`s; an `internal` submodule holds the readers under the caller's `who`, the block reader that checks the block and form asked for, the fee history reader that checks one reward per percentile, and the tables and their nouns |
+| `private/record.rkt` | `define-node-record`: one field table per node object, from which its struct, accessors, contracts, reader, printer hook and `T-fields`, its `field-row`s, come; the field kinds, each a reader under the caller's `who` and a contract; `T-noun`, the noun its messages use; `asked-reader`, a reader that checks the record's hash against the one asked for, and `check-asked` and `check-block-asked`, the checks it and the block readers share |
 | `private/field-contracts.rkt` | the field contracts records and transactions share: hashes, `to`, `uint64/c`, `uint256/c`, 32 bytes, access lists |
 | `event.rkt` | `log-filter`, `get-logs` (chunks, halving on a refused range), `receipt-logs` |
 | `abi/vectors.rkt` | conformance vectors, data in `abi/vectors/encode.rktd` (regenerate with `racket tests/generate-abi-vectors.rkt`) and the hand-written `abi/vectors/decode.rktd` |
 | `private/abi-decode.rkt` | the decoder core and its reasons; `abi.rkt` puts contracts on it |
 | `private/abi-item.rkt` | ABI item structs and their string and s-expression readers under the caller's `who`; phase-1 safe; `abi/description.rkt` puts contracts on it |
 | `private/hex.rkt` | unchecked conversions between bytes, hex strings and naturals; callers check their input |
-| `private/exn.rkt` | the exception structs (`exn:fail:web3`, `…:rpc`, `…:rpc:revert`, `…:transaction`, `…:fill`, `…:abi`, `…:abi:type`, `…:abi:value`, `…:abi:decode`, `…:key`, `…:rlp`, `…:raw-transaction`, `…:signature`, `…:signer`, `…:units`); racket/base only |
+| `private/exn.rkt` | the exception structs (`exn:fail:web3`, `…:rpc`, `…:rpc:revert`, `…:transaction`, `…:fill`, `…:abi`, `…:abi:type`, `…:abi:value`, `…:abi:decode`, `…:key`, `…:rlp`, `…:raw-transaction`, `…:signature`, `…:signer`, `…:units`) and `raise-web3-error`, the one raiser of a plain `exn:fail:web3` under a `who`; racket/base only |
 | `private/node.rkt` | checked conversions of node data (hex, quantities, addresses, hashes, naturals of a given width); no JSON or transport modules |
 | `private/who.rkt` | `define/who`, which defines `name` and `name/who`, the same procedure taking the `who` its messages start with |
 | `anvil.rkt` | anvil's methods and process management |

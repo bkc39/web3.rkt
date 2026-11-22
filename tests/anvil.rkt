@@ -90,11 +90,11 @@
        (test-case "a block lists its transactions' hashes, or the transactions themselves"
          (define tx-hash (eth-send-transaction (hasheq 'from me 'to stranger 'value "0x1")))
          (define height (receipt-block-number (wait-for-receipt tx-hash)))
-         (check-equal? (hash-ref (eth-get-block-by-number height #f) 'transactions) (list tx-hash))
-         (check-equal? (for/list ([full (in-list (hash-ref (eth-get-block-by-number height #t)
-                                                           'transactions))])
-                         (list (hash-ref full 'hash) (hash-ref full 'value)))
-                       (list (list tx-hash "0x1"))))
+         (check-equal? (block-transactions (eth-get-block-by-number height)) (list tx-hash))
+         (define full-block (eth-get-block-by-number height #:full-transactions? #t))
+         (check-equal? (for/list ([full (in-list (block-transactions full-block))])
+                         (list (transaction-info-hash full) (transaction-info-value full)))
+                       (list (list tx-hash 1))))
 
        (test-case "an address without code has code 0x"
          (check-equal? (eth-get-code stranger "latest") "0x"))

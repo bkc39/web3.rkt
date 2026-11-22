@@ -2,9 +2,15 @@
 
 (require racket/contract
          (only-in racket/match match)
+         "eth/block.rkt"
+         (only-in (submod "eth/block.rkt" internal) jsexpr->block-of jsexpr->fee-history-of)
          "eth/log.rkt"
          "eth/receipt.rkt"
+         "eth/transaction-info.rkt"
          (only-in (submod "eth/receipt.rkt" internal) jsexpr->receipt-of jsexpr->receipt/who)
+         (only-in (submod "eth/transaction-info.rkt" internal)
+                  jsexpr->transaction-info-in
+                  jsexpr->transaction-info-of)
          (only-in "private/eth-params.rkt"
                   block-param/c
                   block-param->string
@@ -20,7 +26,7 @@
          "private/who.rkt"
          "rpc.rkt")
 
-(provide (all-from-out "eth/log.rkt" "eth/receipt.rkt")
+(provide (all-from-out "eth/block.rkt" "eth/log.rkt" "eth/receipt.rkt" "eth/transaction-info.rkt")
          block-param/c
          block-param->string
          reward-percentiles/c
@@ -87,15 +93,15 @@
 (define (quantity->number v)
   (and (node-quantity? v) (node-quantity->number 'quantity->number "quantity" v)))
 
-(define ((nullable reader who shape?) v)
+(define ((nullable reader shape?) who v . arguments)
   (cond
     [(eq? v 'null) #f]
-    [(shape? v) (reader who v)]
+    [(shape? v) (apply reader who v arguments)]
     [else v]))
 
 (define receipts-field (list-field (record-field jsexpr->receipt/who receipt?)))
 
-(define (read-receipts who v)
+(define (read-receipts who v _block)
   (read-field receipts-field who "receipts" v))
 
 (define (count-or-null->number v)
@@ -129,7 +135,8 @@
   #:result-transform quantity->number)
 (define-jsonrpc-endpoint eth_feeHistory
   (-> [exact-positive-integer? number->hex-string] [block-param/c block-param->string]
-      [reward-percentiles/c percentiles->jsexpr] hash?))
+      [reward-percentiles/c percentiles->jsexpr] fee-history?)
+  #:result-reader (nullable jsexpr->fee-history-of hash?))
 (define-jsonrpc-endpoint eth_accounts (-> (listof string?)))
 (define-jsonrpc-endpoint eth_blockNumber (-> exact-nonnegative-integer?)
   #:result-transform quantity->number)
@@ -155,16 +162,22 @@
 (define-jsonrpc-endpoint eth_getCode
   (-> string? [block-param/c block-param->string] hex-string?))
 (define-jsonrpc-endpoint eth_getBlockByNumber
-  (-> [block-param/c block-param->string] boolean? (or/c 'null hash?)))
-(define-jsonrpc-endpoint eth_getBlockByHash (-> hex-string? boolean? (or/c 'null hash?)))
+  (-> [block-param/c block-param->string] #:full-transactions? [boolean? #:default #f]
+      (or/c #f block?))
+  #:result-reader (nullable jsexpr->block-of hash?))
+(define-jsonrpc-endpoint eth_getBlockByHash
+  (-> hex-string? #:full-transactions? [boolean? #:default #f] (or/c #f block?))
+  #:result-reader (nullable jsexpr->block-of hash?))
 (define-jsonrpc-endpoint eth_getBlockReceipts
   (-> [block-param/c block-param->string] (or/c #f (listof receipt?)))
-  #:result-transform (nullable read-receipts "eth_getBlockReceipts" list?))
+  #:result-reader (nullable read-receipts list?))
 (define-jsonrpc-endpoint eth_getTransactionByBlockHashAndIndex
-  (-> hex-string? [exact-nonnegative-integer? number->hex-string] (or/c 'null hash?)))
+  (-> hex-string? [exact-nonnegative-integer? number->hex-string] (or/c #f transaction-info?))
+  #:result-reader (nullable jsexpr->transaction-info-in hash?))
 (define-jsonrpc-endpoint eth_getTransactionByBlockNumberAndIndex
   (-> [block-param/c block-param->string] [exact-nonnegative-integer? number->hex-string]
-      (or/c 'null hash?)))
+      (or/c #f transaction-info?))
+  #:result-reader (nullable jsexpr->transaction-info-in hash?))
 
 ;; Calls and transactions take a transaction object, e.g.
 ;;   (hasheq 'from a 'to b 'data "0x...")
@@ -180,9 +193,10 @@
 (define-jsonrpc-endpoint eth_sign (-> string? hex-string? hex-string?))
 (define-jsonrpc-endpoint eth_signTransaction (-> object/c hex-string?)
   #:result-transform signed-transaction-result)
-(define-jsonrpc-endpoint eth_getTransactionByHash (-> hex-string? (or/c 'null hash?)))
+(define-jsonrpc-endpoint eth_getTransactionByHash (-> hex-string? (or/c #f transaction-info?))
+  #:result-reader (nullable jsexpr->transaction-info-of hash?))
 (define-jsonrpc-endpoint eth_getTransactionReceipt (-> hex-string? (or/c #f receipt?))
-  #:result-transform (nullable jsexpr->receipt/who "eth_getTransactionReceipt" hash?))
+  #:result-reader (nullable jsexpr->receipt-of hash?))
 (define-jsonrpc-endpoint eth_getRawTransactionByHash
   (-> hex-string? (or/c 'null hex-data-string?))
   #:result-transform empty-data->null)
@@ -218,7 +232,7 @@
                               #:timeout [timeout 30.0]
                               #:interval [interval receipt-poll-interval]
                               #:provider [provider (current-provider)])
-  (read-receipt who tx-hash (poll-receipt who tx-hash timeout interval provider)))
+  (read-receipt who (poll-receipt who tx-hash timeout interval provider) tx-hash))
 
 (define (send-transaction/receipt tx #:provider [provider (current-provider)])
   (wait-for-receipt (eth-send-transaction tx #:provider provider) #:provider provider))

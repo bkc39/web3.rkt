@@ -96,7 +96,7 @@
          (when hash
            (check-not-equal? hash (signed-transaction-hash stx))
            (wait-for-receipt hash)
-           (check-equal? (string-downcase (hash-ref (eth-get-transaction-by-hash hash) 'from))
+           (check-equal? (string-downcase (transaction-info-from (eth-get-transaction-by-hash hash)))
                          (string-downcase sender)))))
 
      (with-anvil ()

@@ -165,12 +165,12 @@
     (wait-for-receipt/who 'wait-for-receipt tx-hash unread-receipt
                           #:timeout (receipt-timeout) #:provider provider)))
 
-(define (unread-receipt _who _tx-hash raw)
+(define (unread-receipt _who raw _tx-hash)
   raw)
 
 (define (settle who tx-hash tx errors provider)
   (define raw (wait-for-outcome who tx-hash provider))
-  (define receipt (jsexpr->receipt-of who tx-hash raw (of-transaction "" tx-hash)))
+  (define receipt (jsexpr->receipt-of who raw tx-hash (of-transaction "" tx-hash)))
   (match (receipt-status receipt)
     [1 receipt]
     [0

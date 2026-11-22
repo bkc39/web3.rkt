@@ -36,5 +36,6 @@
   (provide jsexpr->log/who
            log->list
            log-fields
+           log-noun
            log-struct
            log-tail))

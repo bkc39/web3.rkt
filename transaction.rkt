@@ -6,12 +6,7 @@
          (only-in keccak keccak256)
          (only-in racket/list drop-right)
          (only-in racket/match define-match-expander match match* match-define match-lambda)
-         (only-in "account.rkt"
-                  recover-address
-                  secp256k1-order
-                  signature
-                  signature-low-s?
-                  signature?)
+         (only-in "account.rkt" recover-address signature signature-low-s? signature?)
          (only-in (submod "account.rkt" private) sign-digest/who)
          (only-in "address.rkt" address->checksum-string checksum-address?)
          "private/exn.rkt"
@@ -19,6 +14,7 @@
                   access-list/c bytes32/c hash-string/c to/c uint256/c uint64/c)
          (only-in "private/hex.rkt" bytes->hex bytes->natural hex->bytes natural->hex)
          (only-in "private/opaque.rkt" address/c opaque-> opaque/c secret-key/c)
+         "private/transaction-rules.rkt"
          "private/who.rkt"
          (only-in "rlp.rkt" natural->rlp-scalar rlp-encode)
          (only-in (submod "rlp.rkt" internal) rlp-decode/who))
@@ -55,7 +51,7 @@
                  #:access-list [access-list access-list/c])
                 #:pre/name (priority max-fee)
                 "max-priority-fee-per-gas is at most max-fee-per-gas"
-                (<= priority max-fee)
+                (fee-caps-ordered? priority max-fee)
                 [_ eip1559-transaction?])]
           [transaction-type (-> transaction? (or/c 0 1 2))]
           [transaction-chain-id (-> transaction? (or/c #f uint64/c))]
@@ -83,11 +79,18 @@
 
 (module* internal #f
   (provide bytes->signed-transaction/who
+           curve-scalar?
+           fee-caps-ordered?
+           legacy-v?
            raw-transaction-reason/c
+           signed-transaction/who
            transaction/c
            transaction-difference
-           (rename-out [hash-string/c transaction-hash/c])
-           wire-fields))
+           (rename-out [build fields->transaction] [hash-string/c transaction-hash/c])
+           v-chain-id
+           v-y-parity
+           wire-fields
+           y-parity?))
 
 (define raw-transaction-phrases
   (hasheq 'type "not a transaction"
@@ -295,11 +298,12 @@
   (attach-signature/digest 'sign-transaction tx (sign-digest/who 'sign-transaction key digest)
                            digest))
 
+(define (signed-transaction/who who tx sig)
+  (attach-signature/digest who tx sig (transaction-signing-hash tx)))
+
 (define attach-signature
-  (procedure-rename
-   (lambda (tx sig)
-     (attach-signature/digest 'signed-transaction tx sig (transaction-signing-hash tx)))
-   'signed-transaction))
+  (procedure-rename (lambda (tx sig) (signed-transaction/who 'signed-transaction tx sig))
+                    'signed-transaction))
 
 (define-module-boundary-contract checked-signed-transaction attach-signature
   (-> transaction? signature? signed-transaction?)
@@ -371,7 +375,7 @@
   (define sig (wire->signature wire))
   (define priority (hash-ref wire 'max-priority-fee-per-gas #f))
   (cond
-    [(and priority (> priority (hash-ref wire 'max-fee-per-gas)))
+    [(and priority (not (fee-caps-ordered? priority (hash-ref wire 'max-fee-per-gas))))
      (raise-raw who 'range 'max-priority-fee-per-gas
                 "max-priority-fee-per-gas is more than max-fee-per-gas")]
     [(not (signature-low-s? sig))
@@ -429,31 +433,6 @@
   (if sender
       (seal tx sig sender)
       (raise-raw who 'no-sender #f "the signature recovers no address")))
-
-(define (v-chain-id legacy-v)
-  (and (>= legacy-v 35) (quotient (- legacy-v 35) 2)))
-
-(define (v-y-parity legacy-v)
-  (if (>= legacy-v 35) (remainder (- legacy-v 35) 2) (- legacy-v 27)))
-
-(define (legacy-v? legacy-v)
-  (or (= legacy-v 27)
-      (= legacy-v 28)
-      (and (>= legacy-v 35) (< (v-chain-id legacy-v) (expt 2 64)))))
-
-(define (curve-scalar? scalar)
-  (< 0 scalar secp256k1-order))
-
-(define (y-parity? parity)
-  (<= parity 1))
-
-(define scalar-rules
-  (hasheq 'u64 (list 8 exact-nonnegative-integer? "~a is 2^64 or more")
-          'u256 (list 32 exact-nonnegative-integer? "~a is 2^256 or more")
-          'v (list 9 legacy-v?
-                   "~a is not 27, 28, or 35 + 2 * chain-id + y-parity with chain-id below 2^64")
-          'y-parity (list 1 y-parity? "~a is not 0 or 1")
-          'curve-scalar (list 32 curve-scalar? "~a is zero or not less than the curve order")))
 
 (define (read-scalar who name kind item)
   (match-define (list max-size valid? template) (hash-ref scalar-rules kind))

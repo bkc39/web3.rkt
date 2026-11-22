@@ -154,7 +154,7 @@
       (check-equal? (eth-get-storage-at me 16 "pending") "0x2a")
       (check-equal? (eth-get-block-transaction-count-by-hash "0xbb") 0)
       (check-equal? (eth-get-block-transaction-count-by-number 255) 3)
-      (check-equal? (eth-get-block-by-number "latest" #t) 'null)
+      (check-false (eth-get-block-by-number "latest" #:full-transactions? #t))
       (check-equal? (net-peer-count) 0))
     (check-equal? (mock-provider-calls p)
                   `(("eth_getBalance" ,me "0x5")
@@ -211,6 +211,77 @@
     (define unexpected (failure 'null))
     (check-pred exn:fail:web3? unexpected)
     (check-equal? (exn-message unexpected) "eth_getUncleCountByBlockHash: unexpected result 'null"))
+
+  (define-jsonrpc-endpoint eth_getUncleByBlockNumberAndIndex
+    (-> [exact-nonnegative-integer? number->hex-string] [exact-nonnegative-integer? number->hex-string]
+        (list/c string? string? exact-nonnegative-integer? exact-nonnegative-integer?))
+    #:result-reader list)
+
+  (define-jsonrpc-endpoint eth_getUncleByBlockHashAndIndex
+    (-> hex-string? [exact-nonnegative-integer? number->hex-string] (list/c string?))
+    #:result-transform list)
+
+  (test-case "a reader sees the method, the result and the arguments before conversion"
+    (define p (mock-provider (hash "eth_getUncleByBlockNumberAndIndex" "0xaa")))
+    (check-equal? (eth-get-uncle-by-block-number-and-index 16 3 #:provider p)
+                  '("eth_getUncleByBlockNumberAndIndex" "0xaa" 16 3))
+    (check-equal? (mock-provider-calls p) '(("eth_getUncleByBlockNumberAndIndex" "0x10" "0x3"))))
+
+  (test-case "a transform sees only the result"
+    (define p (mock-provider (hash "eth_getUncleByBlockHashAndIndex" "0xaa")))
+    (check-equal? (eth-get-uncle-by-block-hash-and-index "0xbb" 1 #:provider p) '("0xaa")))
+
+  (define-jsonrpc-endpoint eth_getUncleByBlockNumberAndHash
+    (-> [exact-nonnegative-integer? number->hex-string] #:full? [boolean? #:default #f] hex-string?
+        (list/c string? string? exact-nonnegative-integer? boolean? string?))
+    #:result-reader list)
+
+  (test-case "a keyword spec is an optional keyword argument, sent at its position"
+    (define p (mock-provider (hash "eth_getUncleByBlockNumberAndHash" "0xaa")))
+    (with-provider p
+      (check-equal? (eth-get-uncle-by-block-number-and-hash 16 "0xbb")
+                    '("eth_getUncleByBlockNumberAndHash" "0xaa" 16 #f "0xbb"))
+      (check-equal? (eth-get-uncle-by-block-number-and-hash 16 "0xbb" #:full? #t)
+                    '("eth_getUncleByBlockNumberAndHash" "0xaa" 16 #t "0xbb"))
+      (check-blames-here (eth-get-uncle-by-block-number-and-hash 16 "0xbb" #:full? 'yes))
+      (check-pred exn:fail:contract:arity?
+                  (raised (lambda () (eth-get-uncle-by-block-number-and-hash 16 #t "0xbb")))))
+    (check-equal? (mock-provider-calls p)
+                  '(("eth_getUncleByBlockNumberAndHash" "0x10" #f "0xbb")
+                    ("eth_getUncleByBlockNumberAndHash" "0x10" #t "0xbb"))))
+
+  (test-case "a keyword spec cannot be #:provider"
+    (check-exn #rx"every endpoint takes #:provider"
+               (lambda ()
+                 (parameterize ([current-namespace (make-base-namespace)])
+                   (eval '(module provider-keyword racket/base
+                            (require web3/rpc)
+                            (define-jsonrpc-endpoint eth_foo
+                              (-> #:provider [boolean? #:default #f] string?))))))))
+
+  (test-case "a keyword spec appears once, and the error points at the repeat"
+    (define refused
+      (raised (lambda ()
+                (parameterize ([current-namespace (make-base-namespace)])
+                  (eval '(module twice racket/base
+                           (require web3/rpc)
+                           (define-jsonrpc-endpoint eth_foo
+                             (-> #:full? [boolean? #:default #f]
+                                 #:full? [boolean? #:default #t]
+                                 string?))))))))
+    (check-pred exn:fail:syntax? refused)
+    (check-regexp-match #rx"duplicate keyword spec" (exn-message refused))
+    (check-equal? (map syntax->datum (exn:fail:syntax-exprs refused)) '(#:full?)))
+
+  (test-case "an endpoint takes a result transform or a result reader, not both"
+    (check-exn exn:fail:syntax?
+               (lambda ()
+                 (parameterize ([current-namespace (make-base-namespace)])
+                   (eval '(module two-transforms racket/base
+                            (require web3/rpc)
+                            (define-jsonrpc-endpoint eth_foo (-> string?)
+                              #:result-transform values
+                              #:result-reader values)))))))
 
   (define endpoint-modules
     '((module endpoints racket/base

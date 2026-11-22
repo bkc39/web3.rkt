@@ -17,7 +17,12 @@
          (struct-out exn:fail:web3:rlp)
          (struct-out exn:fail:web3:signature)
          (struct-out exn:fail:web3:signer)
-         (struct-out exn:fail:web3:units))
+         (struct-out exn:fail:web3:units)
+         raise-web3-error)
+
+(define (raise-web3-error who fmt . arguments)
+  (raise (exn:fail:web3 (format "~a: ~a" who (apply format fmt arguments))
+                        (current-continuation-marks))))
 
 (struct exn:fail:web3 exn:fail ())
 (struct exn:fail:web3:rpc exn:fail:web3 (method code rpc-message data))

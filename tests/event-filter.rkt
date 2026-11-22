@@ -10,7 +10,7 @@
            (only-in (submod web3/event internal) log-limit-error?)
            "abi-gen.rkt"
            "helpers/event-fixtures.rkt"
-           (only-in "helpers/results.rkt" receipt-json)
+           (only-in "helpers/results.rkt" block-json receipt-json)
            "util.rkt")
 
   (struct filter-json (filter jsexpr) #:prefab)
@@ -130,6 +130,9 @@
 
   (define transfers (log-filter #:event transfer))
 
+  (define (numbered-block number)
+    (hash-set block-json 'number number))
+
   (define chunked-requests
     `(#s(chunking ,(log-filter #:from-block 0 #:to-block 9) 4 #hash()
                   (("0x0" "0x3") ("0x4" "0x7") ("0x8" "0x9")))
@@ -138,12 +141,12 @@
       #s(chunking ,(log-filter #:from-block 10 #:to-block 10) 5 #hash() (("0xa" "0xa")))
       #s(chunking ,(log-filter #:from-block 7) 3 #hash((("eth_blockNumber") . "0x5")) (("eth_blockNumber")))
       #s(chunking ,(log-filter #:from-block "safe" #:to-block "finalized") 10
-                  #hash((("eth_getBlockByNumber" "safe" #f) . #hasheq((number . "0x3")))
-                        (("eth_getBlockByNumber" "finalized" #f) . #hasheq((number . "0x5"))))
+                  #hash((("eth_getBlockByNumber" "safe" #f) . ,(numbered-block "0x3"))
+                        (("eth_getBlockByNumber" "finalized" #f) . ,(numbered-block "0x5")))
                   (("eth_getBlockByNumber" "safe" #f) ("eth_getBlockByNumber" "finalized" #f) ("0x3" "0x5")))
       #s(chunking ,(log-filter #:to-block "pending") 10
                   #hash((("eth_blockNumber") . "0x1")
-                        (("eth_getBlockByNumber" "pending" #f) . #hasheq((number . "0x2"))))
+                        (("eth_getBlockByNumber" "pending" #f) . ,(numbered-block "0x2")))
                   (("eth_blockNumber") ("0x0" "0x1")))
       #s(chunking ,(log-filter #:from-block 0 #:to-block 9) #f #hash() (("0x0" "0x9")))
       #s(chunking ,transfers #f #hash() (("earliest" "latest")))

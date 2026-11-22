@@ -21,9 +21,12 @@
 
 (provide access-list-field
          address-field
+         asked-reader
          bit-field
          boolean-field
          byte-field
+         check-asked
+         check-block-asked
          data-field
          define-node-record
          (struct-out field-kind)
@@ -34,6 +37,7 @@
          lenient-uint64-field
          list-field
          quantity-field
+         ratio-field
          read-field
          record-field
          uint64-field)
@@ -44,6 +48,21 @@
 
 (define (hash-abbreviation digest)
   (string-append (substring digest 0 10) "…"))
+
+(define (check-asked who what asked received)
+  (unless (or (not received) (equal? received (if (string? asked) (string-downcase asked) asked)))
+    (raise-node-malformed who what received)))
+
+(define (check-block-asked who noun asked number hash)
+  (match asked
+    [(? exact-integer?) (check-asked who (string-append noun " number") asked number)]
+    [(regexp #rx"^0x") (check-asked who (string-append noun " hash") asked hash)]
+    [_ (void)]))
+
+(define ((asked-reader reader/who record-hash what) who v asked [detail ""])
+  (define record (reader/who who v detail))
+  (check-asked who (string-append what detail) asked (record-hash record))
+  record)
 
 (define (read-field kind who what v)
   ((field-kind-reader kind) who what "" v))
@@ -62,7 +81,11 @@
       v
       (node-natural who what v 64)))
 
+(define (read-ratio who what v)
+  (if (and (real? v) (<= 0 v 1)) v (raise-node-malformed who what v)))
+
 (define quantity-field (node-kind 'quantity node-quantity->number uint256/c))
+(define ratio-field (node-kind 'ratio read-ratio (real-in 0 1)))
 (define uint64-field (natural-field 'uint64 64 uint64/c))
 (define lenient-uint64-field (node-kind 'lenient-uint64 read-lenient-uint64 uint64/c))
 (define byte-field (natural-field 'byte 8 byte?))
@@ -163,6 +186,7 @@
   #:with name? (format-id #'name "~a?" #'name)
   #:with name-raw (format-id #'name "~a-raw" #'name)
   #:with name-fields (format-id #'name "~a-fields" #'name)
+  #:with name-noun (format-id #'name "~a-noun" #'name)
   #:with jsexpr->name (format-id #'name "jsexpr->~a" #'name)
   #:with name->jsexpr (format-id #'name "~a->jsexpr" #'name)
   #:with name->list (format-id #'name "~a->list" #'name)
@@ -189,6 +213,7 @@
       (name-raw record))
     (define (name->list record . more)
       (list* (row.accessor record) ... (name-raw record) more))
+    (define name-noun noun)
     (define name-fields
       (list (field-row 'row.field 'row.key row.kind-id row.mode (pair? '(row.exported ...))) ...))
     (provide (contract-out

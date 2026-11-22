@@ -39,9 +39,11 @@
        (with-anvil ()
          (match-define (list _ receipt) (mined-transfer))
          (for ([full? (in-list '(#f #t))])
-           (check-equal? (eth-get-block-by-hash (receipt-block-hash receipt) full?)
-                         (eth-get-block-by-number (receipt-block-number receipt) full?)))
-         (check-equal? (eth-get-block-by-hash (filled-hash #\a) #f) 'null)))
+           (check-equal? (eth-get-block-by-hash (receipt-block-hash receipt)
+                                                #:full-transactions? full?)
+                         (eth-get-block-by-number (receipt-block-number receipt)
+                                                  #:full-transactions? full?)))
+         (check-false (eth-get-block-by-hash (filled-hash #\a)))))
 
      (test-case "A3: block receipts are the transactions' receipts"
        (with-anvil ()
@@ -53,14 +55,17 @@
      (test-case "A4: a transaction by block and index is the transaction by hash"
        (with-anvil ()
          (match-define (list tx-hash receipt) (mined-transfer))
-         (define block-hash (receipt-block-hash receipt))
+         (define mined-in (receipt-block-hash receipt))
          (define height (receipt-block-number receipt))
          (define transaction (eth-get-transaction-by-hash tx-hash))
-         (check-equal? (eth-get-transaction-by-block-hash-and-index block-hash 0) transaction)
+         (check-equal? (transaction-info-hash transaction) tx-hash)
+         (check-equal? (transaction-info-block-hash transaction) mined-in)
+         (check-equal? (eth-get-transaction-by-block-hash-and-index mined-in 0) transaction)
          (check-equal? (eth-get-transaction-by-block-number-and-index height 0) transaction)
-         (check-equal? (eth-get-transaction-by-block-hash-and-index block-hash 1) 'null)
-         (check-equal? (eth-get-transaction-by-block-number-and-index height 1) 'null)
-         (check-equal? (eth-get-block-transaction-count-by-hash block-hash) 1)))
+         (check-false (eth-get-transaction-by-block-hash-and-index mined-in 1))
+         (check-false (eth-get-transaction-by-block-number-and-index height 1))
+         (check-false (eth-get-transaction-by-hash (filled-hash #\a)))
+         (check-equal? (eth-get-block-transaction-count-by-hash mined-in) 1)))
 
      (test-case "A5: fee history covers the requested blocks"
        (with-anvil ()
@@ -68,10 +73,12 @@
            (anvil-mine))
          (define head (eth-block-number))
          (define history (eth-fee-history 2 "latest" '(25 75)))
-         (check-equal? (hash-ref history 'oldestBlock) (number->hex-string (sub1 head)))
-         (check-equal? (length (hash-ref history 'baseFeePerGas)) 3)
-         (check-equal? (length (hash-ref history 'gasUsedRatio)) 2)
-         (check-equal? (map length (hash-ref history 'reward)) '(2 2))))
+         (check-equal? (fee-history-oldest-block history) (sub1 head))
+         (check-equal? (length (fee-history-base-fee-per-gas history)) 3)
+         (check-equal? (length (fee-history-gas-used-ratio history)) 2)
+         (check-equal? (map length (fee-history-reward history)) '(2 2))
+         (check-not-false (member (fee-history-reward (eth-fee-history 2 "latest" '()))
+                                  '(#f () (() ()))))))
 
      (test-case "A6: the blob base fee of a chain without blobs is 1"
        (with-anvil ()
@@ -114,7 +121,7 @@
          (define filter-id (eth-new-block-filter))
          (anvil-mine)
          (check-equal? (eth-get-filter-changes filter-id)
-                       (list (hash-ref (eth-get-block-by-number "latest" #f) 'hash)))))
+                       (list (block-hash (eth-get-block-by-number "latest"))))))
 
      (test-case "A11: a pending filter sees pending transactions"
        (with-anvil (#:args '("--no-mining"))
