@@ -160,7 +160,20 @@
                       type name)
         (check-equal? (receipt-type (call-with-fields send-transaction/receipt fields
                                                       account5 recipient))
-                      type name))))
+                      type name)))
+
+    (test-case "S12: a send the node signs takes a tip alone, or a fee cap alone"
+      (for ([row (in-list `(((#:max-priority-fee-per-gas ,(gwei->wei 1))
+                             ,transaction-info-max-priority-fee-per-gas)
+                            ((#:max-fee-per-gas ,(gwei->wei 100))
+                             ,transaction-info-max-fee-per-gas)))])
+        (match-define (list (and fields (list _ amount)) mined-fee) row)
+        (define name (format "~s" fields))
+        (define receipt (call-with-fields send-transaction/receipt `(#:value 1 ,@fields)
+                                          account5 (fresh-address)))
+        (check-equal? (list (receipt-status receipt) (receipt-type receipt)) '(1 2) name)
+        (check-equal? (mined-fee (eth-get-transaction-by-hash (receipt-transaction-hash receipt)))
+                      amount name))))
 
   (define (contract-cases)
     (test-case "N4, N5: a contract's sends from an address and from its key leave the same chain"

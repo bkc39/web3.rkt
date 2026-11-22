@@ -443,8 +443,7 @@
   (when (fill-order-chain-id order)
     (node-chain-id who order provider))
   (define fees (node-fees who order rows))
-  (define estimated (apply order-object address to order 'gas-limit #f fees))
-  (define gas (filled-gas-limit who order estimated provider))
+  (define gas (filled-gas-limit who order (order->call-object order address to #f) provider))
   (define tx (apply order-object address to order 'gas-limit gas fees))
   (define answer
     (call-raising-reverts
