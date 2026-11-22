@@ -14,53 +14,86 @@
   (define storage-key (make-bytes 32 1))
   (define storage-key-hex (bytes->hex-string storage-key))
 
+  (define carol-access-list
+    `(#hasheq((address . ,anvil-carol) (storageKeys . (,storage-key-hex)))))
+
   (define send-rows
     `(((#:value 5) ,anvil-bob
        #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x") (value . "0x5")
                (gas . "0x5208"))
+       #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x") (value . "0x5"))
        ("eth_estimateGas" "eth_sendTransaction"))
       ((#:gas-limit 30000) ,(string-downcase anvil-bob)
        #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x") (gas . "0x7530"))
+       #f
        ("eth_sendTransaction"))
       ((#:chain-id 31337 #:gas-limit 21000) ,anvil-bob
        #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x") (chainId . "0x7a69")
                (gas . "0x5208"))
+       #f
        ("eth_chainId" "eth_sendTransaction"))
       ((#:access-list ()) ,anvil-bob
        #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x") (accessList . ())
                (gas . "0x5208"))
+       #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x"))
        ("eth_estimateGas" "eth_sendTransaction"))
       ((#:data #"\x60\x80") #f
        #hasheq((from . ,anvil-alice) (data . "0x6080") (gas . "0x5208"))
+       #hasheq((from . ,anvil-alice) (data . "0x6080"))
        ("eth_estimateGas" "eth_sendTransaction"))
       ((#:type 0 #:nonce 0 #:gas-price 7 #:gas-limit 21000) ,anvil-bob
        #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x") (type . "0x0")
                (nonce . "0x0") (gasPrice . "0x7") (gas . "0x5208"))
+       #f
        ("eth_sendTransaction"))
       ((#:type 0 #:gas-limit 21000) ,anvil-bob
        #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x") (type . "0x0")
                (gasPrice . "0x9") (gas . "0x5208"))
+       #f
        ("eth_gasPrice" "eth_sendTransaction"))
+      ((#:type 0 #:nonce 0) ,anvil-bob
+       #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x") (type . "0x0")
+               (nonce . "0x0") (gasPrice . "0x9") (gas . "0x5208"))
+       #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x"))
+       ("eth_gasPrice" "eth_estimateGas" "eth_sendTransaction"))
       ((#:type 1) ,anvil-bob
        #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x") (type . "0x1")
                (gasPrice . "0x9") (accessList . ()) (gas . "0x5208"))
+       #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x"))
        ("eth_gasPrice" "eth_estimateGas" "eth_sendTransaction"))
+      ((#:gas-price 7) ,anvil-bob
+       #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x") (gasPrice . "0x7")
+               (gas . "0x5208"))
+       #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x"))
+       ("eth_estimateGas" "eth_sendTransaction"))
       ((#:gas-price 7 #:access-list ()) ,anvil-bob
        #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x") (gasPrice . "0x7")
                (accessList . ()) (gas . "0x5208"))
+       #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x"))
        ("eth_estimateGas" "eth_sendTransaction"))
       ((#:type 2) ,anvil-bob
        #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x") (type . "0x2")
                (gas . "0x5208"))
+       #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x"))
+       ("eth_estimateGas" "eth_sendTransaction"))
+      ((#:max-priority-fee-per-gas 2 #:value 5) ,anvil-bob
+       #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x") (value . "0x5")
+               (maxPriorityFeePerGas . "0x2") (gas . "0x5208"))
+       #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x") (value . "0x5"))
+       ("eth_estimateGas" "eth_sendTransaction"))
+      ((#:max-fee-per-gas 9) ,anvil-bob
+       #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x") (maxFeePerGas . "0x9")
+               (gas . "0x5208"))
+       #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x"))
        ("eth_estimateGas" "eth_sendTransaction"))
       ((#:nonce 3 #:type 2 #:max-priority-fee-per-gas 1 #:max-fee-per-gas 2 #:data #"\1\2"
         #:access-list ((,(string-downcase anvil-carol) ,storage-key)))
        ,anvil-bob
        #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x0102") (nonce . "0x3")
                (type . "0x2") (maxPriorityFeePerGas . "0x1") (maxFeePerGas . "0x2")
-               (accessList . (#hasheq((address . ,anvil-carol)
-                                      (storageKeys . (,storage-key-hex)))))
-               (gas . "0x5208"))
+               (accessList . ,carol-access-list) (gas . "0x5208"))
+       #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (data . "0x0102")
+               (accessList . ,carol-access-list))
        ("eth_estimateGas" "eth_sendTransaction"))))
 
   (define (node-answers . overrides)
@@ -77,18 +110,15 @@
                #:when (equal? (first call) method))
       (rest call)))
 
-  (test-case "S1: the fields given are sent, and only the chain id and the gas are asked"
+  (test-case "S1: the fields given are sent, and the gas is estimated without type, nonce or fees"
     (for ([row (in-list send-rows)])
-      (match-define (list fields to object methods) row)
+      (match-define (list fields to object estimated methods) row)
       (define name (format "~s" fields))
       (define-values (result calls) (sent send-transaction fields #:to to))
       (check-equal? result (list tx-hash) name)
       (check-equal? (method-names calls) methods name)
       (check-equal? (params-of calls "eth_sendTransaction") (list (list object)) name)
-      (check-equal? (params-of calls "eth_estimateGas")
-                    (if (member "eth_estimateGas" methods)
-                        (list (list (hash-remove object 'gas)))
-                        '())
+      (check-equal? (params-of calls "eth_estimateGas") (if estimated (list (list estimated)) '())
                     name)
       (define-values (receipt receipt-calls) (sent send-transaction/receipt fields #:to to))
       (check-eq? (receipt->jsexpr (first receipt)) mined name)
