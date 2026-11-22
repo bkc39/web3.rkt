@@ -268,6 +268,20 @@
                             (define-jsonrpc-endpoint eth_foo
                               (-> #:provider [boolean? #:default #f] string?))))))))
 
+  (test-case "a keyword spec appears once, and the error points at the repeat"
+    (define refused
+      (raised (lambda ()
+                (parameterize ([current-namespace (make-base-namespace)])
+                  (eval '(module twice racket/base
+                           (require web3/rpc)
+                           (define-jsonrpc-endpoint eth_foo
+                             (-> #:full? [boolean? #:default #f]
+                                 #:full? [boolean? #:default #t]
+                                 string?))))))))
+    (check-pred exn:fail:syntax? refused)
+    (check-regexp-match #rx"duplicate keyword spec" (exn-message refused))
+    (check-equal? (map syntax->datum (exn:fail:syntax-exprs refused)) '(#:full?)))
+
   (test-case "an endpoint takes a result transform or a result reader, not both"
     (check-exn exn:fail:syntax?
                (lambda ()
