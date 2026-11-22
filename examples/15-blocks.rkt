@@ -19,7 +19,7 @@
     (send-transaction alice bob #:value (ether->wei 3)
                       #:max-priority-fee-per-gas (gwei->wei 2) #:max-fee-per-gas (gwei->wei 5))
     (anvil-mine)
-    (define block (eth-get-block-by-number "latest" #t))
+    (define block (eth-get-block-by-number "latest" #:full-transactions? #t))
     (define transactions (block-transactions block))
     (printf "block ~a, gas used ~a, base fee ~a gwei, ~a transactions\n"
             (block-number block)

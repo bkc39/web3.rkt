@@ -770,9 +770,9 @@ See @filepath{examples/14-sending.rkt}.
 
 @subsection[#:tag "guide-blocks"]{Blocks and Transactions}
 
-A block read with its full transactions holds them as @racket[transaction-info?] values, with
-accessors such as @racket[transaction-info-type] and @racket[transaction-info-value]; without, it
-holds their hashes.  Quantities are exact integers in wei, as everywhere.
+A block read with @racket[#:full-transactions? #t] holds its transactions as
+@racket[transaction-info?] values, with accessors such as @racket[transaction-info-type] and
+@racket[transaction-info-value]; without, it holds their hashes.  Quantities are exact integers in wei, as everywhere.
 
 @racketblock[
 (define (print-transaction tx)
@@ -797,7 +797,7 @@ Its base fees have one entry more than its blocks: the last is the next block's.
   (send-transaction alice bob #:value (ether->wei 3)
                     #:max-priority-fee-per-gas (gwei->wei 2) #:max-fee-per-gas (gwei->wei 5))
   (anvil-mine)
-  (define block (eth-get-block-by-number "latest" #t))
+  (define block (eth-get-block-by-number "latest" #:full-transactions? #t))
   (define transactions (block-transactions block))
   (printf "block ~a, gas used ~a, base fee ~a gwei, ~a transactions\n"
           (block-number block)
