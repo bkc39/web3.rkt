@@ -1,10 +1,8 @@
 #lang racket/base
 
-(require racket/match
+(require racket/list
+         racket/match
          web3)
-
-(define (fees->gwei fees)
-  (map (lambda (fee) (wei->string fee 'gwei)) fees))
 
 (define (print-transaction tx)
   (printf "  type ~a nonce ~a, ~a ether from ~a\n"
@@ -29,12 +27,14 @@
             (wei->string (block-base-fee-per-gas block) 'gwei)
             (length transactions))
     (for-each print-transaction transactions)
-    (match-define (list legacy _ ...) transactions)
+    (match-define (list legacy _ _) transactions)
     (printf "legacy transaction rebuilt, signed by ~a\n"
             (signed-transaction-sender (transaction-info->signed-transaction legacy)))
     (define history (eth-fee-history 2 "latest" '(25 75)))
-    (for ([number (in-naturals (fee-history-oldest-block history))]
-          [base-fee (in-list (fee-history-base-fee-per-gas history))]
+    (for ([height (in-naturals (fee-history-oldest-block history))]
           [rewards (in-list (fee-history-reward history))])
-      (printf "block ~a, base fee ~a gwei, rewards ~a gwei\n"
-              number (wei->string base-fee 'gwei) (fees->gwei rewards)))))
+      (match-define (list low high) rewards)
+      (printf "fee history, block ~a: priority fees ~a and ~a gwei\n"
+              height (wei->string low 'gwei) (wei->string high 'gwei)))
+    (printf "next base fee ~a gwei\n"
+            (wei->string (last (fee-history-base-fee-per-gas history)) 'gwei))))

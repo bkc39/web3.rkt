@@ -775,9 +775,6 @@ accessors such as @racket[transaction-info-type] and @racket[transaction-info-va
 holds their hashes.  Quantities are exact integers in wei, as everywhere.
 
 @racketblock[
-(define (fees->gwei fees)
-  (map (lambda (fee) (wei->string fee 'gwei)) fees))
-
 (define (print-transaction tx)
   (printf "  type ~a nonce ~a, ~a ether from ~a\n"
           (transaction-info-type tx)
@@ -788,9 +785,9 @@ holds their hashes.  Quantities are exact integers in wei, as everywhere.
 Started with @tt{--no-mining}, anvil holds what it is sent until @racket[anvil-mine], so alice's
 legacy, EIP-2930 and EIP-1559 transfers land in one block.
 @racket[transaction-info->signed-transaction] rebuilds the legacy one as it was signed and
-recovers alice as its sender.  @racket[eth-fee-history] gives each block's base fee and, at the
-25th and 75th percentiles of gas, the priority fee paid: none in the empty block 0, 1 and 2 gwei in
-block 1.
+recovers alice as its sender.  @racket[eth-fee-history] gives, for each block, the priority fee
+paid at the 25th and 75th percentiles of gas: none in the empty block 0, 1 and 2 gwei in block 1.
+Its base fees have one entry more than its blocks: the last is the next block's.
 
 @racketblock[
 (with-anvil (#:args '("--no-mining"))
@@ -808,15 +805,17 @@ block 1.
           (wei->string (block-base-fee-per-gas block) 'gwei)
           (length transactions))
   (for-each print-transaction transactions)
-  (match-define (list legacy _ ...) transactions)
+  (match-define (list legacy _ _) transactions)
   (printf "legacy transaction rebuilt, signed by ~a\n"
           (signed-transaction-sender (transaction-info->signed-transaction legacy)))
   (define history (eth-fee-history 2 "latest" '(25 75)))
-  (for ([number (in-naturals (fee-history-oldest-block history))]
-        [base-fee (in-list (fee-history-base-fee-per-gas history))]
+  (for ([height (in-naturals (fee-history-oldest-block history))]
         [rewards (in-list (fee-history-reward history))])
-    (printf "block ~a, base fee ~a gwei, rewards ~a gwei\n"
-            number (wei->string base-fee 'gwei) (fees->gwei rewards))))]
+    (match-define (list low high) rewards)
+    (printf "fee history, block ~a: priority fees ~a and ~a gwei\n"
+            height (wei->string low 'gwei) (wei->string high 'gwei)))
+  (printf "next base fee ~a gwei\n"
+          (wei->string (last (fee-history-base-fee-per-gas history)) 'gwei)))]
 
 @secref["Transactions_on_Chain"] and @secref["eth-block"] list every field of a transaction, a
 block and a fee history.
