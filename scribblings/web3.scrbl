@@ -285,8 +285,8 @@ from 0 to 1.
           (receipt-succeeded? receipt))
   (print-accounts alice bob))]
 
-Blocks, transactions, code and storage are read the same way; @secref["Ethereum_Endpoints"]
-lists the endpoints.  A transaction signed here, not by the node, is sent as in
+Blocks and transactions are read as in @secref["guide-blocks"], and code and storage the same
+way; @secref["Ethereum_Endpoints"] lists the endpoints.  A transaction signed here, not by the node, is sent as in
 @secref["guide-sending"].
 
 See @filepath{examples/01-chain-state.rkt}.
@@ -767,6 +767,61 @@ signer's address and sign nothing.
   (counter-count address))]
 
 See @filepath{examples/14-sending.rkt}.
+
+@subsection[#:tag "guide-blocks"]{Blocks and Transactions}
+
+A block read with its full transactions holds them as @racket[transaction-info?] values, with
+accessors such as @racket[transaction-info-type] and @racket[transaction-info-value]; without, it
+holds their hashes.  Quantities are exact integers in wei, as everywhere.
+
+@racketblock[
+(define (fees->gwei fees)
+  (map (lambda (fee) (wei->string fee 'gwei)) fees))
+
+(define (print-transaction tx)
+  (printf "  type ~a nonce ~a, ~a ether from ~a\n"
+          (transaction-info-type tx)
+          (transaction-info-nonce tx)
+          (wei->string (transaction-info-value tx))
+          (transaction-info-from tx)))]
+
+Started with @tt{--no-mining}, anvil holds what it is sent until @racket[anvil-mine], so alice's
+legacy, EIP-2930 and EIP-1559 transfers land in one block.
+@racket[transaction-info->signed-transaction] rebuilds the legacy one as it was signed and
+recovers alice as its sender.  @racket[eth-fee-history] gives each block's base fee and, at the
+25th and 75th percentiles of gas, the priority fee paid: none in the empty block 0, 1 and 2 gwei in
+block 1.
+
+@racketblock[
+(with-anvil (#:args '("--no-mining"))
+  (match-define (list alice bob _ ...) (eth-accounts))
+  (send-transaction alice bob #:value (ether->wei 1) #:type 0)
+  (send-transaction alice bob #:value (ether->wei 2) #:type 1)
+  (send-transaction alice bob #:value (ether->wei 3)
+                    #:max-priority-fee-per-gas (gwei->wei 2) #:max-fee-per-gas (gwei->wei 5))
+  (anvil-mine)
+  (define block (eth-get-block-by-number "latest" #t))
+  (define transactions (block-transactions block))
+  (printf "block ~a, gas used ~a, base fee ~a gwei, ~a transactions\n"
+          (block-number block)
+          (block-gas-used block)
+          (wei->string (block-base-fee-per-gas block) 'gwei)
+          (length transactions))
+  (for-each print-transaction transactions)
+  (match-define (list legacy _ ...) transactions)
+  (printf "legacy transaction rebuilt, signed by ~a\n"
+          (signed-transaction-sender (transaction-info->signed-transaction legacy)))
+  (define history (eth-fee-history 2 "latest" '(25 75)))
+  (for ([number (in-naturals (fee-history-oldest-block history))]
+        [base-fee (in-list (fee-history-base-fee-per-gas history))]
+        [rewards (in-list (fee-history-reward history))])
+    (printf "block ~a, base fee ~a gwei, rewards ~a gwei\n"
+            number (wei->string base-fee 'gwei) (fees->gwei rewards))))]
+
+@secref["Transactions_on_Chain"] and @secref["eth-block"] list every field of a transaction, a
+block and a fee history.
+
+See @filepath{examples/15-blocks.rkt}.
 
 @section{Providers and Calls}
 
