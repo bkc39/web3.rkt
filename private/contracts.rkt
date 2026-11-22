@@ -4,8 +4,8 @@
          (only-in "../abi/type.rkt" abi-signature?)
          (only-in "../address.rkt" address?)
          (only-in "../rpc.rkt" provider?)
+         (only-in "argument.rkt" address/c)
          (only-in "field-contracts.rkt" to/c)
-         (only-in "opaque.rkt" opaque/c)
          (only-in "signer.rkt" signer?))
 
 (provide errors/c
@@ -18,8 +18,7 @@
 (define (sender? v)
   (or (address? v) (signer? v)))
 
-(define from/c
-  (opaque/c 'from/c "#f, an address or a signer" (lambda (v) (or (not v) (sender? v)))))
-(define sender/c (opaque/c 'sender/c "an address or a signer" sender?))
+(define from/c (or/c #f signer? address/c))
+(define sender/c (or/c signer? address/c))
 (define errors/c (listof (or/c string? abi-signature?)))
 (define provider/c (or/c #f provider?))

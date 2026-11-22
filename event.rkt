@@ -9,12 +9,11 @@
          "abi/event-type.rkt"
          (only-in (submod "abi/event-type.rkt" private) spec->abi-event/who)
          "abi/type.rkt"
-         (only-in "address.rkt" address?)
          "eth.rkt"
          "eth/log.rkt"
          (only-in (submod "eth/log.rkt" internal) jsexpr->log/who)
          (only-in (submod "eth/receipt.rkt" internal) receipt-log-list)
-         (only-in "private/field-contracts.rkt" hash-argument/c)
+         (only-in "private/argument.rkt" address/c hash-argument/c one-or-more/c)
          (only-in "private/node.rkt" raise-node-malformed)
          "rpc.rkt")
 
@@ -46,9 +45,7 @@
                  (listof log?))]
   [receipt-logs (->* (receipt?) (#:events (listof abi-event-spec/c)) (listof log?))]))
 
-(define address-filter/c
-  (flat-named-contract 'address-filter/c
-                       (or/c #f address? (non-empty-listof address?))))
+(define address-filter/c (or/c #f (one-or-more/c address/c)))
 
 (define no-where/c (flat-named-contract 'no-where/c (lambda (v) (and (hash? v) (hash-empty? v)))))
 

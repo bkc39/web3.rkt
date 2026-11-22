@@ -371,7 +371,7 @@
                   (format "~a ~s" (object-name procedure) bad)))
     (define e (raised (lambda () (eth-get-balance wrong-checksum "latest"
                                                   #:provider (mock-provider (hash))))))
-    (check-regexp-match #rx"expected: address[?]" (exn-message e))
+    (check-regexp-match #rx"^eth-get-balance: not an address: mixed case" (exn-message e))
     (check-regexp-match (regexp-quote wrong-checksum) (exn-message e)))
 
   (test-case "a hash argument is 32 bytes of hex in either case"
@@ -383,7 +383,7 @@
                   (format "~a ~s" (object-name procedure) bad)))
     (define e (raised (lambda () (eth-get-transaction-receipt "0xaa"
                                                               #:provider (mock-provider (hash))))))
-    (check-regexp-match (regexp-quote "expected: (and/c string? #px\"^0x[0-9a-fA-F]{64}$\")")
+    (check-regexp-match #rx"^eth-get-transaction-receipt: not a hash: not 0x and 64 hex digits\n"
                         (exn-message e)))
 
   (test-case "an uppercase hash argument asks for the hash and accepts its answer"
@@ -476,5 +476,8 @@
         (check-true (refused-before-any-call? procedure 0 arguments bad-object) name)
         (define e (raised (lambda () (apply procedure bad-object others
                                             #:provider (mock-provider (hash))))))
-        (check-regexp-match (regexp-quote (format "expected: ~a-object/c" kind)) (exn-message e))
+        (define refusal
+          (format "^~a: not an address: [^\n]*\n  argument: 1st\n  field: ~a\n"
+                  (object-name procedure) key))
+        (check-regexp-match (pregexp refusal) (exn-message e) name)
         (check-equal? (sent-argument procedure 0 arguments good-object) good-object name)))))

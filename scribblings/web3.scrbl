@@ -203,6 +203,13 @@ Results come back decoded where the encoding is unambiguous:
 An address argument is an @racket[address?]: @racket["0x"] and 40 hex digits, all lowercase,
 all uppercase or in their EIP-55 checksum, so a mixed-case address with a wrong checksum is a
 contract violation.  A hash argument is @racket["0x"] and 64 hex digits in either case.
+A refused address or hash raises @racket[exn:fail:contract:blame] whose message names the
+procedure, the argument (and the field of an object), the value and why it is refused; a value
+that could hold a secret key is described, not shown:
+
+@examples[#:eval contract-eval #:label #f
+(eval:error (eth-get-balance "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD" "latest"))]
+
 Addresses a node returns are respelled in their EIP-55 checksum, not checked against it.
 Transaction, call and filter objects are passed to @tt{eth_*} endpoints as the node expects them,
 as hash tables such as @racket[(hasheq 'from sender 'to contract 'data "0x...")]; their

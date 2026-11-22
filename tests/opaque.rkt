@@ -7,18 +7,22 @@
                     contract
                     contract-name
                     exn:fail:contract:blame-object
-                    exn:fail:contract:blame?)
+                    exn:fail:contract:blame?
+                    listof
+                    or/c)
            (only-in racket/match match)
            racket/string
            rackunit
            (only-in libsecp256k1 integer->secret-key secret-key->public-key)
            (only-in web3
+                    local-signer
                     message-signed-by?
                     node-signer
                     send-transaction
                     sign-message
                     transaction->jsexpr)
            web3/address
+           (only-in web3/private/argument address/c)
            web3/private/opaque
            (only-in web3/private/signature signature)
            (only-in "helpers/transactions.rkt" example-eip1559))
@@ -68,9 +72,10 @@
   (test-case "describe-kind names every kind it knows and nothing else"
     (check-equal? (map describe-kind
                        (list #t 'x 1.5 '(1) (integer->secret-key 1)
-                             (secret-key->public-key (integer->secret-key 1)) (signature 1 1 0)))
+                             (secret-key->public-key (integer->secret-key 1)) (signature 1 1 0)
+                             (local-signer (integer->secret-key 1))))
                   '("a boolean" "a symbol" "a value of another kind" "a value of another kind"
-                    "a secret key" "a public key" "a signature")))
+                    "a secret key" "a public key" "a signature" "a signer")))
 
   (test-case "a wrong arity names the counts, never the arguments"
     (define e (refusal (lambda () (one secret-text secret-text))))
@@ -124,18 +129,44 @@
     (check-refusal e 'caller "checksum-address?" "a string of 12 characters")
     (when e
       (check-false (string-contains? (exn-message e) secret-text))))
-  (test-case "an address whose case is not its checksum is described so, and not shown"
+  (test-case "an address inside opaque-> is public: its refusal shows it and says why"
     (define wrong-checksum "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")
     (define bob "0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
     (define signed (sign-message (integer->secret-key 1) "m"))
     (for ([call (list (lambda () (send-transaction wrong-checksum bob))
                       (lambda () (node-signer wrong-checksum))
                       (lambda () (message-signed-by? signed "m" wrong-checksum))
-                      (lambda () (transaction->jsexpr example-eip1559 #:from wrong-checksum)))])
+                      (lambda () (transaction->jsexpr example-eip1559 #:from wrong-checksum)))]
+          [who (list "send-transaction" "node-signer" "message-signed-by?" "transaction->jsexpr")]
+          [argument (list "1st" "1st" "3rd" "#:from")])
       (define e (refusal call))
-      (check-equal? (field (exn-message e) "expected") "an address")
-      (check-equal? (field (exn-message e) "given")
-                    "an address whose mixed case is not its EIP-55 checksum")
-      (check-false (string-contains? (string-downcase (exn-message e))
-                                     (string-downcase (substring wrong-checksum 2)))
-                   (exn-message e)))))
+      (check-pred exn:fail:contract:blame? e who)
+      (check-true (string-prefix?
+                   (exn-message e)
+                   (format "~a: not an address: mixed case that is not its EIP-55 checksum\n" who))
+                  (exn-message e))
+      (check-equal? (field (exn-message e) "argument") argument)
+      (check-equal? (field (exn-message e) "given") (format "~s" wrong-checksum))))
+
+  (test-case "opaque-> keeps an address contract's projection inside or/c and listof"
+    (define senders
+      (contract (opaque-> (or/c #f address/c) (listof address/c) any/c) list
+                'provider 'caller 'senders #f))
+    (check-equal? (senders #f '()) '(#f ()))
+    (define e (refusal (lambda () (senders #f '("0x12")))))
+    (check-equal? (exn-message e)
+                  (string-join '("senders: not an address: not 0x and 40 hex digits"
+                                 "  argument: 2nd"
+                                 "  in: an element of"
+                                 "  given: \"0x12\""
+                                 "  blaming: caller")
+                               "\n")))
+
+  (test-case "a secret key given where an address belongs is not shown"
+    (define key (integer->secret-key 7))
+    (define e (refusal (lambda () (node-signer key))))
+    (check-equal? (field (exn-message e) "given") "a value of another kind")
+    (define hex (string-append "0x" (make-string 63 #\0) "7"))
+    (define text-e (refusal (lambda () (node-signer hex))))
+    (check-equal? (field (exn-message text-e) "given") "a string of 66 characters")
+    (check-false (string-contains? (exn-message text-e) hex))))

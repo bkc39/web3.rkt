@@ -13,7 +13,8 @@
          (only-in "private/field-contracts.rkt"
                   access-list/c bytes32/c hash-string/c to/c uint256/c uint64/c)
          (only-in "private/hex.rkt" bytes->hex bytes->natural hex->bytes natural->hex)
-         (only-in "private/opaque.rkt" address/c opaque-> opaque/c secret-key/c)
+         (only-in "private/argument.rkt" address/c)
+         (only-in "private/opaque.rkt" opaque-> opaque/c secret-key/c)
          "private/transaction-rules.rkt"
          "private/who.rkt"
          (only-in "rlp.rkt" natural->rlp-scalar rlp-encode)

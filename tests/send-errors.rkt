@@ -264,10 +264,13 @@
     (parameterize ([current-provider (mock-provider (filling))])
       (for* ([procedure (in-list procedures)]
              [bad (list marker-hex marker-key (make-bytes 20 1) #f)])
-        (define kind (if (eq? procedure fill-transaction) "an address or a signer" "a signer"))
+        (define expected
+          (if (eq? procedure fill-transaction)
+              #rx"^fill-transaction: not an address: not (?:a string|0x and 40 hex digits)\n"
+              (regexp-quote "expected: a signer")))
         (define e (with-handlers ([exn:fail? values]) (procedure bad anvil-bob)))
         (check-pred exn:fail:contract:blame? e)
-        (check-regexp-match (regexp-quote (format "expected: ~a" kind)) (exn-message e))
+        (check-regexp-match expected (exn-message e))
         (check-no-leak (exn-message e)))
       (for* ([procedure (in-list procedures)]
              [call (list (lambda () (procedure signer0 marker-hex))

@@ -12,8 +12,9 @@
          (only-in "eth.rkt" eth-sign eth-sign-transaction)
          "private/exn.rkt"
          (only-in "private/hex.rkt" address-hex-string? bytes->hex hex->bytes hex-data-string?)
+         (only-in "private/argument.rkt" address/c)
          (only-in "private/opaque.rkt"
-                  address/c describe-kind digest/c message/c opaque-> opaque/c secret-key/c)
+                  describe-kind digest/c message/c opaque-> opaque/c secret-key/c)
          "private/signer.rkt"
          "private/who.rkt"
          (only-in "rpc.rkt" current-provider provider?)
