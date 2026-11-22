@@ -335,7 +335,7 @@
       [,anvil-stop-impersonating-account 0 (,addr)]))
 
   (define hash-arguments
-    `([,eth-get-block-by-hash 0 (,mined-hash #f)]
+    `([,eth-get-block-by-hash 0 (,mined-hash)]
       [,eth-get-block-transaction-count-by-hash 0 (,mined-hash)]
       [,eth-get-transaction-by-block-hash-and-index 0 (,mined-hash 0)]
       [,eth-get-transaction-by-hash 0 (,transaction-hash)]
@@ -394,8 +394,9 @@
                                                         (,up-receipt) ,receipt-json ,a-receipt]
                           [,wait-for-receipt (,up-receipt) "eth_getTransactionReceipt"
                                              (,up-receipt) ,receipt-json ,a-receipt]
-                          [,eth-get-block-by-hash (,up-block #t) "eth_getBlockByHash"
-                                                  (,up-block #t) ,full-block-json ,a-block]
+                          [,eth-get-block-by-hash (,up-block #:full-transactions? #t)
+                                                  "eth_getBlockByHash" (,up-block #t)
+                                                  ,full-block-json ,a-block]
                           [,eth-get-transaction-by-hash (,up-transaction) "eth_getTransactionByHash"
                                                         (,up-transaction) ,transaction-info-json/0
                                                         ,a-transaction]
