@@ -131,6 +131,14 @@
   (define (run operation signer)
     (run-on operation signer digest-hello "hello"))
 
+  (test-case "a custom signer's address is respelt in EIP-55, whatever its case"
+    (for ([spelling (list (string-downcase anvil-alice)
+                          (string-append "0x" (string-upcase (substring anvil-alice 2)))
+                          "0xF39Fd6e51aad88F6F4ce6aB8827279cffFb92266")])
+      (define signer (custom 'digest spelling 'honest))
+      (check-equal? (signer-address signer) anvil-alice spelling)
+      (check-equal? (signer-sign-message signer "hello") hello-signature spelling)))
+
   (define custom-refusals
     `((address-only ,anvil-alice honest digest
                     "signer-sign-digest: not supported: the signer signs no digests")
@@ -472,6 +480,7 @@
        "a transaction")
       (,(lambda () (signer? 1 2)) "1 argument")
       (,(lambda () (node-signer "0x12")) "an address")
+      (,(lambda () (node-signer "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")) "an address")
       (,(lambda () (node-signer anvil-alice #:provider "http://x")) "provider")
       (,(lambda () (node-signer anvil-alice #:chain-id 1)) "keyword #:provider")))
 

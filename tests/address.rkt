@@ -2,6 +2,7 @@
 
 (module+ test
   (require racket/list
+           racket/match
            rackunit
            web3/abi/type
            web3/address
@@ -61,14 +62,53 @@
                             (string->bytes/utf-8 a)))])
       (check-false (checksum-address? v) (format "~s" v))))
 
+  (define address-cases
+    '(("0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed" #t)
+      ("0x5AAEB6053F3E94C9B9A09F33669435E7EF1BEAED" #t)
+      ("0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed" #t)
+      ("0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359" #t)
+      ("0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB" #t)
+      ("0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb" #t)
+      ("0x52908400098527886E0F7030069857D2E4169EE7" #t)
+      ("0x8617E340B3D01FA5F11F306F4090FD50E238070D" #t)
+      ("0xde709f2102306220921060314715629080e2fb77" #t)
+      ("0x27b1fdb04752bbc536007a920d24acb045561c26" #t)
+      ("0x0000000000000000000000000000000000000000" #t)
+      ("0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD" #f)
+      ("0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAe" #f)
+      ("0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed0" #f)
+      ("5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed" #f)
+      ("0X5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed" #f)
+      ("0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaeg" #f)
+      (#"0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed" #f)
+      (42 #f)
+      (address #f)))
+
+  (test-case "address?: lowercase, uppercase or the EIP-55 checksum"
+    (for ([row (in-list address-cases)])
+      (match-define (list v expected) row)
+      (check-equal? (address? v) expected (format "~s" v))))
+
+  (test-case "address? refuses each checksummed vector with one letter's case flipped"
+    (for* ([a (in-list vectors)]
+           [i (in-range 2 42)]
+           #:when (char-alphabetic? (string-ref a i)))
+      (define flipped (string-copy a))
+      (string-set! flipped i (flip-case (string-ref a i)))
+      (check-false (address? flipped) flipped))
+    (for ([a (in-list vectors)])
+      (check-true (address? (string-downcase a)) a)
+      (check-true (address? (upcase-hex a)) a)))
+
   (test-case "address->checksum-string blames its caller"
     (check-blames-here (address->checksum-string "0x123"))
     (check-blames-here (address->checksum-string 42))
-    (check-blames-here (address->checksum-string "5aaeb6053f3e94c9b9a09f33669435e7ef1beaed")))
+    (check-blames-here (address->checksum-string "5aaeb6053f3e94c9b9a09f33669435e7ef1beaed"))
+    (check-blames-here (address->checksum-string "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")))
 
-  (test-case "web3/address needs only racket/base libraries, keccak and web3/abi/type"
+  (test-case "web3/address needs only racket/base libraries, keccak and web3/private/hex"
     (define names (filter values (map module-name (import-closure 'web3/address))))
     (check-equal? (filter (lambda (n) (member (collection n) '("net" "json"))) names) '())
     (check-equal? (sort (remove-duplicates (filter (lambda (n) (equal? (collection n) "web3")) names))
                         string<?)
-                  '("web3/abi/type" "web3/address" "web3/private/exn"))))
+                  '("web3/address" "web3/private/hex"))))

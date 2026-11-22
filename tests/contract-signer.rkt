@@ -249,7 +249,12 @@
         (define e (with-handlers ([exn:fail? values]) (take bad)))
         (check-pred exn:fail:contract:blame? e)
         (when (exn? e)
-          (check-regexp-match #rx"expected: #f, an address or a signer" (exn-message e))
+          (check-regexp-match (regexp (string-append ": not an address or a signer: (?:"
+                                                     "neither a string nor a signer"
+                                                     "|not 0x and 40 hex digits)\n"))
+                              (exn-message e))
+          (when (eq? bad marker-key)
+            (check-regexp-match #rx"\n  given: a secret key\n" (exn-message e)))
           (check-no-leak (exn-message e))))
       (for* ([row (in-list misapplied)]
              [call (in-list (misapplications row (local-signer marker-key)))])

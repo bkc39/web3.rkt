@@ -1,18 +1,26 @@
 #lang racket/base
 
 (require racket/contract/base
+         (only-in racket/contract
+                  blame-add-context
+                  build-compound-type-name
+                  contract-first-order
+                  get/build-late-neg-projection
+                  make-chaperone-contract)
          (only-in json jsexpr?)
          (only-in "../rpc.rkt" number->hex-string)
+         (only-in "argument.rkt" address/c argument/c one-or-more/c raise-refusal)
          (only-in "hex.rkt" bytes->hex natural->bytes))
 
 (provide block-param/c
          block-param->string
-         object/c
+         filter-object/c
          objects/c
          percentiles->jsexpr
          reward-percentiles/c
          storage-slot/c
-         storage-slots->jsexpr)
+         storage-slots->jsexpr
+         transaction-object/c)
 
 (define block-param/c
   (flat-named-contract
@@ -39,6 +47,89 @@
   (for/list ([slot (in-list slots)])
     (bytes->hex (natural->bytes slot 32))))
 
-(define object/c (and/c hash? jsexpr?))
+(define absent (string->uninterned-symbol "absent"))
+
+;; Only a key that could not be a secret key's hex is named.
+(define (key-text key)
+  (define text (and (symbol? key) (symbol->string key)))
+  (and text
+       (regexp-match? #px"^[A-Za-z]{1,32}$" text)
+       (not (regexp-match? #px"[0-9a-fA-F]{8}" text))
+       text))
+
+(define (object-malformation v)
+  (cond
+    [(not (hash? v)) "not a hash table"]
+    [(jsexpr? v) #f]
+    [(for/or ([key (in-hash-keys v)]) (not (symbol? key))) "a key that is not a symbol"]
+    [(for/first ([(key field) (in-hash v)] #:unless (jsexpr? field)) key)
+     => (lambda (key)
+          (define text (key-text key))
+          (if text (format "its ~a field is not JSON" text) "a field that is not JSON"))]
+    [else "not JSON"]))
+
+;; The fields of an object that the library checks; the node judges the rest, and any value that
+;; is not a hash table or a list where one is looked into.  An object's fields are checked before
+;; its shape, so a refused address is reported as one.
+(define (fields/c name noun fields #:object? [object? #f])
+  (define checks
+    (for/hasheq ([(key field/c) (in-hash fields)])
+      (values key (contract-first-order field/c))))
+  (define (malformation v)
+    (and object? (object-malformation v)))
+  (define (fields-ok? v)
+    (or (not (hash? v))
+        (for/and ([(key ok?) (in-hash checks)])
+          (define field (hash-ref v key absent))
+          (or (eq? field absent) (ok? field)))))
+  (define (project blame)
+    (define projections
+      (for/hasheq ([(key field/c) (in-hash fields)])
+        (values key ((get/build-late-neg-projection field/c)
+                     (blame-add-context blame (format "the ~a field of" key))))))
+    (lambda (v neg)
+      (when (hash? v)
+        (for ([(key project) (in-hash projections)])
+          (define field (hash-ref v key absent))
+          (unless (eq? field absent)
+            (project field neg))))
+      (define problem (malformation v))
+      (when problem
+        (raise-refusal blame neg v noun problem))
+      v))
+  (argument/c name noun
+              (lambda (v) (and (not (malformation v)) (fields-ok? v)))
+              (lambda (v) (or (malformation v) "a field that is refused"))
+              #:project project))
+
+(define (entries/c entry/c)
+  (define entry? (contract-first-order entry/c))
+  (define project (get/build-late-neg-projection entry/c))
+  (make-chaperone-contract
+   #:name (build-compound-type-name 'entries/c entry/c)
+   #:first-order (lambda (v) (or (not (list? v)) (andmap entry? v)))
+   #:late-neg-projection
+   (lambda (blame)
+     (define each (project (blame-add-context blame "an element of")))
+     (lambda (v neg)
+       (when (list? v)
+         (for ([entry (in-list v)])
+           (each entry neg)))
+       v))))
+
+(define transaction-object/c
+  (fields/c 'transaction-object/c "a transaction object"
+            (hasheq 'from address/c
+                    'to (or/c 'null address/c)
+                    'accessList
+                    (entries/c (fields/c 'access-list-entry "an access list entry"
+                                         (hasheq 'address address/c))))
+            #:object? #t))
+
+(define filter-object/c
+  (fields/c 'filter-object/c "a filter object"
+            (hasheq 'address
+                    (or/c null? (one-or-more/c address/c "an address or a list of addresses")))
+            #:object? #t))
 
 (define objects/c (listof hash?))

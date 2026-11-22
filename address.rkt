@@ -2,15 +2,16 @@
 
 (require racket/contract/base
          (only-in keccak keccak256)
-         "abi/type.rkt")
+         (only-in "private/hex.rkt" address-hex-string? bytes->hex))
 
 (provide (contract-out
-          [address->checksum-string (-> (abi-value/c 'address) string?)]
+          [address? (-> any/c boolean?)]
+          [address->checksum-string (-> address? string?)]
           [checksum-address? (-> any/c boolean?)]))
 
 (module* private #f
-  (require (only-in "private/hex.rkt" bytes->hex))
-  (provide digest->address)
+  (provide address->checksum-string
+           digest->address)
   (define (digest->address digest)
     (address->checksum-string (bytes->hex (subbytes digest 12)))))
 
@@ -26,7 +27,13 @@
                       (define c (string-ref lower i))
                       (if (and (char-alphabetic? c) (>= (nibble i) 8)) (char-upcase c) c)))))
 
+(define (one-case? v)
+  (define digits (substring v 2))
+  (or (string=? digits (string-downcase digits)) (string=? digits (string-upcase digits))))
+
+(define (address? v)
+  (and (address-hex-string? v)
+       (or (one-case? v) (string=? v (address->checksum-string v)))))
+
 (define (checksum-address? v)
-  (and (string? v)
-       (regexp-match? #px"^0x[0-9a-fA-F]{40}$" v)
-       (string=? v (address->checksum-string v))))
+  (and (address-hex-string? v) (string=? v (address->checksum-string v))))

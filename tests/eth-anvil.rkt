@@ -28,6 +28,23 @@
     [(not (current-anvil-path))
      (displayln "skipping eth anvil tests: anvil not found (set WEB3_ANVIL or use `nix develop`)")]
     [else
+     (test-case "the node's accounts are spelt as the records spell them"
+       (with-anvil ()
+         (match-define (list _ receipt) (mined-transfer))
+         (check-not-false (member (receipt-from receipt) (eth-accounts)))
+         (check-pred checksum-address? (eth-coinbase))
+         (check-true (andmap checksum-address? (eth-accounts)))))
+
+     (test-case "a transaction object to a mixed-case address with a wrong checksum is refused"
+       (with-anvil ()
+         (define wrong-checksum "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")
+         (define before (eth-block-number))
+         (check-exn exn:fail:contract?
+                    (lambda () (eth-send-transaction (hasheq 'from (first-account)
+                                                             'to wrong-checksum 'value "0x1"))))
+         (check-equal? (eth-get-balance (string-downcase wrong-checksum) "latest") 0)
+         (check-equal? (eth-block-number) before)))
+
      (test-case "A1: a raw transaction hashes to its hash"
        (with-anvil ()
          (match-define (list tx-hash _) (mined-transfer))

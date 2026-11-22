@@ -13,6 +13,7 @@
          "eth/log.rkt"
          (only-in (submod "eth/log.rkt" internal) jsexpr->log/who)
          (only-in (submod "eth/receipt.rkt" internal) receipt-log-list)
+         (only-in "private/argument.rkt" address/c hash-argument/c one-or-more/c)
          (only-in "private/node.rkt" raise-node-malformed)
          "rpc.rkt")
 
@@ -24,7 +25,7 @@
         (#:address [address address-filter/c]
          #:from-block [from block-param/c]
          #:to-block [to block-param/c]
-         #:block-hash [block-hash (or/c #f block-hash/c)]
+         #:block-hash [block-hash (or/c #f hash-argument/c)]
          #:topics [topics topic-positions/c]
          #:event [event (or/c #f abi-event-spec/c)]
          #:where [where (event) (where/c event)])
@@ -45,10 +46,7 @@
   [receipt-logs (->* (receipt?) (#:events (listof abi-event-spec/c)) (listof log?))]))
 
 (define address-filter/c
-  (flat-named-contract 'address-filter/c
-                       (or/c #f (abi-value/c 'address) (non-empty-listof (abi-value/c 'address)))))
-
-(define block-hash/c (flat-named-contract 'block-hash/c topic/c))
+  (or/c #f (one-or-more/c address/c "an address or a non-empty list of addresses")))
 
 (define no-where/c (flat-named-contract 'no-where/c (lambda (v) (and (hash? v) (hash-empty? v)))))
 

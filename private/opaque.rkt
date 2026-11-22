@@ -12,48 +12,34 @@
                   build-compound-type-name
                   build-flat-contract-property
                   coerce-flat-contract
+                  contract?
                   contract-name
+                  flat-contract?
                   flat-contract-predicate
                   get/build-late-neg-projection
                   make-contract
                   prop:flat-contract
                   raise-blame-error)
-         (only-in racket/dict in-dict)
          (only-in racket/list append-map filter-map)
          (only-in racket/match match-define match-lambda)
-         (only-in racket/string string-join string-trim)
+         (only-in racket/string string-join)
          syntax/parse/define
-         (only-in "../abi/type.rkt" abi-value?)
-         (only-in "signature.rkt" signature?))
+         (only-in "argument.rkt" argument-contract? describe-value ordinal register-describer!))
 
-(provide address/c
-         describe-kind
+(provide describe-kind
          digest/c
          message/c
          opaque->
          (rename-out [opaque-contract opaque/c])
          secret-key/c)
 
-(define web3-kinds
-  (list (cons signature? "a signature")))
-
 (define (describe-kind v)
-  (or (for/first ([(kind? text) (in-dict web3-kinds)] #:when (kind? v)) text)
-      (describe-common-kind v)))
-
-(define (describe-common-kind v)
   (cond
-    [(string? v)
-     (format "a string of ~a characters~a"
-             (string-length v)
-             (if (equal? v (string-trim v)) "" ", with leading or trailing whitespace"))]
-    [(bytes? v) (format "a byte string of length ~a" (bytes-length v))]
-    [(exact-integer? v) "an exact integer"]
     [(secret-key? v) "a secret key"]
     [(public-key? v) "a public key"]
-    [(boolean? v) "a boolean"]
-    [(symbol? v) "a symbol"]
-    [else "a value of another kind"]))
+    [else (describe-value v)]))
+
+(register-describer! describe-kind)
 
 (struct opaque-contract (name expected accepts?)
   #:property prop:flat-contract
@@ -77,15 +63,20 @@
                    (lambda (v) (and (bytes? v) (= (bytes-length v) 32)))))
 (define message/c
   (opaque-contract 'message/c "a byte string or a string" (lambda (v) (or (bytes? v) (string? v)))))
-(define address/c
-  (opaque-contract 'address/c "an address" (lambda (v) (abi-value? 'address v))))
 
+;; Racket's own combinators report a value by printing it, so a contract that is not flat is
+;; refused here unless private/argument.rkt built it.
 (define (opaque v)
-  (if (opaque-contract? v)
-      v
-      (let ([c (coerce-flat-contract 'opaque-> v)])
-        (opaque-contract (contract-name c) (format "~a" (contract-name c))
-                         (flat-contract-predicate c)))))
+  (cond
+    [(opaque-contract? v) v]
+    [(argument-contract? v) v]
+    [(and (contract? v) (not (flat-contract? v)))
+     (raise-arguments-error 'opaque-> "a contract that is not flat reports by printing values"
+                            "contract" (contract-name v))]
+    [else
+     (define c (coerce-flat-contract 'opaque-> v))
+     (opaque-contract (contract-name c) (format "~a" (contract-name c))
+                      (flat-contract-predicate c))]))
 
 (define (count-text n)
   (if (= n 1) "1 argument" (format "~a arguments" n)))
@@ -101,13 +92,6 @@
       "no keyword arguments"
       (string-append (if (null? (cdr kws)) "keyword " "keywords ")
                      (string-join (map (lambda (k) (format "~a" k)) kws) " or "))))
-
-(define (ordinal i)
-  (case i
-    [(1) "1st"]
-    [(2) "2nd"]
-    [(3) "3rd"]
-    [else (format "~ath" i)]))
 
 (define (arity-includes? arity n)
   (if (arity-at-least? arity) (>= n (arity-at-least-value arity)) (= n arity)))

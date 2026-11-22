@@ -14,20 +14,22 @@
          (only-in (submod "../eth/log.rkt" internal) log->list log-struct log-tail)
          (only-in "../private/abi-decode.rkt" raise-abi-decode-error)
          "../private/exn.rkt"
+         (only-in "../private/argument.rkt" argument-list/c hash-argument/c one-or-more/c)
+         (only-in "../private/field-contracts.rkt" hash-string/c)
          (only-in "../private/hex.rkt" bytes->hex hex->bytes)
          "../private/who.rkt")
 
 (provide
  (contract-out
-  [event-topic (-> abi-event-spec/c (or/c #f topic/c))]
-  [abi-value->topic (-> abi-type-spec/c any/c topic/c)]
+  [event-topic (-> abi-event-spec/c (or/c #f hash-string/c))]
+  [abi-value->topic (-> abi-type-spec/c any/c hash-string/c)]
   [event-topics (->i ([event abi-event-spec/c])
                      ([where (event) (event-where/c 'event-topics event)])
                      [_ topic-positions/c])]
   [any-of (->* () #:rest (and/c pair? list?) any-of?)]
   [any-of? (-> any/c boolean?)]
   [any-of-values (-> any-of? (non-empty-listof any/c))]
-  (struct indexed-hash ([topic topic/c]))
+  (struct indexed-hash ([topic hash-argument/c]))
   [decode-log (-> abi-event-spec/c log? event-log?)]
   [decode-logs (-> (listof abi-event-spec/c) (listof log?) (listof log?))]
   [event-log? (-> any/c boolean?)]
@@ -36,15 +38,11 @@
   [event-log-arguments (-> event-log? list?)]
   [event-log-ref (->i ([el event-log?] [key (el) (event-log-key/c el)]) [_ any/c])]))
 
-(define (topic? v)
-  (and (string? v) (regexp-match? #px"^0x[0-9a-fA-F]{64}$" v)))
-
-(define topic/c (flat-named-contract '(and/c string? #px"^0x[0-9a-fA-F]{64}$") topic?))
-
 (define topic-positions/c
-  (flat-named-contract 'topic-positions/c
-                       (and/c (listof (or/c #f topic/c (non-empty-listof topic/c)))
-                              (property/c length (<=/c 4)))))
+  (argument-list/c 'topic-positions/c "a list of topic positions"
+                   #f
+                   (one-or-more/c hash-argument/c "a hash or a non-empty list of hashes")
+                   #:most 4))
 
 ;; The index of the parameter key names, by name or position, or #f.
 (define (parameter-index event key)
@@ -97,10 +95,10 @@
   (bytes-append bs (make-bytes (modulo (- (bytes-length bs)) 32) 0)))
 
 ;; The encoding Solidity hashes for an indexed value of a non-elementary
-;; type: no offsets or lengths, and each element padded to whole words.
-(define (in-place who t v)
+;; type: no offsets or lengths, and each element padded to whole words.  v is checked.
+(define (in-place t v)
   (define (element t x)
-    (pad (if (elementary? t) (abi-encode/who who (list t) (list x)) (in-place who t x))))
+    (pad (if (elementary? t) (encode-sequence (list t) (list x)) (in-place t x))))
   (match t
     [(struct* abi-string ()) (string->bytes/utf-8 v)]
     [(struct* abi-bytes ()) v]
@@ -111,11 +109,11 @@
 ;; The topic of v as an indexed value of t, with value errors reported at
 ;; argument index.
 (define (value->topic who t v index)
-  (match (arguments-failure (list t) (list v))
+  (match (encoding-failure (list t) (list v))
     [#f
      (bytes->hex (if (elementary? t)
-                     (abi-encode/who who (list t) (list v))
-                     (keccak256 (in-place who t v))))]
+                     (encode-sequence (list t) (list v))
+                     (keccak256 (in-place t v))))]
     [(list reason type value (cons _ path))
      (raise-abi-value-error who (list reason type value (cons index path)))]))
 
@@ -278,5 +276,4 @@
   (provide event-topics/who
            event-where/c
            logs-decoder
-           topic-positions/c
-           topic/c))
+           topic-positions/c))

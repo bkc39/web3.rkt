@@ -22,6 +22,7 @@
          (only-in "private/eth-params.rkt" block-param/c)
          "private/exn.rkt"
          (only-in "private/hex.rkt" hex-data-string?)
+         (only-in "private/argument.rkt" address/c address-or/c)
          (only-in "private/contracts.rkt" errors/c from/c provider/c)
          "private/who.rkt")
 
@@ -44,7 +45,7 @@
           [contract-call call/c]
           [contract-send send/c]
           [contract-estimate-gas estimate/c]
-          [contract-instance (->* (contract-abi? (abi-value/c 'address))
+          [contract-instance (->* (contract-abi? address/c)
                                   (#:provider (or/c #f provider?)
                                    #:from from/c)
                                   contract-instance?)]
@@ -76,8 +77,8 @@
           [deploy-contract (transaction->* (init-code/c) (signature/c) checksum-address?)]
           [deploy-contract/receipt
            (transaction->* (init-code/c) (signature/c) (values checksum-address? receipt?))]
-          [create-address (-> (abi-value/c 'address) nonce/c checksum-address?)]
-          [create2-address (-> (abi-value/c 'address) salt/c init-code/c checksum-address?)]))
+          [create-address (-> address/c nonce/c checksum-address?)]
+          [create2-address (-> address/c salt/c init-code/c checksum-address?)]))
 
 (define (count-of n what)
   (and (positive? n) (format "~a ~a~a" n what (if (= n 1) "" "s"))))
@@ -106,8 +107,7 @@
   (or/c (and/c bytes? (property/c bytes-length (=/c 32))) (integer-in 0 (sub1 (expt 2 256)))))
 (define nonce/c (integer-in 0 (- (expt 2 64) 2)))
 
-(define target/c
-  (flat-named-contract 'target/c (or/c (abi-value/c 'address) contract-instance?)))
+(define target/c (address-or/c 'target/c contract-instance? "a contract instance"))
 
 (define named-function/c
   (flat-named-contract 'named-function/c (or/c symbol? string? abi-signature?)))

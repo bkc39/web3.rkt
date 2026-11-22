@@ -133,6 +133,27 @@
     (check-exn #rx"^encode-call: not an ABI type" (lambda () (encode-call "f(uint7)" 1)))
     (check-exn #rx"^abi-encode: not an ABI type" (lambda () (abi-encode '("uint7") '(1)))))
 
+  (define checksummed "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed")
+  (define wrong-checksum "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")
+
+  (test-case "an address in mixed case encodes only with its EIP-55 checksum"
+    (for ([spelling (in-list (list checksummed (string-downcase checksummed)
+                                   (string-append "0x" (string-upcase (substring checksummed 2)))))])
+      (check-equal? (encode-call "transfer(address,uint256)" spelling 1)
+                    (encode-call "transfer(address,uint256)" (string-downcase checksummed) 1)))
+    (check-value-error (encode-call "transfer(address,uint256)" wrong-checksum 1)
+                       (abi-address) wrong-checksum '(0))
+    (check-value-error (abi-encode '((tuple uint8 address)) `((1 ,wrong-checksum)))
+                       (abi-address) wrong-checksum '(0 1))
+    (check-value-error (abi-encode '("address[]") `((,checksummed ,wrong-checksum)))
+                       (abi-address) wrong-checksum '(0 1))
+    (check-value-error (abi-encode-packed '(uint8 address) `(1 ,wrong-checksum))
+                       (abi-address) wrong-checksum '(1))
+    (check-exn (regexp (string-append "^encode-call: mixed case that is not the address's EIP-55 "
+                                      "checksum\n  type: address\n"))
+               (lambda () (encode-call "transfer(address,uint256)" wrong-checksum 1)))
+    (check-true (abi-value? 'address wrong-checksum)))
+
   (define a-address "0x00000000000000000000000000000000000000aa")
 
   (test-case "encode-call is the selector and the encoded inputs"

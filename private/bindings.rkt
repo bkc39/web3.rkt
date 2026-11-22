@@ -17,12 +17,12 @@
          "contract-call.rkt"
          (only-in "eth-params.rkt" block-param/c)
          "exn.rkt"
+         (only-in "argument.rkt" address/c)
          (only-in "contracts.rkt" errors/c from/c provider/c))
 
 (provide contract-bindings-out
          define-contract)
 
-(define address/c (abi-value/c 'address))
 (define value/c exact-nonnegative-integer?)
 (define gas/c (or/c #f exact-positive-integer?))
 

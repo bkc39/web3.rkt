@@ -193,7 +193,8 @@
                           names)
                   '())
     (define web3-modules
-      '("web3/abi/event-type" "web3/abi/type" "web3/private/exn" "web3/private/who"))
+      '("web3/abi/event-type" "web3/abi/type" "web3/private/exn" "web3/private/hex"
+        "web3/private/who"))
     (check-equal? (sort (remove-duplicates (filter (lambda (n) (equal? (collection n) "web3")) names))
                         string<?)
                   web3-modules)

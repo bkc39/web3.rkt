@@ -16,6 +16,8 @@
          racket/tcp
          syntax/parse/define
          "eth.rkt"
+         (only-in "private/argument.rkt" address/c hash-argument/c)
+         (only-in "private/eth-params.rkt" transaction-object/c)
          "rpc.rkt")
 
 (provide anvil-set-code
@@ -37,19 +39,19 @@
 
 ;;;; anvil / hardhat-style methods
 
-(define-jsonrpc-endpoint anvil_setCode (-> string? hex-string? void?)
+(define-jsonrpc-endpoint anvil_setCode (-> address/c hex-string? void?)
   #:result-transform void)
 (define-jsonrpc-endpoint anvil_setBalance
-  (-> string? [exact-nonnegative-integer? number->hex-string] void?)
+  (-> address/c [exact-nonnegative-integer? number->hex-string] void?)
   #:result-transform void)
 (define-jsonrpc-endpoint anvil_setStorageAt
-  (-> string? [exact-nonnegative-integer? number->hex-string] hex-string? void?)
+  (-> address/c [exact-nonnegative-integer? number->hex-string] hex-string? void?)
   #:result-transform void)
 (define-jsonrpc-endpoint anvil_mine (-> void?)
   #:result-transform void)
-(define-jsonrpc-endpoint anvil_impersonateAccount (-> string? void?)
+(define-jsonrpc-endpoint anvil_impersonateAccount (-> address/c void?)
   #:result-transform void)
-(define-jsonrpc-endpoint anvil_stopImpersonatingAccount (-> string? void?)
+(define-jsonrpc-endpoint anvil_stopImpersonatingAccount (-> address/c void?)
   #:result-transform void)
 (define-jsonrpc-endpoint evm_snapshot (-> hex-string?))
 (define-jsonrpc-endpoint evm_revert (-> hex-string? boolean?))
@@ -57,9 +59,9 @@
 ;; Struct-log traces (pc, op, gas, gasCost, stack, ...).  Options follow
 ;; geth's tracer config, e.g. (hasheq 'enableMemory #t 'disableStack #f).
 (define-jsonrpc-endpoint debug_traceCall
-  (-> (and/c hash? jsexpr?) [block-param/c block-param->string] (and/c hash? jsexpr?) hash?))
+  (-> transaction-object/c [block-param/c block-param->string] (and/c hash? jsexpr?) hash?))
 (define-jsonrpc-endpoint debug_traceTransaction
-  (-> hex-string? (and/c hash? jsexpr?) hash?))
+  (-> hash-argument/c (and/c hash? jsexpr?) hash?))
 
 ;;;; processes
 

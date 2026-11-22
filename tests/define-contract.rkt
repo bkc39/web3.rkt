@@ -433,6 +433,9 @@ MESSAGE
     (check-blames-here (c-f 42 1))
     (check-blames-here (c-f token-address 1 #:gas 0))
     (check-blames-here (c-f token-address 1 #:from "alice"))
+    (check-blames-here (c-f "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD" 1))
+    (check-blames-here (c-f token-address 1 #:from "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD"))
+    (check-blames-here (contract-instance c "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD"))
     (define ns (fresh-namespace))
     (parameterize ([current-namespace ns])
       (eval '(module L racket/base

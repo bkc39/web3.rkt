@@ -148,11 +148,12 @@
                      "eth_getBlockByNumber" 'null
                      "net_peerCount" "0x0")))
     (define me "0x00000000000000000000000000000000000000aa")
+    (define block-hash (string-append "0x" (make-string 64 #\b)))
     (with-provider p
       (check-equal? (eth-get-balance me 5) 255)
       (check-equal? (eth-get-balance me "latest") 255)
       (check-equal? (eth-get-storage-at me 16 "pending") "0x2a")
-      (check-equal? (eth-get-block-transaction-count-by-hash "0xbb") 0)
+      (check-equal? (eth-get-block-transaction-count-by-hash block-hash) 0)
       (check-equal? (eth-get-block-transaction-count-by-number 255) 3)
       (check-false (eth-get-block-by-number "latest" #:full-transactions? #t))
       (check-equal? (net-peer-count) 0))
@@ -160,10 +161,18 @@
                   `(("eth_getBalance" ,me "0x5")
                     ("eth_getBalance" ,me "latest")
                     ("eth_getStorageAt" ,me "0x10" "pending")
-                    ("eth_getBlockTransactionCountByHash" "0xbb")
+                    ("eth_getBlockTransactionCountByHash" ,block-hash)
                     ("eth_getBlockTransactionCountByNumber" "0xff")
                     ("eth_getBlockByNumber" "latest" #t)
                     ("net_peerCount"))))
+
+  (test-case "the manual's mock-provider block gives what it shows"
+    (define p (mock-provider (hash "eth_chainId" "0x1"
+                                   "eth_getBalance" "0xff")))
+    (define alice "0x00000000000000000000000000000000000a11ce")
+    (check-equal? (eth-get-balance alice 5 #:provider p) 255)
+    (check-equal? (mock-provider-calls p)
+                  '(("eth_getBalance" "0x00000000000000000000000000000000000a11ce" "0x5"))))
 
   (test-case "a result the node should not have sent raises exn:fail:web3"
     (define p (mock-provider (hash "eth_chainId" 7
@@ -180,7 +189,7 @@
     (check-equal? (unexpected (lambda () (eth-send-raw-transaction "0x01" #:provider p)))
                   "eth_sendRawTransaction: unexpected result 42")
     (check-equal? (unexpected (lambda () (eth-accounts #:provider p)))
-                  "eth_accounts: unexpected result \"0xaa\"")
+                  "eth_accounts: malformed account from the node: \"0xaa\"")
     (check-equal? (unexpected (lambda () (eth-gas-price #:provider p)))
                   "eth_gasPrice: unexpected result \"10\""))
 
