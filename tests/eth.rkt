@@ -5,6 +5,7 @@
            (only-in racket/contract flat-contract-predicate)
            (only-in racket/list list-set)
            (only-in racket/match match match-define)
+           (only-in racket/string string-prefix? string-split)
            rackunit
            web3
            (only-in "helpers/results.rkt"
@@ -457,18 +458,19 @@
     (list (hasheq 'address address 'storageKeys (list zero-word))))
 
   (define object-changes
-    `([transaction from ,wrong-checksum ,checksummed]
-      [transaction to ,wrong-checksum null]
-      [transaction to ,wrong-checksum ,(string-downcase checksummed)]
-      [transaction accessList ,(access-list-of wrong-checksum) ,(access-list-of checksummed)]
-      [filter address ,wrong-checksum ,(upcase-hex checksummed)]
-      [filter address (,addr ,wrong-checksum) (,addr ,checksummed)]))
+    `([transaction from ,wrong-checksum ,checksummed "an address"]
+      [transaction to ,wrong-checksum null "an address"]
+      [transaction to ,wrong-checksum ,(string-downcase checksummed) "an address"]
+      [transaction accessList ,(access-list-of wrong-checksum) ,(access-list-of checksummed)
+                   "an address"]
+      [filter address ,wrong-checksum ,(upcase-hex checksummed) "an address or a list of addresses"]
+      [filter address (,addr ,wrong-checksum) (,addr ,checksummed) "an address"]))
 
   (test-case "an object's addresses are address? values, checked before any call"
     (for* ([endpoint (in-list object-endpoints)]
            [change (in-list object-changes)])
       (match-define (list procedure (and arguments (cons object others)) kind) endpoint)
-      (match-define (list change-kind key bad good) change)
+      (match-define (list change-kind key bad good noun) change)
       (when (eq? kind change-kind)
         (define name (format "~a ~a ~s" (object-name procedure) key bad))
         (define bad-object (hash-set object key bad))
@@ -476,9 +478,9 @@
         (check-true (refused-before-any-call? procedure 0 arguments bad-object) name)
         (define e (raised (lambda () (apply procedure bad-object others
                                             #:provider (mock-provider (hash))))))
-        (define refusal
-          (format (string-append "^~a: not an address(?: or a list of addresses)?: [^\n]*\n"
-                                 "  argument: 1st\n  field: ~a\n")
-                  (object-name procedure) key))
-        (check-regexp-match (pregexp refusal) (exn-message e) name)
+        (match-define (list* head argument field _) (string-split (exn-message e) "\n"))
+        (check-true (string-prefix? head (format "~a: not ~a: " (object-name procedure) noun))
+                    (exn-message e))
+        (check-equal? (list argument field) (list "  argument: 1st" (format "  field: ~a" key))
+                      name)
         (check-equal? (sent-argument procedure 0 arguments good-object) good-object name)))))

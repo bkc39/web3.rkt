@@ -13,7 +13,7 @@
                     exn:fail:contract:blame?
                     listof
                     or/c)
-           (only-in racket/list drop-right last)
+           (only-in racket/list drop-right last make-list)
            (only-in racket/match match-define)
            racket/string
            rackunit
@@ -190,6 +190,73 @@
       (check-hidden (lambda () (contract-call anvil-bob "f()()" #:from secret)) secret given)
       (check-hidden (lambda () (c-f anvil-bob 1 #:from secret)) secret given)
       (check-hidden (lambda () (eth-get-transaction-receipt secret)) secret given)))
+
+  (define key-text (string-append "0x" (make-string 60 #\0) "beef"))
+
+  (define key-text-rows
+    (list
+     (row "a key in a transaction object that is not JSON"
+          (lambda () (eth-call (hasheq 'from key-text 'data #"\1") "latest"))
+          '("eth-call: not an address: not 0x and 40 hex digits"
+            "argument: 1st" "field: from" "given: a string of 66 characters"))
+     (row "a key where a transaction object goes"
+          (lambda () (eth-send-transaction key-text))
+          '("eth-send-transaction: not a transaction object: not a hash table"
+            "argument: 1st" "given: a string of 66 characters"))
+     (row "a key in a transaction object with string keys"
+          (lambda () (eth-call (hash "from" anvil-bob "note" key-text) "latest"))
+          '("eth-call: not a transaction object: a key that is not a symbol"
+            "argument: 1st" "given: a hash table"))
+     (row "a key in a filter object with a field that is not JSON"
+          (lambda () (eth-get-logs (hasheq 'address anvil-bob 'x key-text 'y 'sym)))
+          '("eth-get-logs: not a filter object: its y field is not JSON"
+            "argument: 1st" "given: a hash table"))
+     (row "a key where a filter's topics go"
+          (lambda () (log-filter #:topics key-text))
+          '("log-filter: not a list of topic positions: not a list"
+            "argument: #:topics" "given: a string of 66 characters"))
+     (row "a symbol where a filter's topics go"
+          (lambda () (log-filter #:topics 'topics))
+          '("log-filter: not a list of topic positions: not a list"
+            "argument: #:topics" "given: a symbol"))
+     (row "five topic positions"
+          (lambda () (log-filter #:topics (make-list 5 #f)))
+          '("log-filter: not a list of topic positions: more than 4 elements"
+            "argument: #:topics" "given: a list of 5 elements"))))
+
+  (test-case "a refused object or topic list is described in a few lines, its contents never shown"
+    (for ([r (in-list key-text-rows)])
+      (match-define (row label thunk lines) r)
+      (define e (refusal thunk))
+      (check-short-refusal e lines label)
+      (when e
+        (check-false (string-contains? (exn-message e) "beef") (exn-message e))
+        (check-false (regexp-match? #px"[0-9a-fA-F]{20}" (exn-message e)) (exn-message e)))))
+
+  (test-case "a key named in a refused object is one that could not be hex"
+    (for ([key (in-list (list (string->symbol (substring key-text 2)) 'deadbeef '|0x1| 'x-y))])
+      (define e (refusal (lambda () (eth-call (hasheq key 'sym) "latest"))))
+      (check-equal? (car (string-split (exn-message e) "\n"))
+                    "eth-call: not a transaction object: a field that is not JSON"
+                    (format "~s" key))))
+
+  (test-case "a program that never loads private/opaque.rkt still sees a key described, not shown"
+    (define program
+      '((require (only-in libsecp256k1 integer->secret-key) web3/abi/event)
+        (define opaque-before? (module-declared? 'web3/private/opaque #f))
+        (define message
+          (with-handlers ([exn:fail? exn-message])
+            (indexed-hash (integer->secret-key 7))))
+        (require web3/account)
+        (list opaque-before? (module-declared? 'web3/private/opaque #f) message)))
+    (match-define (list opaque-before? opaque-after? message)
+      (parameterize ([current-namespace (make-base-namespace)])
+        (for/last ([form (in-list program)])
+          (eval form))))
+    (check-equal? (list opaque-before? opaque-after?) '(#f #t))
+    (check-not-false (member "  given: a value of another kind" (string-split message "\n"))
+                     message)
+    (check-false (regexp-match? #px"[0-9a-fA-F]{20}|secret" message) message))
 
   (test-case "a handler that runs while a refusal is raised sees Racket's own format"
     (define integer-only (contract (-> integer? any) values 'web3 'caller 'integer-only #f))

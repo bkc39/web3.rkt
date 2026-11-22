@@ -9,6 +9,7 @@
                   blame-value
                   build-chaperone-contract-property
                   build-compound-type-name
+                  contract-first-order
                   get/build-late-neg-projection
                   make-exn:fail:contract:blame
                   prop:chaperone-contract)
@@ -25,10 +26,12 @@
          address-refusal
          argument/c
          argument-contract?
+         argument-list/c
          describe-value
          hash-argument/c
          one-or-more/c
          ordinal
+         raise-refusal
          register-describer!)
 
 (define (describe-value v)
@@ -44,10 +47,13 @@
     [(boolean? v) "a boolean"]
     [(symbol? v) "a symbol"]
     [(null? v) "an empty list"]
+    [(list? v) (format "a list of ~a element~a" (length v) (if (= (length v) 1) "" "s"))]
+    [(hash? v) "a hash table"]
     [else "a value of another kind"]))
 
-;; private/opaque.rkt registers the describer that knows secret and public keys; this module
-;; cannot require libsecp256k1, and any key a caller holds was made after that module ran.
+;; private/opaque.rkt registers the describer that knows secret and public keys, since this module
+;; cannot require libsecp256k1.  A program that has not loaded it yet, such as one that requires
+;; only web3/abi/event, sees such a key described as a value of another kind.
 (define describer describe-value)
 
 (define (register-describer! describe)
@@ -70,20 +76,18 @@
   (build-chaperone-contract-property
    #:name (lambda (c) (argument-contract-name c))
    #:first-order (lambda (c) (argument-contract-accepts? c))
-   #:late-neg-projection (lambda (c) ((argument-contract-project c) c))))
+   #:late-neg-projection (lambda (c) (argument-contract-project c))))
 
-(define (refuse blame neg v noun reason)
+(define (raise-refusal blame neg v noun reason)
   (define complete (blame-add-missing-party blame neg))
   (define message (refusal-message complete v (format "not ~a: ~a" noun reason)))
   (raise (make-exn:fail:contract:blame message (current-continuation-marks) complete)))
 
-(define ((refusing c) blame)
-  (match-define (argument-contract _ noun accepts? reason _) c)
-  (lambda (v neg)
-    (if (accepts? v) v (refuse blame neg v noun (reason v)))))
-
-(define (argument/c name noun accepts? reason)
-  (argument-contract name noun accepts? reason refusing))
+;; A #:project is a late-neg projection that refuses only through raise-refusal.
+(define (argument/c name noun accepts? reason #:project [project #f])
+  (define ((refusing blame) v neg)
+    (if (accepts? v) v (raise-refusal blame neg v noun (reason v))))
+  (argument-contract name noun accepts? reason (or project refusing)))
 
 (define (shown v)
   (if (and (string? v) (regexp-match? #px"^0x[0-9a-fA-F]{0,40}$" v))
@@ -164,7 +168,7 @@
     (or (item? v) (and (pair? v) (list? v) (andmap item? v))))
   (define (reason v)
     (if (null? v) "the list is empty" (item-reason v)))
-  (define ((project _) blame)
+  (define (project blame)
     (define each ((get/build-late-neg-projection item/c) (blame-add-context blame "an element of")))
     (lambda (v neg)
       (cond
@@ -173,7 +177,26 @@
            (each item neg))
          v]
         [(item? v) v]
-        [else (refuse blame neg v noun (reason v))])))
+        [else (raise-refusal blame neg v noun (reason v))])))
   (define name
     (build-compound-type-name 'or/c item/c (build-compound-type-name 'non-empty-listof item/c)))
-  (argument-contract name noun accepts? reason project))
+  (argument/c name noun accepts? reason #:project project))
+
+;; item/c is an argument contract, or an or/c of flat contracts and at most one of them.
+(define (argument-list/c name noun item/c #:most most)
+  (define item? (contract-first-order item/c))
+  (define (fits? v)
+    (and (list? v) (<= (length v) most)))
+  (define (accepts? v)
+    (and (fits? v) (andmap item? v)))
+  (define (reason v)
+    (if (list? v) (format "more than ~a elements" most) "not a list"))
+  (define (project blame)
+    (define each ((get/build-late-neg-projection item/c) (blame-add-context blame "an element of")))
+    (lambda (v neg)
+      (unless (fits? v)
+        (raise-refusal blame neg v noun (reason v)))
+      (for ([item (in-list v)])
+        (each item neg))
+      v))
+  (argument/c name noun accepts? reason #:project project))
