@@ -18,6 +18,7 @@
          "private/exn.rkt"
          "private/hex.rkt"
          (for-syntax casemate
+                     (only-in racket/list check-duplicates)
                      racket/base
                      racket/syntax))
 
@@ -369,6 +370,8 @@
     (~optional (~or* (~seq #:result-transform transform:expr)
                      (~seq #:result-reader reader:expr))
                #:defaults ([transform #'values])))
+  #:fail-when (check-duplicates (filter values (attribute p.keyword)) #:key syntax-e)
+  "duplicate keyword spec"
   #:with fn-name (format-id #'rpc-name "~a" (->kebab-case (syntax-e #'rpc-name)))
   #:with method (datum->syntax #'rpc-name (symbol->string (syntax-e #'rpc-name)))
   #:with (arg ...) (generate-temporaries #'(p ...))
