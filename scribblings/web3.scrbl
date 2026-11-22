@@ -203,11 +203,13 @@ Results come back decoded where the encoding is unambiguous:
 An address argument is an @racket[address?]: @racket["0x"] and 40 hex digits, all lowercase,
 all uppercase or in their EIP-55 checksum, so a mixed-case address with a wrong checksum is a
 contract violation.  A hash argument is @racket["0x"] and 64 hex digits in either case.
-A refused address or hash raises @racket[exn:fail:contract:blame] whose message names the
-procedure, the argument (and the field of an object), the value and why it is refused.  The
-value is shown only when it is a string of @racket["0x"] and at most 40 hex digits; any other
-value, which could be a secret key or the text one was read from, is described by its kind, such
-as @tt{a secret key} or @tt{a string of 65 characters}:
+A refused address, hash, transaction or filter object, or list of topics raises
+@racket[exn:fail:contract:blame] whose message names the procedure, the argument (and the field
+of an object), the value and why it is refused.  The value is shown only when it is a string of
+@racket["0x"] and at most 40 hex digits; any other value, which could be a secret key or the text
+one was read from, is described by its kind as far as the modules loaded so far know it, such as
+@tt{a string of 65 characters}, or @tt{a secret key} once @racketmodname[web3/account] is
+loaded:
 
 @examples[#:eval contract-eval #:label #f
 (eval:error (eth-get-balance "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD" "latest"))]

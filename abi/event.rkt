@@ -14,7 +14,7 @@
          (only-in (submod "../eth/log.rkt" internal) log->list log-struct log-tail)
          (only-in "../private/abi-decode.rkt" raise-abi-decode-error)
          "../private/exn.rkt"
-         (only-in "../private/argument.rkt" hash-argument/c one-or-more/c)
+         (only-in "../private/argument.rkt" argument-list/c hash-argument/c one-or-more/c)
          (only-in "../private/field-contracts.rkt" hash-string/c)
          (only-in "../private/hex.rkt" bytes->hex hex->bytes)
          "../private/who.rkt")
@@ -39,10 +39,9 @@
   [event-log-ref (->i ([el event-log?] [key (el) (event-log-key/c el)]) [_ any/c])]))
 
 (define topic-positions/c
-  (rename-contract (and/c (listof (or/c #f (one-or-more/c hash-argument/c
-                                                          "a hash or a non-empty list of hashes")))
-                          (property/c length (<=/c 4)))
-                   'topic-positions/c))
+  (argument-list/c 'topic-positions/c "a list of topic positions"
+                   (or/c #f (one-or-more/c hash-argument/c "a hash or a non-empty list of hashes"))
+                   #:most 4))
 
 ;; The index of the parameter key names, by name or position, or #f.
 (define (parameter-index event key)

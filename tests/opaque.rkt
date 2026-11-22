@@ -72,11 +72,12 @@
 
   (test-case "describe-kind names every kind it knows and nothing else"
     (check-equal? (map describe-kind
-                       (list #t 'x 1.5 '(1) '() (integer->secret-key 1)
+                       (list #t 'x 1.5 '(1) '(1 2) '() (hasheq) '(1 . 2) (integer->secret-key 1)
                              (secret-key->public-key (integer->secret-key 1)) (signature 1 1 0)
                              (local-signer (integer->secret-key 1))))
-                  '("a boolean" "a symbol" "a value of another kind" "a value of another kind"
-                    "an empty list" "a secret key" "a public key" "a signature" "a signer")))
+                  '("a boolean" "a symbol" "a value of another kind" "a list of 1 element"
+                    "a list of 2 elements" "an empty list" "a hash table" "a value of another kind"
+                    "a secret key" "a public key" "a signature" "a signer")))
 
   (test-case "a wrong arity names the counts, never the arguments"
     (define e (refusal (lambda () (one secret-text secret-text))))
