@@ -133,6 +133,12 @@
       [,eth-get-transaction-receipt (,a-hash) "eth_getTransactionReceipt"
                                     ,(hash-set receipt-json 'gasUsed "zz")
                                     "eth_getTransactionReceipt: malformed receipt gas used from the node: \"zz\""]
+      [,eth-get-transaction-receipt (,receipt-hash) "eth_getTransactionReceipt"
+                                    ,(hash-set receipt-json 'from
+                                               "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")
+                                    ,(string-append "eth_getTransactionReceipt: malformed receipt "
+                                                    "from from the node: "
+                                                    "\"0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD\"")]
       [,eth-get-transaction-receipt (,a-hash) "eth_getTransactionReceipt" 42
                                     "eth_getTransactionReceipt: unexpected result 42"]
       [,eth-get-transaction-by-block-hash-and-index
