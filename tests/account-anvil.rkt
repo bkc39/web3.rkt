@@ -37,4 +37,4 @@
          (check-false (precompile-recover digest-empty 0 r s)))
 
        (test-case "anvil's accounts are the addresses of its ten keys"
-         (check-equal? (map address->checksum-string (eth-accounts)) anvil-addresses)))]))
+         (check-equal? (eth-accounts) anvil-addresses)))]))

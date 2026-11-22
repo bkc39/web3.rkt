@@ -28,6 +28,13 @@
     [(not (current-anvil-path))
      (displayln "skipping eth anvil tests: anvil not found (set WEB3_ANVIL or use `nix develop`)")]
     [else
+     (test-case "the node's accounts are spelt as the records spell them"
+       (with-anvil ()
+         (match-define (list _ receipt) (mined-transfer))
+         (check-not-false (member (receipt-from receipt) (eth-accounts)))
+         (check-pred checksum-address? (eth-coinbase))
+         (check-true (andmap checksum-address? (eth-accounts)))))
+
      (test-case "A1: a raw transaction hashes to its hash"
        (with-anvil ()
          (match-define (list tx-hash _) (mined-transfer))

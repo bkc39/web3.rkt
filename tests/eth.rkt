@@ -3,7 +3,8 @@
 (module+ test
   (require json
            (only-in racket/contract flat-contract-predicate)
-           (only-in racket/match match-define)
+           (only-in racket/list list-set)
+           (only-in racket/match match match-define)
            rackunit
            web3
            (only-in "helpers/results.rkt" full-block-json receipt-json transaction-info-json/0)
@@ -27,6 +28,8 @@
   (define an-access-list (hasheq 'accessList '() 'gasUsed "0x5208"))
   (define zero-word (filled-hash #\0))
   (define word-255 (string-append "0x" (make-string 62 #\0) "ff"))
+  (define a-hash (filled-hash #\a))
+  (define b-hash (filled-hash #\b))
 
   (define endpoints
     `([,eth-blob-base-fee () "eth_blobBaseFee" () "0x1" 1]
@@ -50,7 +53,7 @@
        ,transaction-info-json/0 ,a-transaction]
       [,eth-get-transaction-by-hash (,transaction-hash) "eth_getTransactionByHash"
                                     (,transaction-hash) ,transaction-info-json/0 ,a-transaction]
-      [,eth-get-raw-transaction-by-hash ("0xaa") "eth_getRawTransactionByHash" ("0xaa")
+      [,eth-get-raw-transaction-by-hash (,a-hash) "eth_getRawTransactionByHash" (,a-hash)
                                         "0x02f8" "0x02f8"]
       [,eth-create-access-list (,a-tx "pending") "eth_createAccessList" (,a-tx "pending")
                                ,an-access-list ,an-access-list]
@@ -87,29 +90,29 @@
 
   (test-case "E3: a missing typed object is #f, and a missing raw transaction 'null"
     (for ([row (in-list `([,eth-get-block-receipts ("latest") "eth_getBlockReceipts" null]
-                          [,eth-get-transaction-receipt ("0xaa") "eth_getTransactionReceipt" null]
-                          [,eth-get-transaction-by-hash ("0xaa") "eth_getTransactionByHash" null]
+                          [,eth-get-transaction-receipt (,a-hash) "eth_getTransactionReceipt" null]
+                          [,eth-get-transaction-by-hash (,a-hash) "eth_getTransactionByHash" null]
                           [,eth-get-transaction-by-block-hash-and-index
-                           ("0xbb" 0) "eth_getTransactionByBlockHashAndIndex" null]
+                           (,b-hash 0) "eth_getTransactionByBlockHashAndIndex" null]
                           [,eth-get-transaction-by-block-number-and-index
                            (16 0) "eth_getTransactionByBlockNumberAndIndex" null]
-                          [,eth-get-block-by-hash ("0xbb" #f) "eth_getBlockByHash" null]
+                          [,eth-get-block-by-hash (,b-hash #f) "eth_getBlockByHash" null]
                           [,eth-get-block-by-number ("latest" #t) "eth_getBlockByNumber" null]))])
       (match-define (list procedure arguments method answer) row)
       (match-define (list result _) (call-mocked procedure arguments method answer))
       (check-false result method))
-    (for ([row (in-list `([,eth-get-raw-transaction-by-hash ("0xaa") "eth_getRawTransactionByHash"
+    (for ([row (in-list `([,eth-get-raw-transaction-by-hash (,a-hash) "eth_getRawTransactionByHash"
                                                             null]
-                          [,eth-get-raw-transaction-by-hash ("0xaa") "eth_getRawTransactionByHash"
+                          [,eth-get-raw-transaction-by-hash (,a-hash) "eth_getRawTransactionByHash"
                                                             "0x"]))])
       (match-define (list procedure arguments method answer) row)
       (match-define (list result _) (call-mocked procedure arguments method answer))
       (check-equal? result 'null method)))
 
   (define malformed
-    `([,eth-get-raw-transaction-by-hash ("0xaa") "eth_getRawTransactionByHash" "0x123"
+    `([,eth-get-raw-transaction-by-hash (,a-hash) "eth_getRawTransactionByHash" "0x123"
                                         "eth_getRawTransactionByHash: unexpected result \"0x123\""]
-      [,eth-get-raw-transaction-by-hash ("0xaa") "eth_getRawTransactionByHash" 42
+      [,eth-get-raw-transaction-by-hash (,a-hash) "eth_getRawTransactionByHash" 42
                                         "eth_getRawTransactionByHash: unexpected result 42"]
       [,eth-fee-history (1 "latest" ()) "eth_feeHistory" "0x1"
                         "eth_feeHistory: unexpected result \"0x1\""]
@@ -118,7 +121,7 @@
       [,eth-blob-base-fee () "eth_blobBaseFee" "0x" "eth_blobBaseFee: unexpected result \"0x\""]
       [,eth-blob-base-fee () "eth_blobBaseFee" "10" "eth_blobBaseFee: unexpected result \"10\""]
       [,eth-blob-base-fee () "eth_blobBaseFee" null "eth_blobBaseFee: unexpected result 'null"]
-      [,eth-get-block-by-hash ("0xbb" #f) "eth_getBlockByHash" "0xbb"
+      [,eth-get-block-by-hash (,b-hash #f) "eth_getBlockByHash" "0xbb"
                               "eth_getBlockByHash: unexpected result \"0xbb\""]
       [,eth-get-block-receipts ("latest") "eth_getBlockReceipts" ("0xaa")
                                "eth_getBlockReceipts: malformed receipt in receipts 0 from the node: \"0xaa\""]
@@ -127,21 +130,21 @@
       [,eth-get-block-receipts ("latest") "eth_getBlockReceipts"
                                (,(hash-set receipt-json 'gasUsed "zz"))
                                "eth_getBlockReceipts: malformed receipt gas used in receipts 0 from the node: \"zz\""]
-      [,eth-get-transaction-receipt ("0xaa") "eth_getTransactionReceipt"
+      [,eth-get-transaction-receipt (,a-hash) "eth_getTransactionReceipt"
                                     ,(hash-set receipt-json 'gasUsed "zz")
                                     "eth_getTransactionReceipt: malformed receipt gas used from the node: \"zz\""]
-      [,eth-get-transaction-receipt ("0xaa") "eth_getTransactionReceipt" 42
+      [,eth-get-transaction-receipt (,a-hash) "eth_getTransactionReceipt" 42
                                     "eth_getTransactionReceipt: unexpected result 42"]
       [,eth-get-transaction-by-block-hash-and-index
-       ("0xbb" 0) "eth_getTransactionByBlockHashAndIndex" ()
+       (,b-hash 0) "eth_getTransactionByBlockHashAndIndex" ()
        "eth_getTransactionByBlockHashAndIndex: unexpected result '()"]
       [,eth-get-transaction-by-block-hash-and-index
-       ("0xbb" 0) "eth_getTransactionByBlockHashAndIndex" ,(hash-set transaction-info-json/0 'gas "zz")
+       (,b-hash 0) "eth_getTransactionByBlockHashAndIndex" ,(hash-set transaction-info-json/0 'gas "zz")
        "eth_getTransactionByBlockHashAndIndex: malformed transaction gas limit from the node: \"zz\""]
       [,eth-get-transaction-by-hash (,transaction-hash) "eth_getTransactionByHash"
                                     ,(hash-set transaction-info-json/0 'gas "zz")
                                     "eth_getTransactionByHash: malformed transaction gas limit from the node: \"zz\""]
-      [,eth-get-transaction-by-hash ("0xaa") "eth_getTransactionByHash" "0xaa"
+      [,eth-get-transaction-by-hash (,a-hash) "eth_getTransactionByHash" "0xaa"
                                     "eth_getTransactionByHash: unexpected result \"0xaa\""]
       [,eth-get-transaction-by-hash (,(filled-hash #\c)) "eth_getTransactionByHash"
                                     ,transaction-info-json/0
@@ -180,10 +183,10 @@
       [,eth-fee-history (1 "latest" (0.3333333333333333 1/3))]
       [,eth-fee-history (1 "latest" (+nan.0))]
       [,eth-fee-history (1 "latest" (-1))]
-      [,eth-get-block-by-hash ("0xbb" yes)]
+      [,eth-get-block-by-hash (,b-hash yes)]
       [,eth-get-block-receipts ("head")]
       [,eth-get-block-receipts (-1)]
-      [,eth-get-transaction-by-block-hash-and-index ("0xbb" -1)]
+      [,eth-get-transaction-by-block-hash-and-index (,b-hash -1)]
       [,eth-get-transaction-by-block-number-and-index ("latest" -1)]
       [,eth-get-proof (,addr (-1) "latest")]
       [,eth-get-proof (,addr (,(expt 2 256)) "latest")]
@@ -293,4 +296,112 @@
   (test-case "E13: a block hash is hex"
     (parameterize ([current-provider (mock-provider (hash "eth_getBlockTransactionCountByHash"
                                                           "0x1"))])
-      (check-blames-here (eth-get-block-transaction-count-by-hash "bb")))))
+      (check-blames-here (eth-get-block-transaction-count-by-hash "bb"))))
+
+  (define checksummed "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed")
+  (define wrong-checksum "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")
+
+  (define (upcase-hex s)
+    (string-append "0x" (string-upcase (substring s 2))))
+
+  (define address-arguments
+    `([,eth-get-balance 0 (,addr "latest")]
+      [,eth-get-storage-at 0 (,addr 0 "latest")]
+      [,eth-get-transaction-count 0 (,addr "latest")]
+      [,eth-get-code 0 (,addr "latest")]
+      [,eth-get-proof 0 (,addr () "latest")]
+      [,eth-sign 0 (,addr "0x00")]
+      [,anvil-set-code 0 (,addr "0x00")]
+      [,anvil-set-balance 0 (,addr 1)]
+      [,anvil-set-storage-at 0 (,addr 0 ,zero-word)]
+      [,anvil-impersonate-account 0 (,addr)]
+      [,anvil-stop-impersonating-account 0 (,addr)]))
+
+  (define hash-arguments
+    `([,eth-get-block-by-hash 0 (,mined-hash #f)]
+      [,eth-get-block-transaction-count-by-hash 0 (,mined-hash)]
+      [,eth-get-transaction-by-block-hash-and-index 0 (,mined-hash 0)]
+      [,eth-get-transaction-by-hash 0 (,transaction-hash)]
+      [,eth-get-transaction-receipt 0 (,receipt-hash)]
+      [,eth-get-raw-transaction-by-hash 0 (,transaction-hash)]
+      [,debug-trace-transaction 0 (,transaction-hash ,(hasheq))]
+      [,wait-for-receipt 0 (,receipt-hash)]))
+
+  (define (sent-argument procedure position arguments value)
+    (define node (mock-provider (lambda (method params) 'null)))
+    (with-handlers ([exn:fail:web3? void])
+      (apply procedure (list-set arguments position value) #:provider node))
+    (match (mock-provider-calls node)
+      [(cons (cons _ params) _) (list-ref params position)]))
+
+  (define (refused-before-any-call? procedure position arguments value)
+    (define node (mock-provider (lambda (method params) 'null)))
+    (check-blames-here (apply procedure (list-set arguments position value) #:provider node))
+    (null? (mock-provider-calls node)))
+
+  (test-case "an address argument is lowercase, uppercase or checksummed, and sent as given"
+    (for* ([row (in-list address-arguments)]
+           [good (in-list (list checksummed (string-downcase checksummed) (upcase-hex checksummed)))])
+      (match-define (list procedure position arguments) row)
+      (check-equal? (sent-argument procedure position arguments good) good
+                    (format "~a" (object-name procedure)))))
+
+  (test-case "any other address argument blames the caller before any call"
+    (for* ([row (in-list address-arguments)]
+           [bad (in-list (list wrong-checksum zero-word 'alice))])
+      (match-define (list procedure position arguments) row)
+      (check-true (refused-before-any-call? procedure position arguments bad)
+                  (format "~a ~s" (object-name procedure) bad)))
+    (define e (raised (lambda () (eth-get-balance wrong-checksum "latest"
+                                                  #:provider (mock-provider (hash))))))
+    (check-regexp-match #rx"expected: address[?]" (exn-message e))
+    (check-regexp-match (regexp-quote wrong-checksum) (exn-message e)))
+
+  (test-case "a hash argument is 32 bytes of hex in either case"
+    (for* ([row (in-list hash-arguments)]
+           [bad (in-list (list (substring a-hash 0 64) (string-append a-hash "aa") "0xaa" 'h
+                               (string-append "0X" (substring a-hash 2))))])
+      (match-define (list procedure position arguments) row)
+      (check-true (refused-before-any-call? procedure position arguments bad)
+                  (format "~a ~s" (object-name procedure) bad)))
+    (define e (raised (lambda () (eth-get-transaction-receipt "0xaa"
+                                                              #:provider (mock-provider (hash))))))
+    (check-regexp-match (regexp-quote "expected: (and/c string? #px\"^0x[0-9a-fA-F]{64}$\")")
+                        (exn-message e)))
+
+  (test-case "an uppercase hash argument asks for the hash and accepts its answer"
+    (for ([row (in-list `([,eth-get-transaction-receipt (,(upcase-hex receipt-hash))
+                                                        "eth_getTransactionReceipt"
+                                                        ,receipt-json ,a-receipt]
+                          [,eth-get-block-by-hash (,(upcase-hex mined-hash) #t) "eth_getBlockByHash"
+                                                  ,full-block-json ,a-block]))])
+      (match-define (list procedure arguments method answer expected) row)
+      (check-equal? (call-mocked procedure arguments method answer)
+                    (list expected (list (cons method arguments)))
+                    method)))
+
+  (test-case "eth-accounts and eth-coinbase return checksummed addresses"
+    (check-equal? (call-mocked eth-accounts '() "eth_accounts" (list (string-downcase checksummed)
+                                                                     addr))
+                  `((,checksummed "0x00000000000000000000000000000000000c0De0") (("eth_accounts"))))
+    (check-equal? (call-mocked eth-coinbase '() "eth_coinbase" (upcase-hex checksummed))
+                  `(,checksummed (("eth_coinbase")))))
+
+  (test-case "an account that is not an address raises exn:fail:web3 naming the method"
+    (for ([row (in-list `([,eth-accounts "eth_accounts" ("0x12")
+                                         "eth_accounts: malformed account 0 from the node: \"0x12\""]
+                          [,eth-accounts "eth_accounts" (,addr ,wrong-checksum)
+                                         ,(format "eth_accounts: malformed account 1 from the node: ~s"
+                                                  wrong-checksum)]
+                          [,eth-accounts "eth_accounts" 42
+                                         "eth_accounts: malformed account from the node: 42"]
+                          [,eth-accounts "eth_accounts" null
+                                         "eth_accounts: malformed account from the node: 'null"]
+                          [,eth-coinbase "eth_coinbase" "0x12"
+                                         "eth_coinbase: malformed coinbase from the node: \"0x12\""]
+                          [,eth-coinbase "eth_coinbase" 42
+                                         "eth_coinbase: malformed coinbase from the node: 42"]
+                          [,eth-coinbase "eth_coinbase" null
+                                         "eth_coinbase: malformed coinbase from the node: 'null"]))])
+      (match-define (list procedure method answer message) row)
+      (check-equal? (unexpected-message procedure '() method answer) message))))
