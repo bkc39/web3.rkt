@@ -90,9 +90,9 @@
        (test-case "a block lists its transactions' hashes, or the transactions themselves"
          (define tx-hash (eth-send-transaction (hasheq 'from me 'to stranger 'value "0x1")))
          (define height (receipt-block-number (wait-for-receipt tx-hash)))
-         (check-equal? (block-transactions (eth-get-block-by-number height #f)) (list tx-hash))
-         (check-equal? (for/list ([full (in-list (block-transactions
-                                                  (eth-get-block-by-number height #t)))])
+         (check-equal? (block-transactions (eth-get-block-by-number height)) (list tx-hash))
+         (define full-block (eth-get-block-by-number height #:full-transactions? #t))
+         (check-equal? (for/list ([full (in-list (block-transactions full-block))])
                          (list (transaction-info-hash full) (transaction-info-value full)))
                        (list (list tx-hash 1))))
 

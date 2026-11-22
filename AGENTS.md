@@ -10,7 +10,7 @@ bezzle, which pin it as a flake input.
 
 | module | holds |
 |---|---|
-| `rpc.rkt` | providers, `rpc-call`, errors, hex helpers, `define-jsonrpc-endpoint` (whose `#:result-reader` gets the method name, the result and the call's arguments) |
+| `rpc.rkt` | providers, `rpc-call`, errors, hex helpers, `define-jsonrpc-endpoint` (whose argument specs may be optional keywords, and whose `#:result-reader` gets the method name, the result and the call's arguments) |
 | `eth.rkt` | `web3_*`, `net_*`, `eth_*` endpoints (fees, blocks, receipts, proofs, filters), `wait-for-receipt`; an `internal` submodule holds `poll-receipt/who`, the raw poll every wait runs |
 | `private/eth-params.rkt` | the endpoints' parameter contracts and their conversions to the node's JSON: block parameters, reward percentiles, storage slots, JSON objects; `eth.rkt` exports the documented ones |
 | `abi.rkt` | the contract ABI: encoders, decoders, selectors, reverts; an `internal` submodule of entry points that take the caller's `who` |

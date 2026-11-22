@@ -2,7 +2,7 @@
 
 (module+ test
   (require racket/format
-           (only-in racket/match match-define)
+           (only-in racket/match match match-define)
            rackunit
            (only-in web3/eth
                     eth-fee-history
@@ -12,8 +12,11 @@
                     eth-get-transaction-by-block-number-and-index)
            web3/eth/block
            (only-in (submod web3/eth/block internal) block-fields fee-history-fields withdrawal-fields)
-           (only-in web3/eth/transaction-info jsexpr->transaction-info transaction-info->jsexpr)
-           (only-in web3/rpc mock-provider)
+           (only-in web3/eth/transaction-info
+                    jsexpr->transaction-info
+                    transaction-info->jsexpr
+                    transaction-info?)
+           (only-in web3/rpc mock-provider mock-provider-calls with-provider)
            (only-in "helpers/records.rkt"
                     check-fields check-in-web3-and-manual message-of provided-accessors)
            (only-in "helpers/results.rkt"
@@ -108,48 +111,71 @@
     (mock-provider (hash method result)))
 
   (test-case "B6: a block's transactions agree with the form asked for"
-    (check-equal? (eth-get-block-by-number 1 #f
-                                           #:provider (answering "eth_getBlockByNumber" block-json))
+    (check-equal? (eth-get-block-by-number 1 #:provider (answering "eth_getBlockByNumber" block-json))
                   (jsexpr->block block-json))
-    (check-equal? (eth-get-block-by-hash mined-hash #t
+    (check-equal? (eth-get-block-by-hash mined-hash
+                                         #:full-transactions? #t
                                          #:provider (answering "eth_getBlockByHash" full-block-json))
                   (jsexpr->block full-block-json))
-    (check-false (eth-get-block-by-number 9 #t #:provider (answering "eth_getBlockByNumber" 'null)))
+    (check-false (eth-get-block-by-number 9
+                                          #:full-transactions? #t
+                                          #:provider (answering "eth_getBlockByNumber" 'null)))
     (for ([row (in-list `([#t ,block-json] [#f ,full-block-json]))])
       (match-define (list full? json) row)
       (check-regexp-match #rx"^eth_getBlockByNumber: malformed block transactions from the node: "
                           (message-of (lambda ()
                                         (eth-get-block-by-number
-                                         1 full? #:provider (answering "eth_getBlockByNumber" json)))))
+                                         1
+                                         #:full-transactions? full?
+                                         #:provider (answering "eth_getBlockByNumber" json)))))
       (check-regexp-match #rx"^eth_getBlockByHash: malformed block transactions from the node: "
                           (message-of (lambda ()
                                         (eth-get-block-by-hash
-                                         mined-hash full?
+                                         mined-hash
+                                         #:full-transactions? full?
                                          #:provider (answering "eth_getBlockByHash" json))))))
-    (check-equal? (eth-get-block-by-number 1 #t
-                                           #:provider (answering "eth_getBlockByNumber"
-                                                                 (hash-set block-json 'transactions '())))
-                  (jsexpr->block (hash-set block-json 'transactions '()))))
+    (define empty-json (hash-set block-json 'transactions '()))
+    (check-equal? (eth-get-block-by-number 1
+                                           #:full-transactions? #t
+                                           #:provider (answering "eth_getBlockByNumber" empty-json))
+                  (jsexpr->block empty-json)))
+
+  (test-case "B6a: full transactions is a keyword, off by default"
+    (define node (mock-provider (hash "eth_getBlockByNumber"
+                                      (lambda (params)
+                                        (match params
+                                          [(list _ #t) full-block-json]
+                                          [(list _ #f) block-json])))))
+    (with-provider node
+      (check-equal? (block-transactions (eth-get-block-by-number "latest")) transaction-hashes)
+      (check-true (andmap transaction-info?
+                          (block-transactions
+                           (eth-get-block-by-number "latest" #:full-transactions? #t))))
+      (check-blames-here (eth-get-block-by-number "latest" #:full-transactions? 'yes))
+      (for ([procedure (in-list (list eth-get-block-by-number eth-get-block-by-hash))])
+        (check-pred exn:fail:contract:arity? (raised (lambda () (procedure "latest" #t))))))
+    (check-equal? (mock-provider-calls node)
+                  '(("eth_getBlockByNumber" "latest" #f) ("eth_getBlockByNumber" "latest" #t))))
 
   (test-case "B9: a block is the one asked for, by number or by hash"
     (check-equal? (message-of (lambda ()
                                 (eth-get-block-by-hash
-                                 other-hash #f #:provider (answering "eth_getBlockByHash" block-json))))
+                                 other-hash #:provider (answering "eth_getBlockByHash" block-json))))
                   (~a "eth_getBlockByHash: malformed block hash from the node: " (~s mined-hash)))
     (check-equal? (message-of (lambda ()
                                 (eth-get-block-by-number
-                                 7 #f #:provider (answering "eth_getBlockByNumber" block-json))))
+                                 7 #:provider (answering "eth_getBlockByNumber" block-json))))
                   "eth_getBlockByNumber: malformed block number from the node: 1")
     (define shouted (string-append "0x" (string-upcase (substring mined-hash 2))))
-    (check-equal? (eth-get-block-by-hash shouted #f
+    (check-equal? (eth-get-block-by-hash shouted
                                          #:provider (answering "eth_getBlockByHash" block-json))
                   (jsexpr->block block-json))
     (for ([asked (in-list '("latest" "earliest" "pending" "safe" "finalized"))])
-      (check-equal? (eth-get-block-by-number asked #f
+      (check-equal? (eth-get-block-by-number asked
                                              #:provider (answering "eth_getBlockByNumber" block-json))
                     (jsexpr->block block-json)
                     asked))
-    (check-equal? (eth-get-block-by-hash other-hash #f
+    (check-equal? (eth-get-block-by-hash other-hash
                                          #:provider (answering "eth_getBlockByHash"
                                                                pending-block-json))
                   (jsexpr->block pending-block-json)))
