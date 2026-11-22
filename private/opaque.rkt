@@ -11,54 +11,33 @@
                   blame-swap
                   build-compound-type-name
                   build-flat-contract-property
+                  chaperone-contract?
                   coerce-flat-contract
                   contract-name
+                  flat-contract?
                   flat-contract-predicate
                   get/build-late-neg-projection
                   make-contract
                   prop:flat-contract
                   raise-blame-error)
-         (only-in racket/dict in-dict)
          (only-in racket/list append-map filter-map)
          (only-in racket/match match-define match-lambda)
-         (only-in racket/string string-join string-trim)
+         (only-in racket/string string-join)
          syntax/parse/define
-         (only-in "../address.rkt" address?)
-         (only-in "hex.rkt" address-hex-string?)
-         (only-in "signature.rkt" signature?))
+         (only-in "argument.rkt" describe-value))
 
-(provide address/c
-         describe-kind
+(provide describe-kind
          digest/c
          message/c
          opaque->
          (rename-out [opaque-contract opaque/c])
          secret-key/c)
 
-(define (miscased-address? v)
-  (and (address-hex-string? v) (not (address? v))))
-
-(define web3-kinds
-  (list (cons signature? "a signature")
-        (cons miscased-address? "an address whose mixed case is not its EIP-55 checksum")))
-
 (define (describe-kind v)
-  (or (for/first ([(kind? text) (in-dict web3-kinds)] #:when (kind? v)) text)
-      (describe-common-kind v)))
-
-(define (describe-common-kind v)
   (cond
-    [(string? v)
-     (format "a string of ~a characters~a"
-             (string-length v)
-             (if (equal? v (string-trim v)) "" ", with leading or trailing whitespace"))]
-    [(bytes? v) (format "a byte string of length ~a" (bytes-length v))]
-    [(exact-integer? v) "an exact integer"]
     [(secret-key? v) "a secret key"]
     [(public-key? v) "a public key"]
-    [(boolean? v) "a boolean"]
-    [(symbol? v) "a symbol"]
-    [else "a value of another kind"]))
+    [else (describe-value v)]))
 
 (struct opaque-contract (name expected accepts?)
   #:property prop:flat-contract
@@ -82,15 +61,16 @@
                    (lambda (v) (and (bytes? v) (= (bytes-length v) 32)))))
 (define message/c
   (opaque-contract 'message/c "a byte string or a string" (lambda (v) (or (bytes? v) (string? v)))))
-(define address/c
-  (opaque-contract 'address/c "an address" address?))
 
+;; A contract that is not flat, such as one built from address/c, reports by its own projection.
 (define (opaque v)
-  (if (opaque-contract? v)
-      v
-      (let ([c (coerce-flat-contract 'opaque-> v)])
-        (opaque-contract (contract-name c) (format "~a" (contract-name c))
-                         (flat-contract-predicate c)))))
+  (cond
+    [(opaque-contract? v) v]
+    [(and (chaperone-contract? v) (not (flat-contract? v))) v]
+    [else
+     (define c (coerce-flat-contract 'opaque-> v))
+     (opaque-contract (contract-name c) (format "~a" (contract-name c))
+                      (flat-contract-predicate c))]))
 
 (define (count-text n)
   (if (= n 1) "1 argument" (format "~a arguments" n)))

@@ -2,7 +2,7 @@
 
 (require racket/contract
          (only-in racket/match match)
-         (only-in "address.rkt" address? checksum-address?)
+         (only-in "address.rkt" checksum-address?)
          "eth/block.rkt"
          (only-in (submod "eth/block.rkt" internal) jsexpr->block-of jsexpr->fee-history-of)
          "eth/log.rkt"
@@ -12,6 +12,7 @@
          (only-in (submod "eth/transaction-info.rkt" internal)
                   jsexpr->transaction-info-in
                   jsexpr->transaction-info-of)
+         (only-in "private/argument.rkt" address/c hash-argument/c)
          (only-in "private/eth-params.rkt"
                   block-param/c
                   block-param->string
@@ -22,7 +23,7 @@
                   storage-slot/c
                   storage-slots->jsexpr
                   transaction-object/c)
-         (only-in "private/field-contracts.rkt" hash-argument/c hash-string/c)
+         (only-in "private/field-contracts.rkt" hash-string/c)
          (only-in "private/hex.rkt" hex-data-string?)
          (only-in "private/node.rkt" node-hash->string node-quantity->number node-quantity?)
          (only-in "private/record.rkt" address-field list-field read-field record-field)
@@ -152,16 +153,16 @@
   #:result-transform quantity->number)
 ;; wei
 (define-jsonrpc-endpoint eth_getBalance
-  (-> address? [block-param/c block-param->string] exact-nonnegative-integer?)
+  (-> address/c [block-param/c block-param->string] exact-nonnegative-integer?)
   #:result-transform quantity->number)
 (define-jsonrpc-endpoint eth_getStorageAt
-  (-> address? [exact-nonnegative-integer? number->hex-string] [block-param/c block-param->string]
+  (-> address/c [exact-nonnegative-integer? number->hex-string] [block-param/c block-param->string]
       hex-string?))
 (define-jsonrpc-endpoint eth_getTransactionCount
-  (-> address? [block-param/c block-param->string] exact-nonnegative-integer?)
+  (-> address/c [block-param/c block-param->string] exact-nonnegative-integer?)
   #:result-transform quantity->number)
 (define-jsonrpc-endpoint eth_getProof
-  (-> address? [(listof storage-slot/c) storage-slots->jsexpr] [block-param/c block-param->string]
+  (-> address/c [(listof storage-slot/c) storage-slots->jsexpr] [block-param/c block-param->string]
       hash?))
 (define-jsonrpc-endpoint eth_getBlockTransactionCountByHash
   (-> hash-argument/c exact-nonnegative-integer?)
@@ -170,7 +171,7 @@
   (-> [block-param/c block-param->string] exact-nonnegative-integer?)
   #:result-transform count-or-null->number)
 (define-jsonrpc-endpoint eth_getCode
-  (-> address? [block-param/c block-param->string] hex-string?))
+  (-> address/c [block-param/c block-param->string] hex-string?))
 (define-jsonrpc-endpoint eth_getBlockByNumber
   (-> [block-param/c block-param->string] #:full-transactions? [boolean? #:default #f]
       (or/c #f block?))
@@ -201,7 +202,7 @@
 (define-jsonrpc-endpoint eth_sendTransaction (-> transaction-object/c hash-string/c)
   #:result-reader read-transaction-hash)
 (define-jsonrpc-endpoint eth_sendRawTransaction (-> hex-string? hex-string?))
-(define-jsonrpc-endpoint eth_sign (-> address? hex-string? hex-string?))
+(define-jsonrpc-endpoint eth_sign (-> address/c hex-string? hex-string?))
 (define-jsonrpc-endpoint eth_signTransaction (-> transaction-object/c hex-string?)
   #:result-transform signed-transaction-result)
 (define-jsonrpc-endpoint eth_getTransactionByHash (-> hash-argument/c (or/c #f transaction-info?))

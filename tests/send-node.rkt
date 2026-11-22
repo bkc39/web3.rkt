@@ -214,7 +214,8 @@
       (for ([procedure (list send-transaction send-transaction/receipt)])
         (define e (with-handlers ([exn:fail? values]) (procedure signer0 anvil-bob)))
         (check-pred exn:fail:contract:blame? e)
-        (check-regexp-match #rx"expected: an address" (exn-message e))
+        (check-regexp-match #rx": not an address: not a string\n.*\n  given: a signer\n"
+                            (exn-message e))
         (check-blames-here (procedure 42 anvil-bob))
         (check-blames-here (procedure anvil-alice "bob"))
         (check-blames-here (procedure anvil-alice))

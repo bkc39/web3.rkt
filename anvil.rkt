@@ -15,10 +15,9 @@
          racket/file
          racket/tcp
          syntax/parse/define
-         (only-in "address.rkt" address?)
          "eth.rkt"
+         (only-in "private/argument.rkt" address/c hash-argument/c)
          (only-in "private/eth-params.rkt" transaction-object/c)
-         (only-in "private/field-contracts.rkt" hash-argument/c)
          "rpc.rkt")
 
 (provide anvil-set-code
@@ -40,19 +39,19 @@
 
 ;;;; anvil / hardhat-style methods
 
-(define-jsonrpc-endpoint anvil_setCode (-> address? hex-string? void?)
+(define-jsonrpc-endpoint anvil_setCode (-> address/c hex-string? void?)
   #:result-transform void)
 (define-jsonrpc-endpoint anvil_setBalance
-  (-> address? [exact-nonnegative-integer? number->hex-string] void?)
+  (-> address/c [exact-nonnegative-integer? number->hex-string] void?)
   #:result-transform void)
 (define-jsonrpc-endpoint anvil_setStorageAt
-  (-> address? [exact-nonnegative-integer? number->hex-string] hex-string? void?)
+  (-> address/c [exact-nonnegative-integer? number->hex-string] hex-string? void?)
   #:result-transform void)
 (define-jsonrpc-endpoint anvil_mine (-> void?)
   #:result-transform void)
-(define-jsonrpc-endpoint anvil_impersonateAccount (-> address? void?)
+(define-jsonrpc-endpoint anvil_impersonateAccount (-> address/c void?)
   #:result-transform void)
-(define-jsonrpc-endpoint anvil_stopImpersonatingAccount (-> address? void?)
+(define-jsonrpc-endpoint anvil_stopImpersonatingAccount (-> address/c void?)
   #:result-transform void)
 (define-jsonrpc-endpoint evm_snapshot (-> hex-string?))
 (define-jsonrpc-endpoint evm_revert (-> hex-string? boolean?))

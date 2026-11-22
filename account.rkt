@@ -23,6 +23,7 @@
          (only-in (submod "address.rkt" private) digest->address)
          "private/exn.rkt"
          (only-in "private/hex.rkt" bytes->natural)
+         (only-in "private/argument.rkt" address/c)
          "private/opaque.rkt"
          (rename-in "private/signature.rkt" [signature raw-signature])
          "private/who.rkt")

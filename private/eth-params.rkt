@@ -1,9 +1,16 @@
 #lang racket/base
 
 (require racket/contract/base
+         (only-in racket/contract
+                  blame-add-context
+                  build-compound-type-name
+                  contract-first-order
+                  get/build-late-neg-projection
+                  make-chaperone-contract
+                  raise-blame-error)
          (only-in json jsexpr?)
-         (only-in "../address.rkt" address?)
          (only-in "../rpc.rkt" number->hex-string)
+         (only-in "argument.rkt" address/c one-or-more/c)
          (only-in "hex.rkt" bytes->hex natural->bytes))
 
 (provide block-param/c
@@ -43,34 +50,63 @@
 
 (define absent (string->uninterned-symbol "absent"))
 
-(define (field-ok? object key ok?)
-  (define v (hash-ref object key absent))
-  (or (eq? v absent) (ok? v)))
-
-(define (to-ok? v)
-  (or (eq? v 'null) (address? v)))
-
-(define (addresses-ok? v)
-  (or (address? v) (and (list? v) (andmap address? v))))
-
-(define (access-list-ok? v)
-  (or (not (list? v))
-      (for/and ([entry (in-list v)])
-        (or (not (hash? entry)) (field-ok? entry 'address address?)))))
-
-(define (object-contract name checks)
-  (flat-named-contract
-   name
+;; The fields of an object that the library checks; the node judges the rest, and any value that
+;; is not a hash table or a list where one is looked into.
+(define (fields/c name fields #:object? [object? #f])
+  (define checks
+    (for/hasheq ([(key field/c) (in-hash fields)])
+      (values key (contract-first-order field/c))))
+  (define (well-formed? v)
+    (or (not object?) (and (hash? v) (jsexpr? v))))
+  (make-chaperone-contract
+   #:name name
+   #:first-order
    (lambda (v)
-     (and (hash? v)
-          (jsexpr? v)
-          (for/and ([(key ok?) (in-hash checks)])
-            (field-ok? v key ok?))))))
+     (and (well-formed? v)
+          (or (not (hash? v))
+              (for/and ([(key ok?) (in-hash checks)])
+                (define field (hash-ref v key absent))
+                (or (eq? field absent) (ok? field))))))
+   #:late-neg-projection
+   (lambda (blame)
+     (define projections
+       (for/hasheq ([(key field/c) (in-hash fields)])
+         (values key ((get/build-late-neg-projection field/c)
+                      (blame-add-context blame (format "the ~a field of" key))))))
+     (lambda (v neg)
+       (unless (well-formed? v)
+         (raise-blame-error blame #:missing-party neg v '(expected: "~a" given: "~e") name v))
+       (when (hash? v)
+         (for ([(key project) (in-hash projections)])
+           (define field (hash-ref v key absent))
+           (unless (eq? field absent)
+             (project field neg))))
+       v))))
+
+(define (entries/c entry/c)
+  (define entry? (contract-first-order entry/c))
+  (define project (get/build-late-neg-projection entry/c))
+  (make-chaperone-contract
+   #:name (build-compound-type-name 'entries/c entry/c)
+   #:first-order (lambda (v) (or (not (list? v)) (andmap entry? v)))
+   #:late-neg-projection
+   (lambda (blame)
+     (define each (project (blame-add-context blame "an element of")))
+     (lambda (v neg)
+       (when (list? v)
+         (for ([entry (in-list v)])
+           (each entry neg)))
+       v))))
 
 (define transaction-object/c
-  (object-contract 'transaction-object/c
-                   (hasheq 'from address? 'to to-ok? 'accessList access-list-ok?)))
+  (fields/c 'transaction-object/c
+            (hasheq 'from address/c
+                    'to (or/c 'null address/c)
+                    'accessList
+                    (entries/c (fields/c 'access-list-entry (hasheq 'address address/c))))
+            #:object? #t))
 
-(define filter-object/c (object-contract 'filter-object/c (hasheq 'address addresses-ok?)))
+(define filter-object/c
+  (fields/c 'filter-object/c (hasheq 'address (or/c null? (one-or-more/c address/c))) #:object? #t))
 
 (define objects/c (listof hash?))

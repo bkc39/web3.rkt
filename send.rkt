@@ -4,7 +4,7 @@
          (only-in "eth/receipt.rkt" receipt?)
          (only-in "private/contracts.rkt" sender/c)
          "private/exn.rkt"
-         (only-in "private/opaque.rkt" address/c)
+         (only-in "private/argument.rkt" address/c)
          (only-in "private/send.rkt"
                   fill-transaction
                   filling->
