@@ -203,8 +203,12 @@ Results come back decoded where the encoding is unambiguous:
 An address argument is an @racket[address?]: @racket["0x"] and 40 hex digits, all lowercase,
 all uppercase or in their EIP-55 checksum, so a mixed-case address with a wrong checksum is a
 contract violation.  A hash argument is @racket["0x"] and 64 hex digits in either case.
-Transaction and call objects are passed to @tt{eth_*} endpoints as the node expects them, as hash
-tables such as @racket[(hasheq 'from sender 'to contract 'data "0x...")].
+Addresses a node returns are respelled in their EIP-55 checksum, not checked against it.
+Transaction, call and filter objects are passed to @tt{eth_*} endpoints as the node expects them,
+as hash tables such as @racket[(hasheq 'from sender 'to contract 'data "0x...")]; their
+@racket['from], @racket['to] and @racket['address] fields and the @racket['address] of each
+@racket['accessList] entry are @racket[address?] values (a filter's @racket['address] may be a list
+of them, and @racket['to] may be @racket['null]).
 @racket[send-transaction] and the other procedures of @secref["sending"] take a transaction's
 fields as keywords, quantities as exact integers and data as bytes.
 
@@ -1699,8 +1703,8 @@ No error shows @racket[key].}
 @defproc[(message-signed-by? [sig signature?] [message (or/c bytes? string?)]
                              [address address?])
          boolean?]{
-Whether @racket[sig] is @racket[address]'s signature of @racket[message].  The case of
-@racket[address] is ignored, and a high @racket[s] is accepted, as by @racket[recover-address].
+Whether @racket[sig] is @racket[address]'s signature of @racket[message].  A high @racket[s] is
+accepted, as by @racket[recover-address].
 
 @examples[#:eval account-eval
           (message-signed-by? (sign-message key "hello") "hello"
@@ -1842,7 +1846,7 @@ Legacy (with and without @hyperlink["https://eips.ethereum.org/EIPS/eip-155"]{EI
 @hyperlink["https://eips.ethereum.org/EIPS/eip-2930"]{EIP-2930} and
 @hyperlink["https://eips.ethereum.org/EIPS/eip-1559"]{EIP-1559} transactions: built from their
 fields, signed, written as the raw bytes nodes take, and read back.  Values are immutable.
-Addresses are returned in their EIP-55 form; the case of an address given is ignored.
+Addresses are returned in their EIP-55 form, and an address given is an @racket[address?].
 
 @subsection{Building Transactions}
 
@@ -2041,7 +2045,8 @@ for.  No procedure here shows an argument in an error.
 Whether @racket[v] is an instance of a structure implementing @racket[gen:signer].}
 
 @defproc[(signer-address [signer signer?]) checksum-address?]{
-The address @racket[signer] signs for.}
+The address @racket[signer] signs for, respelled in its EIP-55 checksum whatever the case of the
+address its method returns.}
 
 @defproc[(signer-sign-digest [signer signer?] [digest digest/c]) signature?]{
 @racket[digest] signed as given.  Raises @racket[exn:fail:web3:signer] for a signer that signs no
@@ -3212,14 +3217,14 @@ The node's object @racket[l] was read from.}
 
 @defmodule[web3/abi/event]
 
-@defproc[(event-topic [e abi-event-spec/c]) (or/c #f (and/c string? #px"^0x[0-9a-fA-F]{64}$"))]{
+@defproc[(event-topic [e abi-event-spec/c]) (or/c #f #,hash-string-contract)]{
 Topic 0 of @racket[e]'s logs, or @racket[#f] for an anonymous event,
 which has none.
 
 @examples[#:eval event-eval
           (event-topic "Transfer(address indexed from, address indexed to, uint256 value)")]}
 
-@defproc[(abi-value->topic [t abi-type-spec/c] [v any/c]) (and/c string? #px"^0x[0-9a-fA-F]{64}$")]{
+@defproc[(abi-value->topic [t abi-type-spec/c] [v any/c]) #,hash-string-contract]{
 The topic of @racket[v] as an indexed parameter of type @racket[t]: its
 word for a value type, otherwise the Keccak-256 hash of its in-place
 encoding, so @tt{string}, @tt{bytes}, arrays and structs cannot be

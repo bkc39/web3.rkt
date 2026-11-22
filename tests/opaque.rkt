@@ -12,9 +12,16 @@
            racket/string
            rackunit
            (only-in libsecp256k1 integer->secret-key secret-key->public-key)
+           (only-in web3
+                    message-signed-by?
+                    node-signer
+                    send-transaction
+                    sign-message
+                    transaction->jsexpr)
            web3/address
            web3/private/opaque
-           (only-in web3/private/signature signature))
+           (only-in web3/private/signature signature)
+           (only-in "helpers/transactions.rkt" example-eip1559))
 
   (define secret-text "s3cr3t-value")
 
@@ -116,4 +123,19 @@
     (define e (refusal (lambda () (address secret-text))))
     (check-refusal e 'caller "checksum-address?" "a string of 12 characters")
     (when e
-      (check-false (string-contains? (exn-message e) secret-text)))))
+      (check-false (string-contains? (exn-message e) secret-text))))
+  (test-case "an address whose case is not its checksum is described so, and not shown"
+    (define wrong-checksum "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")
+    (define bob "0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
+    (define signed (sign-message (integer->secret-key 1) "m"))
+    (for ([call (list (lambda () (send-transaction wrong-checksum bob))
+                      (lambda () (node-signer wrong-checksum))
+                      (lambda () (message-signed-by? signed "m" wrong-checksum))
+                      (lambda () (transaction->jsexpr example-eip1559 #:from wrong-checksum)))])
+      (define e (refusal call))
+      (check-equal? (field (exn-message e) "expected") "an address")
+      (check-equal? (field (exn-message e) "given")
+                    "an address whose mixed case is not its EIP-55 checksum")
+      (check-false (string-contains? (string-downcase (exn-message e))
+                                     (string-downcase (substring wrong-checksum 2)))
+                   (exn-message e)))))

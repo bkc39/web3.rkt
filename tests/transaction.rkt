@@ -320,14 +320,16 @@
   (define u256-bad (list (expt 2 256) -1))
   (define to-bad
     (list (string-append "0x" (make-string 39 #\a)) (string-append "0x" (make-string 41 #\a))
-          (string-append "0X" (make-string 40 #\a)) (make-bytes 20 1) 'none))
+          (string-append "0X" (make-string 40 #\a)) (make-bytes 20 1) 'none
+          "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD"))
   (define key-32 (make-bytes 32 1))
   (define access-list-bad
     (list (list (list (string-append "0x" (make-string 38 #\a))))
           (list (list anvil-bob (make-bytes 31 1)))
           (list (list anvil-bob (make-bytes 33 1)))
           (list (list anvil-bob (bytes->hex-string key-32)))
-          (vector (list anvil-bob key-32))))
+          (vector (list anvil-bob key-32))
+          (list (list "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD" key-32))))
 
   (define (constructor kind)
     (match kind

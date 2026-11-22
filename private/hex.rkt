@@ -2,8 +2,11 @@
 
 ;; Unchecked conversions: callers check their input.  Hex strings here always start with 0x.
 
-(provide bytes->hex
+(provide address-hex-string?
+         bytes->hex
          bytes->natural
+         hash-hex-pattern
+         hash-hex-string?
          hex->bytes
          hex-data-string?
          natural->bytes
@@ -11,6 +14,14 @@
 
 (define (hex-data-string? v)
   (and (string? v) (regexp-match? #px"^0x(?:[0-9a-fA-F]{2})*$" v)))
+
+(define (address-hex-string? v)
+  (and (string? v) (regexp-match? #px"^0x[0-9a-fA-F]{40}$" v)))
+
+(define hash-hex-pattern #px"^0x[0-9a-fA-F]{64}$")
+
+(define (hash-hex-string? v)
+  (and (string? v) (regexp-match? hash-hex-pattern v)))
 
 (define (bytes->hex bs)
   (string-append

@@ -17,6 +17,7 @@
          syntax/parse/define
          (only-in "address.rkt" address?)
          "eth.rkt"
+         (only-in "private/eth-params.rkt" transaction-object/c)
          (only-in "private/field-contracts.rkt" hash-argument/c)
          "rpc.rkt")
 
@@ -59,7 +60,7 @@
 ;; Struct-log traces (pc, op, gas, gasCost, stack, ...).  Options follow
 ;; geth's tracer config, e.g. (hasheq 'enableMemory #t 'disableStack #f).
 (define-jsonrpc-endpoint debug_traceCall
-  (-> (and/c hash? jsexpr?) [block-param/c block-param->string] (and/c hash? jsexpr?) hash?))
+  (-> transaction-object/c [block-param/c block-param->string] (and/c hash? jsexpr?) hash?))
 (define-jsonrpc-endpoint debug_traceTransaction
   (-> hash-argument/c (and/c hash? jsexpr?) hash?))
 

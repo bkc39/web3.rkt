@@ -171,10 +171,10 @@
                   '())
     (check-equal? (sort (remove-duplicates (filter (lambda (n) (equal? (collection n) "web3")) names))
                         string<?)
-                  '("web3/abi/type" "web3/private/exn"))
+                  '("web3/abi/type" "web3/private/exn" "web3/private/hex"))
     (define allowed
       '("racket/base" "racket/contract/base" "racket/list" "racket/string" "racket/match"
-        "web3/private/exn"))
+        "web3/private/exn" "web3/private/hex"))
     (for ([name (in-list (filter values
                                  (map module-name
                                       (direct-imports

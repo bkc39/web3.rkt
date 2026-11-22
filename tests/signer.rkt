@@ -131,6 +131,14 @@
   (define (run operation signer)
     (run-on operation signer digest-hello "hello"))
 
+  (test-case "a custom signer's address is respelt in EIP-55, whatever its case"
+    (for ([spelling (list (string-downcase anvil-alice)
+                          (string-append "0x" (string-upcase (substring anvil-alice 2)))
+                          "0xF39Fd6e51aad88F6F4ce6aB8827279cffFb92266")])
+      (define signer (custom 'digest spelling 'honest))
+      (check-equal? (signer-address signer) anvil-alice spelling)
+      (check-equal? (signer-sign-message signer "hello") hello-signature spelling)))
+
   (define custom-refusals
     `((address-only ,anvil-alice honest digest
                     "signer-sign-digest: not supported: the signer signs no digests")
@@ -148,9 +156,6 @@
       (digest "0x12" honest address
               ,(string-append "signer-address: malformed result: "
                               "the signer's address is a string of 4 characters, not an address"))
-      (digest "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD" honest address
-              ,(string-append "signer-address: malformed result: "
-                              "the signer's address is a string of 42 characters, not an address"))
       (digest "0x12" honest digest
               ,(string-append "signer-sign-digest: malformed result: "
                               "the signer's address is a string of 4 characters, not an address"))

@@ -7,10 +7,11 @@
                   bytes->signature/who
                   message->bytes
                   sign-digest/who)
-         (only-in "address.rkt" address? address->checksum-string checksum-address?)
+         (only-in "address.rkt" checksum-address?)
+         (only-in (submod "address.rkt" private) address->checksum-string)
          (only-in "eth.rkt" eth-sign eth-sign-transaction)
          "private/exn.rkt"
-         (only-in "private/hex.rkt" bytes->hex hex->bytes hex-data-string?)
+         (only-in "private/hex.rkt" address-hex-string? bytes->hex hex->bytes hex-data-string?)
          (only-in "private/opaque.rkt"
                   address/c describe-kind digest/c message/c opaque-> opaque/c secret-key/c)
          "private/signer.rkt"
@@ -122,7 +123,7 @@
 
 (define/who (signer-address who signer)
   (define address (generic-signer-address signer))
-  (if (address? address)
+  (if (address-hex-string? address)
       (address->checksum-string address)
       (raise-signer who 'malformed "the signer's address is ~a, not an address"
                     (describe-kind address))))

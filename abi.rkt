@@ -108,7 +108,7 @@
   (apply bytes-append (append (reverse heads) (reverse tails))))
 
 (define (encoding-failure ts vs)
-  (arguments-failure ts vs #:checksum? address?))
+  (arguments-failure ts vs #:address-ok? address?))
 
 (define (encode-arguments who ts vs)
   (cond
@@ -377,6 +377,7 @@
            check-error-signatures/who
            decode-result/who
            encode-call/who
+           encode-sequence
            encoding-failure
            result-signature/who
            string->abi-signature/who))

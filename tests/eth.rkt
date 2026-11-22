@@ -133,12 +133,6 @@
       [,eth-get-transaction-receipt (,a-hash) "eth_getTransactionReceipt"
                                     ,(hash-set receipt-json 'gasUsed "zz")
                                     "eth_getTransactionReceipt: malformed receipt gas used from the node: \"zz\""]
-      [,eth-get-transaction-receipt (,receipt-hash) "eth_getTransactionReceipt"
-                                    ,(hash-set receipt-json 'from
-                                               "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")
-                                    ,(string-append "eth_getTransactionReceipt: malformed receipt "
-                                                    "from from the node: "
-                                                    "\"0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD\"")]
       [,eth-get-transaction-receipt (,a-hash) "eth_getTransactionReceipt" 42
                                     "eth_getTransactionReceipt: unexpected result 42"]
       [,eth-get-transaction-by-block-hash-and-index
@@ -376,14 +370,24 @@
                         (exn-message e)))
 
   (test-case "an uppercase hash argument asks for the hash and accepts its answer"
-    (for ([row (in-list `([,eth-get-transaction-receipt (,(upcase-hex receipt-hash))
-                                                        "eth_getTransactionReceipt"
-                                                        ,receipt-json ,a-receipt]
-                          [,eth-get-block-by-hash (,(upcase-hex mined-hash) #t) "eth_getBlockByHash"
-                                                  ,full-block-json ,a-block]))])
-      (match-define (list procedure arguments method answer expected) row)
+    (define up-receipt (upcase-hex receipt-hash))
+    (define up-block (upcase-hex mined-hash))
+    (define up-transaction (upcase-hex transaction-hash))
+    (for ([row (in-list `([,eth-get-transaction-receipt (,up-receipt) "eth_getTransactionReceipt"
+                                                        (,up-receipt) ,receipt-json ,a-receipt]
+                          [,wait-for-receipt (,up-receipt) "eth_getTransactionReceipt"
+                                             (,up-receipt) ,receipt-json ,a-receipt]
+                          [,eth-get-block-by-hash (,up-block #t) "eth_getBlockByHash"
+                                                  (,up-block #t) ,full-block-json ,a-block]
+                          [,eth-get-transaction-by-hash (,up-transaction) "eth_getTransactionByHash"
+                                                        (,up-transaction) ,transaction-info-json/0
+                                                        ,a-transaction]
+                          [,eth-get-transaction-by-block-hash-and-index
+                           (,up-block 0) "eth_getTransactionByBlockHashAndIndex" (,up-block "0x0")
+                           ,transaction-info-json/0 ,a-transaction]))])
+      (match-define (list procedure arguments method params answer expected) row)
       (check-equal? (call-mocked procedure arguments method answer)
-                    (list expected (list (cons method arguments)))
+                    (list expected (list (cons method params)))
                     method)))
 
   (test-case "eth-accounts and eth-coinbase return checksummed addresses"
@@ -396,9 +400,6 @@
   (test-case "an account that is not an address raises exn:fail:web3 naming the method"
     (for ([row (in-list `([,eth-accounts "eth_accounts" ("0x12")
                                          "eth_accounts: malformed account 0 from the node: \"0x12\""]
-                          [,eth-accounts "eth_accounts" (,addr ,wrong-checksum)
-                                         ,(format "eth_accounts: malformed account 1 from the node: ~s"
-                                                  wrong-checksum)]
                           [,eth-accounts "eth_accounts" 42
                                          "eth_accounts: malformed account from the node: 42"]
                           [,eth-accounts "eth_accounts" null
@@ -410,4 +411,52 @@
                           [,eth-coinbase "eth_coinbase" null
                                          "eth_coinbase: malformed coinbase from the node: 'null"]))])
       (match-define (list procedure method answer message) row)
-      (check-equal? (unexpected-message procedure '() method answer) message))))
+      (check-equal? (unexpected-message procedure '() method answer) message)))
+
+  (test-case "an address from the node is respelt in EIP-55, whatever its case"
+    (match-define (list receipt _)
+      (call-mocked eth-get-transaction-receipt (list receipt-hash) "eth_getTransactionReceipt"
+                   (hash-set receipt-json 'from wrong-checksum)))
+    (check-equal? (receipt-from receipt) checksummed)
+    (check-equal? (log-address (jsexpr->log (hash-set a-log 'address wrong-checksum)))
+                  checksummed)
+    (check-equal? (call-mocked eth-accounts '() "eth_accounts" (list addr wrong-checksum))
+                  `((,(address->checksum-string addr) ,checksummed) (("eth_accounts"))))
+    (check-equal? (call-mocked eth-coinbase '() "eth_coinbase" wrong-checksum)
+                  `(,checksummed (("eth_coinbase")))))
+
+  (define object-endpoints
+    `([,eth-call (,a-tx "latest") transaction]
+      [,eth-estimate-gas (,a-tx) transaction]
+      [,eth-create-access-list (,a-tx "latest") transaction]
+      [,eth-send-transaction (,a-tx) transaction]
+      [,eth-sign-transaction (,a-tx) transaction]
+      [,debug-trace-call (,a-tx "latest" ,(hasheq)) transaction]
+      [,eth-get-logs (,a-query) filter]
+      [,eth-new-filter (,a-query) filter]))
+
+  (define (access-list-of address)
+    (list (hasheq 'address address 'storageKeys (list zero-word))))
+
+  (define object-changes
+    `([transaction from ,wrong-checksum ,checksummed]
+      [transaction to ,wrong-checksum null]
+      [transaction to ,wrong-checksum ,(string-downcase checksummed)]
+      [transaction accessList ,(access-list-of wrong-checksum) ,(access-list-of checksummed)]
+      [filter address ,wrong-checksum ,(upcase-hex checksummed)]
+      [filter address (,addr ,wrong-checksum) (,addr ,checksummed)]))
+
+  (test-case "an object's addresses are address? values, checked before any call"
+    (for* ([endpoint (in-list object-endpoints)]
+           [change (in-list object-changes)])
+      (match-define (list procedure (and arguments (cons object others)) kind) endpoint)
+      (match-define (list change-kind key bad good) change)
+      (when (eq? kind change-kind)
+        (define name (format "~a ~a ~s" (object-name procedure) key bad))
+        (define bad-object (hash-set object key bad))
+        (define good-object (hash-set object key good))
+        (check-true (refused-before-any-call? procedure 0 arguments bad-object) name)
+        (define e (raised (lambda () (apply procedure bad-object others
+                                            #:provider (mock-provider (hash))))))
+        (check-regexp-match (regexp-quote (format "expected: ~a-object/c" kind)) (exn-message e))
+        (check-equal? (sent-argument procedure 0 arguments good-object) good-object name)))))

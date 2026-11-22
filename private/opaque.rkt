@@ -24,6 +24,7 @@
          (only-in racket/string string-join string-trim)
          syntax/parse/define
          (only-in "../address.rkt" address?)
+         (only-in "hex.rkt" address-hex-string?)
          (only-in "signature.rkt" signature?))
 
 (provide address/c
@@ -34,8 +35,12 @@
          (rename-out [opaque-contract opaque/c])
          secret-key/c)
 
+(define (miscased-address? v)
+  (and (address-hex-string? v) (not (address? v))))
+
 (define web3-kinds
-  (list (cons signature? "a signature")))
+  (list (cons signature? "a signature")
+        (cons miscased-address? "an address whose mixed case is not its EIP-55 checksum")))
 
 (define (describe-kind v)
   (or (for/first ([(kind? text) (in-dict web3-kinds)] #:when (kind? v)) text)

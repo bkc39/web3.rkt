@@ -106,9 +106,9 @@
     (check-blames-here (address->checksum-string "5aaeb6053f3e94c9b9a09f33669435e7ef1beaed"))
     (check-blames-here (address->checksum-string "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")))
 
-  (test-case "web3/address needs only racket/base libraries and keccak"
+  (test-case "web3/address needs only racket/base libraries, keccak and web3/private/hex"
     (define names (filter values (map module-name (import-closure 'web3/address))))
     (check-equal? (filter (lambda (n) (member (collection n) '("net" "json"))) names) '())
     (check-equal? (sort (remove-duplicates (filter (lambda (n) (equal? (collection n) "web3")) names))
                         string<?)
-                  '("web3/address"))))
+                  '("web3/address" "web3/private/hex"))))

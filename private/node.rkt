@@ -1,8 +1,8 @@
 #lang racket/base
 
-(require "../address.rkt"
+(require (only-in (submod "../address.rkt" private) address->checksum-string)
          "exn.rkt"
-         (only-in "hex.rkt" hex->bytes hex-data-string?))
+         (only-in "hex.rkt" address-hex-string? hash-hex-string? hex->bytes hex-data-string?))
 
 (provide node-address->string
          node-data->bytes
@@ -43,10 +43,10 @@
 
 (define (node-address->string who what v)
   (cond
-    [(address? v) (address->checksum-string v)]
+    [(address-hex-string? v) (address->checksum-string v)]
     [else (raise-node-malformed who what v)]))
 
 (define (node-hash->string who what v)
   (cond
-    [(node-string? #px"^0x[0-9a-fA-F]{64}$" v) (string-downcase v)]
+    [(hash-hex-string? v) (string-downcase v)]
     [else (raise-node-malformed who what v)]))

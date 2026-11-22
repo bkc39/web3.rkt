@@ -450,7 +450,8 @@
       (check-blames-here (contract-instance token-abi wrong-checksum))
       (check-blames-here (contract-call token "f()()" #:from wrong-checksum))
       (check-blames-here (create-address wrong-checksum 0))
-      (check-blames-here (create2-address wrong-checksum (make-bytes 32) #"")))
+      (check-blames-here (create2-address wrong-checksum (make-bytes 32) #""))
+      (check-blames-here (current-account wrong-checksum)))
     (check-equal? (mock-provider-calls node) '())
     (check-equal? (contract-instance-address
                    (contract-instance token-abi (string-downcase wrong-checksum)))

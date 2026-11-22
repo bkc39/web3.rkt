@@ -116,6 +116,8 @@
     (check-blames-here (transaction->jsexpr stx #:from anvil-alice))
     (check-blames-here (transaction->jsexpr 'tx #:from anvil-alice))
     (check-blames-here (transaction->jsexpr example-eip1559 #:from "0x12"))
+    (check-blames-here (transaction->jsexpr example-eip1559
+                                            #:from "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD"))
     (check-blames-here (transaction->jsexpr example-eip1559 #:from (make-bytes 20 1)))
     (check-no-leak
      (exn-message (raised (lambda () (transaction->jsexpr example-eip1559 #:from marker-hex)))))

@@ -4,7 +4,8 @@
          (only-in racket/list make-list)
          (only-in racket/match match match* match-define struct*)
          (only-in racket/string string-join)
-         "../private/exn.rkt")
+         "../private/exn.rkt"
+         (only-in "../private/hex.rkt" address-hex-string?))
 
 (provide
  (struct-out exn:fail:web3:abi)
@@ -357,39 +358,41 @@
     [else (fail (format "out of range: expected an integer ~a" range))]))
 
 ;; #f, or (list reason type value path) for the first part of v that does
-;; not fit t.  rpath is the path to v, innermost index first.  This module
-;; cannot compute a checksum: checksum? is the encoder's check of an address's case.
-(define (value-failure t v rpath #:checksum? [checksum? any-case?])
-  (define (fail reason)
-    (list reason t v (reverse rpath)))
-  (define (each ts)
-    (for/or ([t (in-list ts)]
-             [x (in-list v)]
-             [i (in-naturals)])
-      (value-failure t x (cons i rpath) #:checksum? checksum?)))
-  (match* (t v)
-    [((struct* abi-uint ([bits n])) _) (integer-failure v #f n fail)]
-    [((struct* abi-int ([bits n])) _) (integer-failure v #t n fail)]
-    [((struct* abi-address ()) (? string? (pregexp #px"^0x[0-9a-fA-F]{40}$")))
-     (and (not (checksum? v)) (fail "mixed case that is not the address's EIP-55 checksum"))]
-    [((struct* abi-address ()) _) (fail "expected a string of 0x and 40 hex digits")]
-    [((struct* abi-bool ()) (? boolean?)) #f]
-    [((struct* abi-bool ()) _) (fail "expected #t or #f")]
-    [((struct* abi-fixed-bytes ([size n])) (? bytes?)) #:when (= (bytes-length v) n) #f]
-    [((struct* abi-fixed-bytes ([size n])) _) (fail (format "expected a byte string of length ~a" n))]
-    [((struct* abi-bytes ()) (? bytes?)) #f]
-    [((struct* abi-bytes ()) _) (fail "expected a byte string")]
-    [((struct* abi-string ()) (? string?)) #f]
-    [((struct* abi-string ()) _) (fail "expected a string")]
-    [((struct* abi-array ([element e])) (? list?)) (each (make-list (length v) e))]
-    [((struct* abi-array ()) _) (fail "expected a list")]
-    [((struct* abi-fixed-array ([element e] [length k])) (? list?))
-     #:when (= (length v) k)
-     (each (make-list k e))]
-    [((struct* abi-fixed-array ([length k])) _) (fail (format "expected a list of ~a values" k))]
-    [((struct* abi-tuple ([components cs])) (? list?)) #:when (= (length v) (length cs)) (each cs)]
-    [((struct* abi-tuple ([components cs])) _)
-     (fail (format "expected a list of ~a values" (length cs)))]))
+;; not fit t.  rpath is the path to v, innermost index first.
+(define (value-failure t v rpath #:address-ok? [address-ok? any-address?])
+  (let failure ([t t] [v v] [rpath rpath])
+    (define (fail reason)
+      (list reason t v (reverse rpath)))
+    (define (each ts)
+      (for/or ([t (in-list ts)]
+               [x (in-list v)]
+               [i (in-naturals)])
+        (failure t x (cons i rpath))))
+    (match* (t v)
+      [((struct* abi-uint ([bits n])) _) (integer-failure v #f n fail)]
+      [((struct* abi-int ([bits n])) _) (integer-failure v #t n fail)]
+      [((struct* abi-address ()) (? address-hex-string?))
+       (and (not (address-ok? v)) (fail "mixed case that is not the address's EIP-55 checksum"))]
+      [((struct* abi-address ()) _) (fail "expected a string of 0x and 40 hex digits")]
+      [((struct* abi-bool ()) (? boolean?)) #f]
+      [((struct* abi-bool ()) _) (fail "expected #t or #f")]
+      [((struct* abi-fixed-bytes ([size n])) (? bytes?)) #:when (= (bytes-length v) n) #f]
+      [((struct* abi-fixed-bytes ([size n])) _)
+       (fail (format "expected a byte string of length ~a" n))]
+      [((struct* abi-bytes ()) (? bytes?)) #f]
+      [((struct* abi-bytes ()) _) (fail "expected a byte string")]
+      [((struct* abi-string ()) (? string?)) #f]
+      [((struct* abi-string ()) _) (fail "expected a string")]
+      [((struct* abi-array ([element e])) (? list?)) (each (make-list (length v) e))]
+      [((struct* abi-array ()) _) (fail "expected a list")]
+      [((struct* abi-fixed-array ([element e] [length k])) (? list?))
+       #:when (= (length v) k)
+       (each (make-list k e))]
+      [((struct* abi-fixed-array ([length k])) _) (fail (format "expected a list of ~a values" k))]
+      [((struct* abi-tuple ([components cs])) (? list?)) #:when (= (length v) (length cs))
+       (each cs)]
+      [((struct* abi-tuple ([components cs])) _)
+       (fail (format "expected a list of ~a values" (length cs)))])))
 
 ;; v, a value of t, folded from its elementary values up: (leaf type v) at
 ;; each elementary value, (node type results) at each array and tuple.
@@ -404,16 +407,16 @@
 (define (map-abi-value f t v)
   (fold-abi-value f (lambda (_ vs) vs) t v))
 
-(define (any-case? _address)
+(define (any-address? _address)
   #t)
 
-(define (arguments-failure ts vs #:checksum? [checksum? any-case?])
+(define (arguments-failure ts vs #:address-ok? [address-ok? any-address?])
   (cond
     [(= (length ts) (length vs))
      (for/or ([t (in-list ts)]
               [v (in-list vs)]
               [i (in-naturals)])
-       (value-failure t v (list i) #:checksum? checksum?))]
+       (value-failure t v (list i) #:address-ok? address-ok?))]
     [else (list (format "expected ~a values, given ~a" (length ts) (length vs)) ts vs '())]))
 
 ;;;; the public conversions
