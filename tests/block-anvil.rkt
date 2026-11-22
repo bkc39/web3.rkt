@@ -22,7 +22,8 @@
          (define tx-hash (receipt-transaction-hash sent))
 
          (test-case "B9: a mined transfer reads back from its block"
-           (define block (eth-get-block-by-number (receipt-block-number sent) #t))
+           (define block
+             (eth-get-block-by-number (receipt-block-number sent) #:full-transactions? #t))
            (check-equal? (block-number block) (receipt-block-number sent))
            (check-equal? (block-hash block) (receipt-block-hash sent))
            (check-pred exact-nonnegative-integer? (block-base-fee-per-gas block))
@@ -35,8 +36,9 @@
            (check-equal? (transaction-info->signed-transaction info)
                          (bytes->signed-transaction
                           (hex-string->bytes (eth-get-raw-transaction-by-hash tx-hash))))
-           (check-equal? (eth-get-block-by-hash (receipt-block-hash sent) #t) block)
-           (check-equal? (block-transactions (eth-get-block-by-number (block-number block) #f))
+           (check-equal? (eth-get-block-by-hash (receipt-block-hash sent) #:full-transactions? #t)
+                         block)
+           (check-equal? (block-transactions (eth-get-block-by-number (block-number block)))
                          (list tx-hash))
            (match (receipt-logs sent #:events (list transfer))
              [(list (? event-log? decoded))
