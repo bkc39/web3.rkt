@@ -172,9 +172,11 @@
 (define-jsonrpc-endpoint eth_getCode
   (-> address? [block-param/c block-param->string] hex-string?))
 (define-jsonrpc-endpoint eth_getBlockByNumber
-  (-> [block-param/c block-param->string] boolean? (or/c #f block?))
+  (-> [block-param/c block-param->string] #:full-transactions? [boolean? #:default #f]
+      (or/c #f block?))
   #:result-reader (nullable jsexpr->block-of hash?))
-(define-jsonrpc-endpoint eth_getBlockByHash (-> hash-argument/c boolean? (or/c #f block?))
+(define-jsonrpc-endpoint eth_getBlockByHash
+  (-> hash-argument/c #:full-transactions? [boolean? #:default #f] (or/c #f block?))
   #:result-reader (nullable jsexpr->block-of hash?))
 (define-jsonrpc-endpoint eth_getBlockReceipts
   (-> [block-param/c block-param->string] (or/c #f (listof receipt?)))

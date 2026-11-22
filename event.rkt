@@ -154,7 +154,7 @@
     ["earliest" 0]
     [(or "latest" "pending") (eth-block-number #:provider provider)]
     [_
-     (match (eth-get-block-by-number tag #f #:provider provider)
+     (match (eth-get-block-by-number tag #:provider provider)
        [#f (raise-node-malformed who (format "~a block" tag) 'null)]
        [tagged (block-number tagged)])]))
 

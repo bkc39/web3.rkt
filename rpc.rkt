@@ -329,6 +329,20 @@
     (pattern [contract:expr ->param:expr])
     (pattern contract:expr #:with ->param #'values))
 
+  (define-splicing-syntax-class param-spec
+    #:attributes (positional keyword contract ->param default)
+    (pattern (~seq keyword:keyword [contract:expr #:default default:expr])
+             #:fail-when (and (eq? (syntax-e #'keyword) '#:provider) #'keyword)
+             "every endpoint takes #:provider"
+             #:with ->param #'values
+             #:attr positional #f)
+    (pattern spec:arg-spec
+             #:with contract #'spec.contract
+             #:with ->param #'spec.->param
+             #:with positional #'spec.contract
+             #:attr keyword #f
+             #:attr default #f))
+
   (define (expand-endpoint-use endpoint stx)
     (define checked
       #`(#,(endpoint-transformer-checked-for endpoint)
@@ -351,7 +365,7 @@
 
 (define-syntax-parse-rule
   (define-jsonrpc-endpoint rpc-name:id
-    ((~datum ->) p:arg-spec ... result-contract:expr)
+    ((~datum ->) p:param-spec ... result-contract:expr)
     (~optional (~or* (~seq #:result-transform transform:expr)
                      (~seq #:result-reader reader:expr))
                #:defaults ([transform #'values])))
@@ -361,7 +375,8 @@
   #:with (result? transformer unchecked signature checked-for)
   (generate-temporaries '(result? transformer unchecked signature checked-for))
   #:with procedure
-  (syntax-property #'(lambda (arg ... #:provider [provider (current-provider)])
+  (syntax-property #'(lambda ((~? (~@ p.keyword [arg p.default]) arg) ...
+                              #:provider [provider (current-provider)])
                        (call-endpoint method (list (p.->param arg) ...) provider
                                       (lambda (raw) (transformer method raw arg ...))
                                       result?))
@@ -371,7 +386,10 @@
     (define transformer (~? (transform->reader transform) reader))
     (define result? (flat-contract-predicate (coerce-flat-contract 'fn-name result-contract)))
     (define unchecked procedure)
-    (define signature (->* (p.contract ...) (#:provider (or/c #f provider?)) any))
+    (define signature
+      (->* ((~? p.positional) ...)
+           ((~? (~@ p.keyword p.contract)) ... #:provider (or/c #f provider?))
+           any))
     (define checked-for
       (endpoint-checker signature unchecked (quote-module-name) 'fn-name (quote-srcloc rpc-name)))
     (define-syntax fn-name (endpoint-transformer (quote-syntax checked-for)))))

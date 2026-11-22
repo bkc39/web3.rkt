@@ -64,6 +64,6 @@
              (define number (receipt-block-number receipt))
              (define hash (receipt-transaction-hash receipt))
              (check-cast-reads "block" (number->string number) block-fields
-                               (eth-get-block-by-number number #f) url)
+                               (eth-get-block-by-number number) url)
              (check-cast-reads "tx" hash transaction-info-fields
                                (eth-get-transaction-by-hash hash) url)))))]))
