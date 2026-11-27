@@ -3,8 +3,9 @@
 (require racket/contract/base
          (only-in "eth/receipt.rkt" receipt?)
          (only-in "private/contracts.rkt" from/c sender/c)
-         (only-in "private/eth-params.rkt" block-param/c)
+         (only-in "private/eth-params.rkt" block-param/c block-param->string)
          "private/exn.rkt"
+         (only-in "private/node.rkt" node-natural)
          (only-in "private/send.rkt"
                   call-order
                   call-transaction
@@ -16,6 +17,7 @@
                   send-transaction
                   send-transaction/receipt)
          (only-in (submod "signer.rkt" internal) signer/c)
+         (only-in "rpc.rkt" rpc-call)
          (only-in "transaction.rkt" transaction?)
          (only-in (submod "transaction.rkt" internal) transaction-hash/c))
 
@@ -31,4 +33,6 @@
           [send-transaction/receipt (filling-> sender/c receipt?)]))
 
 (define/filling (estimate-transaction who from to order #:block [block "latest"])
-  (error 'unimplemented))
+  (define (request tx provider)
+    (rpc-call "eth_estimateGas" (list tx (block-param->string block)) #:provider provider))
+  (node-natural who "gas estimate" (call-order who from to order request) 64))
