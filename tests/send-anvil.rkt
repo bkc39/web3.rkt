@@ -7,6 +7,7 @@
            web3
            (only-in "helpers/accounts.rkt" anvil-addresses anvil-keys random-key)
            (only-in "helpers/mock.rkt" call-with-fields recording recording-calls)
+           (only-in "helpers/programs.rkt" echo-init echo-runtime)
            (only-in "helpers/transactions.rkt"
                     check-node-fields quantity random-checksummed-address slot-1)
            (only-in "util.rkt" anvil-bob seeded))
@@ -253,10 +254,6 @@
           (send-signed-transaction/receipt (local-signer key2) reverter #:gas-limit 50000)))
       (check-pred exn:fail:web3:transaction? e)
       (check-equal? (receipt-status (exn:fail:web3:transaction-receipt e)) 0)))
-
-  (define echo-runtime
-    (hex-string->bytes "0x6000358060005260f81c60ff14601c57602a60206000a160206000f35b60206000fd"))
-  (define echo-init (bytes-append (hex-string->bytes "0x602280600b6000396000f3") echo-runtime))
 
   (define (call-cases)
     (define-values (echo _deployed) (deploy-contract/receipt echo-init #:from account1))

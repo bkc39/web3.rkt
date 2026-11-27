@@ -29,6 +29,7 @@
                     web3/rpc
                     web3/send
                     web3/signer
+                    web3/trace
                     web3/transaction
                     web3/units]
           (for-syntax racket/base)
@@ -52,6 +53,27 @@
 @(define provider-guide-eval (make-base-eval '(require racket/generic racket/match web3)))
 @(define abi-guide-eval (make-base-eval '(require web3)))
 @(define event-guide-eval (make-base-eval '(require web3)))
+@(define trace-eval
+   (make-base-eval
+    '(require web3)
+    '(define call-trace-json
+       (hasheq 'type "CALL"
+               'from "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+               'to "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+               'value "0x0"
+               'gas "0x428"
+               'gasUsed "0x56bc"
+               'input "0x0000000000000000000000000000000000000000000000000000000000000007"
+               'output "0x0000000000000000000000000000000000000000000000000000000000000007"))
+    '(define halted-json
+       (hasheq 'type "CALL"
+               'from "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+               'to "0x00000000000000000000000000000000000c0de1"
+               'value "0x0"
+               'gas "0x13498"
+               'gasUsed "0x186a0"
+               'input "0x"
+               'error "invalid opcode: INVALID"))))
 @(define results-eval
    (make-base-eval
     '(require web3)
@@ -159,8 +181,8 @@ support for running local
 @racketmodname[web3/eth], @racketmodname[web3/abi], @racketmodname[web3/halt],
 @racketmodname[web3/address], @racketmodname[web3/account], @racketmodname[web3/rlp],
 @racketmodname[web3/units], @racketmodname[web3/transaction],
-@racketmodname[web3/signer], @racketmodname[web3/send], @racketmodname[web3/contract],
-@racketmodname[web3/event] and @racketmodname[web3/anvil].
+@racketmodname[web3/signer], @racketmodname[web3/send], @racketmodname[web3/trace],
+@racketmodname[web3/contract], @racketmodname[web3/event] and @racketmodname[web3/anvil].
 
 @racketblock[
 (require web3)
@@ -2043,6 +2065,40 @@ type 2, and @racket[transaction-access-list] to types 1 and 2.
           (transaction-to eip-155)
           (transaction-chain-id eip-155)]}
 
+@subsection[#:tag "transaction-gas"]{Gas Before Execution}
+
+@defproc[(intrinsic-gas [data bytes?]
+                        [#:creation? creation? boolean? #f]
+                        [#:access-list access-list access-list/c '()])
+         exact-nonnegative-integer?]{
+The gas a transaction with @racket[data] pays before any code runs: 21000; 4 for each zero byte of
+@racket[data] and 16 for each other byte
+(@hyperlink["https://eips.ethereum.org/EIPS/eip-2028"]{EIP-2028}); for a contract creation, 32000
+more and 2 for each 32-byte word of @racket[data], rounded up
+(@hyperlink["https://eips.ethereum.org/EIPS/eip-3860"]{EIP-3860}, from Shanghai); and 2400 for each
+address of @racket[access-list] and 1900 for each of its storage keys
+(@hyperlink["https://eips.ethereum.org/EIPS/eip-2930"]{EIP-2930}).  The per-byte figures are
+Istanbul's and the per-word charge Shanghai's, so the count is right from Shanghai on; blob gas
+and EIP-7702 authorizations are not counted.
+
+@examples[#:eval transaction-eval
+          (intrinsic-gas #"")
+          (intrinsic-gas (bytes 0 1 2 3))
+          (intrinsic-gas (make-bytes 33 1) #:creation? #t)
+          (intrinsic-gas #"" #:access-list
+                         (list (list "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+                                     (make-bytes 32 0))))]}
+
+@defproc[(floor-gas [data bytes?]) exact-nonnegative-integer?]{
+The least gas a transaction with @racket[data] uses from Prague on
+(@hyperlink["https://eips.ethereum.org/EIPS/eip-7623"]{EIP-7623}): 21000 and 10 for each token of
+@racket[data], a zero byte being one token and any other byte four.  A transaction that would use
+less pays this.
+
+@examples[#:eval transaction-eval
+          (floor-gas (bytes 0 1 2 3))
+          (max (intrinsic-gas (bytes 0 1 2 3)) (floor-gas (bytes 0 1 2 3)))]}
+
 @subsection{Signing}
 
 @defproc[(transaction->bytes [tx transaction?]) bytes?]{
@@ -2341,6 +2397,117 @@ raises @racket[exn:fail:web3:rpc:revert] decoded against @racket[errors], as for
 A transaction the node's answers cannot complete: a @racket[#:chain-id] other than the node's, a
 type 2 transaction on a chain without a base fee, or a @racket[#:max-fee-per-gas] below the
 node's priority fee.  Nothing has been signed or sent.}
+
+@section[#:tag "traces"]{Traces}
+
+@defmodule[web3/trace]
+
+What a call or a mined transaction did, frame by frame: go-ethereum's call tracer, read into
+records, and the tracing methods of go-ethereum and of parity-style nodes, whose results are the
+node's JSON.  They need a node that implements them, such as one started with
+@racket[start-anvil].  In the examples, @racket[call-trace-json] is anvil's trace of a mined call
+and @racket[halted-json] its trace of a call that met an invalid opcode.
+
+@subsection{Call Traces}
+
+@defproc[(call-trace? [v any/c]) boolean?]{
+Recognizes call traces: one frame of the call tracer, a call or a creation with the frames of the
+calls it made.  A call trace prints with its type, its addresses, the gas it used, how many calls
+it made and its error.}
+
+@deftogether[(@defproc[(call-trace-type [trace call-trace?]) string?]
+              @defproc[(call-trace-from [trace call-trace?]) checksum-address?]
+              @defproc[(call-trace-to [trace call-trace?]) (or/c #f checksum-address?)]
+              @defproc[(call-trace-value [trace call-trace?]) (or/c #f uint256/c)]
+              @defproc[(call-trace-gas [trace call-trace?]) uint64/c]
+              @defproc[(call-trace-gas-used [trace call-trace?]) uint64/c]
+              @defproc[(call-trace-input [trace call-trace?]) bytes?]
+              @defproc[(call-trace-output [trace call-trace?]) bytes?]
+              @defproc[(call-trace-error [trace call-trace?]) (or/c #f string?)]
+              @defproc[(call-trace-revert-reason [trace call-trace?]) (or/c #f string?)]
+              @defproc[(call-trace-calls [trace call-trace?]) (listof call-trace?)])]{
+The fields of a frame, each the tracer's field of the same name in camelCase: the type as the
+tracer writes it, such as @racket["CALL"], @racket["STATICCALL"], @racket["DELEGATECALL"],
+@racket["CALLCODE"], @racket["CREATE"], @racket["CREATE2"] or @racket["SELFDESTRUCT"]; the input,
+call data or init code; the output, return data, revert data or deployed code; and the error, the
+tracer's words, such as @tt{execution reverted}.  An absent output is @racket[#""], absent calls
+@racket['()], and the tracer's @tt{logs} stay in @racket[call-trace->jsexpr].
+
+@examples[#:eval trace-eval
+          (define trace (jsexpr->call-trace call-trace-json))
+          trace
+          (call-trace-output trace)
+          (call-trace-error trace)]}
+
+@defproc[(call-trace-halt [trace call-trace?]) (or/c #f halt/c)]{
+The halt that @racket[(call-trace-error trace)] names, read with @racket[message->halt];
+@racket[#f] for a frame with no error or one that reverted.
+
+@examples[#:eval trace-eval
+          (call-trace-halt (jsexpr->call-trace halted-json))
+          (call-trace-halt trace)]}
+
+@defproc[(jsexpr->call-trace [v any/c]) call-trace?]{
+A call trace, and the traces of the calls it made, from the node's JSON.  Raises
+@racket[exn:fail:web3], naming the field, for anything else, and for frames nested more than
+1025 below the top one: the EVM runs calls 1024 deep, and a tracer records the call it refuses
+beyond that as a frame.  Unknown fields are kept in
+@racket[call-trace->jsexpr].
+
+@examples[#:eval trace-eval
+          (eval:error (jsexpr->call-trace (hash-set call-trace-json 'gas "zz")))]}
+
+@defproc[(call-trace->jsexpr [trace call-trace?]) hash?]{
+The node's object @racket[trace] was read from.}
+
+@defproc[(transaction-call-trace [tx-hash #,hash-argument-contract]
+                                 [#:provider provider (or/c #f provider?) (current-provider)])
+         call-trace?]{
+The call trace of the mined transaction @racket[tx-hash]: @tt{debug_traceTransaction} with the
+call tracer.  Its output is the transaction's return data, which its receipt does not hold.}
+
+@defproc/filling[(call-transaction/trace [from (or/c #f address? signer?)]
+                                         [to (or/c #f address?)])
+                 #:more ([#:block block block-param/c "latest"])
+                 call-trace?]{
+The call trace of the call @racket[call-transaction] makes with the same arguments:
+@tt{debug_traceCall} of the same transaction object at @racket[block], with the call tracer.
+Arguments are checked as @racket[call-transaction] checks them.  A call that fails is a trace
+with an error; anvil answers so for reverts and halts alike.  A node that answers with an error
+instead raises it as @racket[call-transaction] does: a revert as
+@racket[exn:fail:web3:rpc:revert], decoded against @racket[errors].}
+
+@subsection{Tracing Methods}
+
+@deftogether[(
+@defproc[(debug-trace-call [tx (and/c hash? jsexpr?)]
+                           [block block-param/c]
+                           [options (and/c hash? jsexpr?)]
+                           [#:provider provider (or/c #f provider?) (current-provider)])
+         hash?]
+@defproc[(debug-trace-transaction [tx-hash #,hash-argument-contract]
+                                  [options (and/c hash? jsexpr?)]
+                                  [#:provider provider (or/c #f provider?) (current-provider)])
+         hash?])]{
+go-ethereum's traces of a call or a mined transaction.  @racket[options] follows its tracer
+configuration: by default struct-log traces, one entry per executed opcode in
+@racket['structLogs], such as with @racket[(hasheq 'enableMemory #t)]; with
+@racket[(hasheq 'tracer "callTracer")] the JSON @racket[jsexpr->call-trace] reads.
+@racketmodname[web3/anvil] provides these too.}
+
+@deftogether[(
+@defproc[(trace-transaction [tx-hash #,hash-argument-contract]
+                            [#:provider provider (or/c #f provider?) (current-provider)])
+         (listof hash?)]
+@defproc[(trace-call [tx (and/c hash? jsexpr?)]
+                     [types (non-empty-listof (or/c "trace" "vmTrace" "stateDiff"))]
+                     [block block-param/c]
+                     [#:provider provider (or/c #f provider?) (current-provider)])
+         hash?])]{
+Parity-style traces: @tt{trace_transaction}, the flat list of a mined transaction's frames, each
+with its @racket['action], @racket['result] and @racket['traceAddress]; and @tt{trace_call},
+the traces of a call that @racket[types] asks for, under @racket['trace], @racket['vmTrace] and
+@racket['stateDiff], with its return data under @racket['output].}
 
 @section{Contract ABI}
 
@@ -2742,7 +2909,7 @@ message that starts
 @tt{execution reverted}, whatever its reason says.
 
 anvil's errors from @tt{eth_call} and @tt{eth_estimateGas} are mostly @tt{EVM error} followed by
-a name.  Its call tracer (@racket[debug-trace-transaction] with @tt{callTracer}), its other
+a name.  Its call tracer (@racket[call-trace-error]), its other
 errors and go-ethereum use words; @italic{N} and @italic{M} stand for numbers.
 
 @tabular[#:style 'boxed
@@ -3701,18 +3868,6 @@ as @racket[snapshot].}
 
 @subsection{Tracing}
 
-@deftogether[(
-@defproc[(debug-trace-call [tx (and/c hash? jsexpr?)]
-                           [block block-param/c]
-                           [options (and/c hash? jsexpr?)]
-                           [#:provider provider (or/c #f provider?) (current-provider)])
-         hash?]
-@defproc[(debug-trace-transaction [tx-hash #,hash-argument-contract]
-                                  [options (and/c hash? jsexpr?)]
-                                  [#:provider provider (or/c #f provider?) (current-provider)])
-         hash?])]{
-
-Struct-log traces of a call or a mined transaction, with one entry per
-executed opcode in @racket['structLogs].  @racket[options] follows
-geth's tracer configuration, such as
-@racket[(hasheq 'enableMemory #t)].}
+@racketmodname[web3/anvil] also provides @racket[debug-trace-call] and
+@racket[debug-trace-transaction], described with the other tracing methods in
+@secref["traces"].

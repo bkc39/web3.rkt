@@ -12,6 +12,7 @@
          "private/exn.rkt"
          (only-in "private/field-contracts.rkt"
                   access-list/c bytes32/c hash-string/c to/c uint256/c uint64/c)
+         (only-in "private/gas.rkt" floor-gas intrinsic-gas)
          (only-in "private/hex.rkt" bytes->hex bytes->natural hex->bytes natural->hex)
          (only-in "private/argument.rkt" address/c)
          (only-in "private/opaque.rkt" opaque-> opaque/c secret-key/c)
@@ -76,7 +77,10 @@
           [signed-transaction-hash (-> signed-transaction? hash-string/c)]
           [signed-transaction->bytes (-> signed-transaction? bytes?)]
           [bytes->signed-transaction (-> bytes? signed-transaction?)]
-          [transaction->jsexpr (opaque-> transaction/c #:from address/c hash?)]))
+          [transaction->jsexpr (opaque-> transaction/c #:from address/c hash?)]
+          [intrinsic-gas (->* (bytes?) (#:creation? boolean? #:access-list access-list/c)
+                              exact-nonnegative-integer?)]
+          [floor-gas (-> bytes? exact-nonnegative-integer?)]))
 
 (module* internal #f
   (provide bytes->signed-transaction/who

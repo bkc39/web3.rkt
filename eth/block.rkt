@@ -34,11 +34,11 @@
 (define (transaction-objects? v)
   (and (list? v) (andmap hash? v)))
 
-(define (read-block-transactions who what detail v)
+(define (read-block-transactions who what here v)
   (cond
-    [(hash-strings? v) (read-hashes who what detail v)]
-    [(transaction-objects? v) (read-transaction-infos who what detail v)]
-    [else (raise-node-malformed who (string-append what detail) v)]))
+    [(hash-strings? v) (read-hashes who what here v)]
+    [(transaction-objects? v) (read-transaction-infos who what here v)]
+    [else (raise-node-malformed who (located what here) v)]))
 
 (define block-transactions-field
   (field-kind 'block-transactions

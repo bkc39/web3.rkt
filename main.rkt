@@ -15,10 +15,12 @@
 ;;   web3/rlp             Recursive Length Prefix: encoding, strict decoding, scalars
 ;;   web3/units           amounts in wei, gwei, ether or a token's decimals, from and to
 ;;                        decimal strings
-;;   web3/transaction     legacy, EIP-2930 and EIP-1559 transactions: build, sign, raw bytes, parse
+;;   web3/transaction     legacy, EIP-2930 and EIP-1559 transactions: build, sign, raw bytes, parse;
+;;                        intrinsic and floor gas
 ;;   web3/signer          signers: local keys, node accounts, gen:signer
 ;;   web3/send            filling transactions from a node, signing and sending them; sends
 ;;                        the node signs
+;;   web3/trace           call traces as structs; debug_* and trace_* endpoints
 ;;   web3/contract        deploying, calling and sending; contract instances; define-contract;
 ;;                        CREATE and CREATE2 addresses
 ;;   web3/event           event logs: filters, get-logs, receipt-logs
@@ -27,7 +29,8 @@
 ;;   web3/eth/receipt     receipts as structs
 ;;   web3/eth/block       blocks, withdrawals and fee histories as structs
 ;;   web3/eth/transaction-info  transactions as a node describes them
-;;   web3/anvil           anvil_* / evm_* / debug_* endpoints, managing anvil processes
+;;   web3/anvil           anvil_* / evm_* endpoints, debug_* from web3/trace, managing anvil
+;;                        processes
 ;;
 ;; `(require web3)` provides all of them, and keccak's keccak256.
 
@@ -44,6 +47,7 @@
          "rpc.rkt"
          "send.rkt"
          "signer.rkt"
+         "trace.rkt"
          "transaction.rkt"
          "units.rkt")
 
@@ -60,5 +64,6 @@
                        "rpc.rkt"
                        "send.rkt"
                        "signer.rkt"
+                       "trace.rkt"
                        "transaction.rkt"
                        "units.rkt"))

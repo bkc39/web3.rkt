@@ -11,7 +11,8 @@
          node-quantity->number
          node-quantity?
          raise-node-malformed
-         raise-node-missing)
+         raise-node-missing
+         raise-node-too-deep)
 
 (define (raise-node-malformed who what v #:origin [origin " from the node"])
   (raise (exn:fail:web3 (format "~a: malformed ~a~a: ~e" who what origin v)
@@ -19,6 +20,11 @@
 
 (define (raise-node-missing who what)
   (raise-node-malformed who what 'null))
+
+(define (raise-node-too-deep who what max-depth)
+  (raise (exn:fail:web3 (format "~a: malformed ~a from the node: nested deeper than ~a levels"
+                                who what max-depth)
+                        (current-continuation-marks))))
 
 (define (node-string? rx v)
   (and (string? v) (regexp-match? rx v)))
