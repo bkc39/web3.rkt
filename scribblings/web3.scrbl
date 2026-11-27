@@ -2736,8 +2736,9 @@ The halts, in the order of the table below.}
 @defproc[(message->halt [message string?]) (or/c #f halt/c)]{
 The halt that @racket[message], a node's or a call tracer's words, names, or @racket[#f].
 Matching ignores case.  A halt's words are the whole message, or, where the table shows a
-@italic{detail}, their start followed by @tt{: } and a detail that is not empty; so words that
-merely contain a halt's give @racket[#f], and so does any message that starts
+@italic{detail}, their start followed by @tt{: } and a detail that is not empty and does not
+start with white space; so words that merely contain a halt's give @racket[#f], and so does any
+message that starts
 @tt{execution reverted}, whatever its reason says.
 
 anvil's errors from @tt{eth_call} and @tt{eth_estimateGas} are mostly @tt{EVM error} followed by
@@ -3228,7 +3229,8 @@ The address @tt{CREATE2} gives @racket[init-code] deployed by
 A transaction that was mined and failed.  It is replayed with @racket[eth-call] at its block:
 @racket[revert] is what the replay reverted with, and @racket[halt] the halt it ended in (see
 @secref["halts"]).  Both are @racket[#f] when the replay did not fail, could not be made, or
-failed in words that name neither a revert nor a halt in the table; the message carries the
+failed in words from which no revert could be read and that name no halt in the table; the
+message carries the
 node's words.  The replay runs after the whole block, so it may not reproduce the failure when
 other transactions in the block changed the state it depends on.  A creation is replayed from
 the sender's next nonce, so at another address, and a failure that depends on the address, such

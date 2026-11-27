@@ -95,7 +95,7 @@
   (define (init-code row)
     (code-bytes (halting-target row)))
 
-  (define (mined-failure to #:data [data #""] #:gas-limit gas #:from [from anvil-alice])
+  (define (sent-failure to #:data [data #""] #:gas-limit gas #:from [from anvil-alice])
     (raised (lambda () (send-transaction/receipt from to #:data data #:gas-limit gas))))
 
   (define (called row)
@@ -104,13 +104,13 @@
                                 #:data (halting-input row) #:gas-limit (halting-gas row)))))
 
   (define (mined row)
-    (mined-failure (destination row) #:data (halting-input row) #:gas-limit (halting-gas row)))
+    (sent-failure (destination row) #:data (halting-input row) #:gas-limit (halting-gas row)))
 
   (define (called-creation row)
     (raised (lambda () (call-transaction anvil-alice #f #:data (init-code row)))))
 
   (define (mined-creation row)
-    (mined-failure #f #:data (init-code row) #:gas-limit (halting-gas row)))
+    (sent-failure #f #:data (init-code row) #:gas-limit (halting-gas row)))
 
   (define (check-rpc-halt e halt words)
     (check-pred exn:fail:web3:rpc? e words)
@@ -182,7 +182,7 @@
 
     (test-case "A8: a send from a local signer carries its halt as one the node signs does"
       (define signer (local-signer (hex-string->secret-key (third anvil-keys))))
-      (define e (mined-failure (installed designated-invalid) #:from signer #:gas-limit 100000))
+      (define e (sent-failure (installed designated-invalid) #:from signer #:gas-limit 100000))
       (check-mined-halt e 'invalid-opcode "EVM error InvalidFEOpcode")))
 
   (define (creation-cases)
@@ -222,8 +222,8 @@
       (define nonce (eth-get-transaction-count anvil-carol "pending"))
       (anvil-set-code (create-address anvil-carol nonce) #"\0")
       (define e
-        (mined-failure #f #:from anvil-carol #:data (code-bytes return-a-zero-byte)
-                       #:gas-limit 1000000))
+        (sent-failure #f #:from anvil-carol #:data (code-bytes return-a-zero-byte)
+                      #:gas-limit 1000000))
       (check-pred exn:fail:web3:transaction? e)
       (check-equal? (receipt-status (exn:fail:web3:transaction-receipt e)) 0)
       (check-false (exn:fail:web3:transaction-revert e))
@@ -234,8 +234,8 @@
       (define nonce (eth-get-transaction-count anvil-carol "pending"))
       (anvil-set-code (create-address anvil-carol nonce) #"\0")
       (define e
-        (mined-failure #f #:from anvil-carol #:data (code-bytes return-a-zero-byte)
-                       #:gas-limit 1000000))
+        (sent-failure #f #:from anvil-carol #:data (code-bytes return-a-zero-byte)
+                      #:gas-limit 1000000))
       (check-tracer-halt e 'address-collision "contract address collision"))
 
     (test-case "A17: a call of init code over the size limit is refused in initcode-size's words"
@@ -244,12 +244,12 @@
                       'initcode-size "max initcode size exceeded"))
 
     (test-case "A18: a send of init code over the size limit is refused in initcode-size's words"
-      (check-rpc-halt (mined-failure #f #:data (make-bytes 49153 0) #:gas-limit 3000000)
+      (check-rpc-halt (sent-failure #f #:data (make-bytes 49153 0) #:gas-limit 3000000)
                       'initcode-size "max initcode size exceeded"))
 
     (test-case "A19: a refused send of oversized init code is not mined"
       (define nonce (eth-get-transaction-count anvil-alice "pending"))
-      (mined-failure #f #:data (make-bytes 49153 0) #:gas-limit 3000000)
+      (sent-failure #f #:data (make-bytes 49153 0) #:gas-limit 3000000)
       (check-equal? (eth-get-transaction-count anvil-alice "pending") nonce)))
 
   (define (contrast-cases)
@@ -259,7 +259,7 @@
       (check-false (exn->halt e)))
 
     (test-case "A21: a mined revert carries its revert and no halt"
-      (define e (mined-failure (installed revert-empty) #:gas-limit 100000))
+      (define e (sent-failure (installed revert-empty) #:gas-limit 100000))
       (check-pred exn:fail:web3:transaction? e)
       (check-equal? (abi-revert-data (exn:fail:web3:transaction-revert e)) #"")
       (check-false (exn:fail:web3:transaction-halt e))
@@ -281,11 +281,11 @@
                       'undefined-opcode "EVM error NotActivated"))
 
     (test-case "A24: a mined opcode of a later fork carries an undefined opcode"
-      (check-mined-halt (mined-failure (installed push-zero) #:gas-limit 100000)
+      (check-mined-halt (sent-failure (installed push-zero) #:gas-limit 100000)
                         'undefined-opcode "EVM error NotActivated"))
 
     (test-case "A25: the call tracer names a mined opcode of a later fork undefined"
-      (check-tracer-halt (mined-failure (installed push-zero) #:gas-limit 100000)
+      (check-tracer-halt (sent-failure (installed push-zero) #:gas-limit 100000)
                          'undefined-opcode "invalid opcode")))
 
   (cond

@@ -2,7 +2,7 @@
 
 (require racket/contract/base
          racket/match
-         (only-in racket/string non-empty-string? string-prefix?)
+         (only-in racket/string string-prefix?)
          "private/exn.rkt")
 
 (define halt-table
@@ -31,6 +31,9 @@
     (invalid-code ("CreateContractStartingWithEF") ("invalid code: must not begin with 0xef"))
     (address-collision ("CreateCollision") ("contract address collision"))))
 
+(module* internal #f
+  (provide halt-table))
+
 (define (wording->predicate wording)
   (match wording
     [(? string?)
@@ -41,7 +44,8 @@
      (define refused (map string-downcase excepted))
      (lambda (words)
        (define detail (and (string-prefix? words prefix) (substring words (string-length prefix))))
-       (and (non-empty-string? detail)
+       (and detail
+            (regexp-match? #px"^\\S" detail)
             (not (for/or ([word (in-list refused)]) (string-prefix? detail word)))))]
     [(? pregexp?)
      (define whole (pregexp (format "^(?i:~a)$" (object-name wording))))

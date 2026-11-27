@@ -10,6 +10,7 @@
            (only-in web3 decode-revert exn:fail:web3 exn:fail:web3:rpc exn:fail:web3:rpc:revert
                     exn:fail:web3:transaction)
            web3/halt
+           (only-in (submod web3/halt internal) halt-table)
            "modules.rkt"
            (only-in "util.rkt" check-blames-here))
 
@@ -89,13 +90,26 @@
 
   (define halt? (flat-contract-predicate halt/c))
 
-  (define placeholders '(("N" . "1024") ("M" . "1023") ("detail" . "out of memory")))
+  (define numbers '(("N" . "1024") ("M" . "1023")))
+
+  (define details
+    '((out-of-gas "out of memory")
+      (undefined-opcode "opcode 0xc not defined" "PUSH0")))
 
   (define (marked form row)
     (define pattern (pregexp (format "@~a\\{((?:[^{}]|\\{[^{}]*\\})*)\\}" form)))
-    (for/list ([content (in-list (regexp-match* pattern row #:match-select cadr))])
+    (regexp-match* pattern row #:match-select cadr))
+
+  (define (filled halt content)
+    (define (fill detail)
       (regexp-replace* #px"@italic\\{(\\w+)\\}" content
-                       (lambda (_italic name) (cdr (assoc name placeholders))))))
+                       (lambda (_italic name)
+                         (if (equal? name "detail") detail (cdr (assoc name numbers))))))
+    (match* ((regexp-match? #rx"@italic{detail}" content) (assq halt details))
+      [(#f _) (list (fill #f))]
+      [(#t (list _ row-details ...)) (map fill row-details)]))
+
+  (struct manual-row (halt names wordings))
 
   (define (manual-halt-rows)
     (define manual (file->string (collection-file-path "scribblings/web3.scrbl" "web3")))
@@ -103,10 +117,21 @@
       (regexp-match #px"@subsection\\[#:tag \"halts\"\\].*?(@tabular\\[.*?)\n\n" manual))
     (for/list ([row (in-list (rest (regexp-split #rx"\\(list @racket\\['" table)))])
       (match-define (list _ halt) (regexp-match #px"^([a-z-]+)\\]" row))
-      (define errors
-        (for/list ([name (in-list (marked "evm-error" row))])
-          (string-append "EVM error " name)))
-      (list* (string->symbol halt) (append errors (marked "wording" row)))))
+      (manual-row (string->symbol halt) (marked "evm-error" row) (marked "wording" row))))
+
+  (define (manual-row-of halt)
+    (findf (lambda (row) (eq? (manual-row-halt row) halt)) (manual-halt-rows)))
+
+  (define (shown? halt wording shown)
+    (match wording
+      [(? string?) (member wording shown)]
+      [(list 'detail start _ ...) (member (string-append start ": @italic{detail}") shown)]
+      [(? pregexp?)
+       (define whole (pregexp (format "^(?i:~a)$" (object-name wording))))
+       (for*/or ([content (in-list shown)]
+                 #:when (regexp-match? #rx"@italic{" content)
+                 [instance (in-list (filled halt content))])
+         (regexp-match? whole instance))]))
 
   (test-case "H1: anvil's EVM error names give their halts"
     (check-rows anvil-names (lambda (name) (string-append "EVM error " name))))
@@ -147,11 +172,13 @@
                      "stack limit reached"
                      "write protection enabled")))
 
-  (test-case "H7: words with a detail need `: ` and a detail after them"
-    (check-no-halt '("out of gas: " "out of gas:" "out of gas:out of memory" "out of gas - x")))
+  (test-case "H7: words with a detail need `: ` and a detail after them that starts with no space"
+    (check-no-halt '("out of gas: " "out of gas:" "out of gas:out of memory" "out of gas - x"
+                     "out of gas:  " "invalid opcode: \n" "invalid opcode:  PUSH0")))
 
   (test-case "H8: INVALID followed by more words is not an undefined opcode, nor any halt"
-    (check-no-halt '("invalid opcode: INVALID " "invalid opcode: INVALID, at pc 3")))
+    (check-no-halt '("invalid opcode: INVALID " "invalid opcode: INVALID, at pc 3"
+                     "invalid opcode:  INVALID")))
 
   (test-case "H9: halts has no duplicates"
     (check-equal? (remove-duplicates halts) halts))
@@ -169,10 +196,32 @@
     (check-equal? (map first geth-words) (remq 'precompile-failure halts)))
 
   (test-case "H13: the manual's table has the halts in order"
-    (check-equal? (map first (manual-halt-rows)) halts))
+    (check-equal? (map manual-row-halt (manual-halt-rows)) halts))
 
-  (test-case "H14: every wording the manual's table shows gives the halt of its row"
-    (check-rows (manual-halt-rows) values))
+  (test-case "H14: every name and wording the manual's table shows gives the halt of its row"
+    (for ([row (in-list (manual-halt-rows))])
+      (define halt (manual-row-halt row))
+      (for ([name (in-list (manual-row-names row))])
+        (define message (string-append "EVM error " name))
+        (check-eq? (message->halt message) halt message))
+      (for* ([content (in-list (manual-row-wordings row))]
+             [message (in-list (filled halt content))])
+        (check-eq? (message->halt message) halt message))))
+
+  (test-case "H25: each row of the manual's table shows exactly its halt's EVM error names"
+    (for ([code-row (in-list halt-table)])
+      (match-define (list halt names _) code-row)
+      (define row (manual-row-of halt))
+      (check-pred pair? (manual-row-names row) (format "~a" halt))
+      (check-equal? (sort (manual-row-names row) string<?) (sort names string<?)
+                    (format "~a" halt))))
+
+  (test-case "H26: each row of the manual's table shows every wording of its halt"
+    (for* ([code-row (in-list halt-table)]
+           [wording (in-list (third code-row))])
+      (define halt (first code-row))
+      (check-not-false (shown? halt wording (manual-row-wordings (manual-row-of halt)))
+                       (format "~a: ~s" halt wording))))
 
   (test-case "H15: exn->halt reads an RPC error's message"
     (check-eq? (exn->halt (rpc-exn "EVM error InvalidJump")) 'invalid-jump)
