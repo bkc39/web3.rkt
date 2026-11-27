@@ -220,7 +220,8 @@
                           (-32000 "invalid opcode: INVALID" invalid-opcode)
                           (-32000 "stack limit reached 1024 (1023)" stack-overflow)))])
       (match-define (list code words halt) row)
-      (define-values (e _calls) (mined-failure (lambda (_) (raise-rpc-error "eth_call" code words))))
+      (define-values (e _calls)
+        (mined-failure (lambda (_) (raise-rpc-error "eth_call" code words))))
       (check-pred exn:fail:web3:transaction? e words)
       (check-false (exn:fail:web3:transaction-revert e) words)
       (check-eq? (exn:fail:web3:transaction-halt e) halt words)
@@ -228,7 +229,7 @@
       (check-equal? (exn-message e)
                     (format "contract-send: transaction ~a failed in block 5: ~a" tx-hash words))))
 
-  (test-case "a send mined with status 0 has no halt when its replay reverts, passes or fails otherwise"
+  (test-case "a mined send has no halt when its replay reverts, passes or fails otherwise"
     (for ([replay (in-list (list (reverting "eth_call")
                                  "0x"
                                  (lambda (_) (raise-rpc-error "eth_call" -32000 "header not found"))

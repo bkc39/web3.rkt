@@ -59,9 +59,12 @@
     (check-eq? (exn:fail:web3:transaction-halt e) halt words)
     (check-eq? (exn->halt e) halt words))
 
+  (define (call-trace tx-hash)
+    (debug-trace-transaction tx-hash (hasheq 'tracer "callTracer")))
+
   (define (tracer-error e)
     (define tx-hash (receipt-transaction-hash (exn:fail:web3:transaction-receipt e)))
-    (hash-ref (debug-trace-transaction tx-hash (hasheq 'tracer "callTracer")) 'error #f))
+    (hash-ref (call-trace tx-hash) 'error #f))
 
   (define (runtime-cases)
     (test-case "A1: call-transaction raises the node's words, and exn->halt names the halt"
@@ -77,7 +80,7 @@
           (raised (lambda () (send-transaction/receipt anvil-alice (installed code)
                                                        #:gas-limit gas))))
         (check-mined-halt e halt words)
-        (check-regexp-match (regexp (string-append ": " words "$")) (exn-message e))))
+        (check-regexp-match (regexp (string-append ": " (regexp-quote words) "$")) (exn-message e))))
 
     (test-case "A3: the call tracer's error for the mined transaction names the same halt"
       (for ([row (in-list runtime-rows)])
@@ -92,8 +95,9 @@
       (for ([row (in-list runtime-rows)])
         (match-define (list halt code _gas words _tracer) row)
         (define address (installed code))
-        (check-rpc-halt (raised (lambda () (contract-call address "f()(uint256)" #:from anvil-alice)))
-                        halt words)
+        (define called
+          (raised (lambda () (contract-call address "f()(uint256)" #:from anvil-alice))))
+        (check-rpc-halt called halt words)
         (define estimated (raised (lambda () (contract-send address "f()" #:from anvil-alice))))
         (check-equal? (exn:fail:web3:rpc-method estimated) "eth_estimateGas" words)
         (check-eq? (exn->halt estimated) halt words)))
@@ -119,7 +123,8 @@
         (check-rpc-halt (raised (lambda () (call-transaction anvil-alice #f #:data init)))
                         halt words)
         (define mined
-          (raised (lambda () (send-transaction/receipt anvil-alice #f #:data init #:gas-limit gas))))
+          (raised (lambda ()
+                    (send-transaction/receipt anvil-alice #f #:data init #:gas-limit gas))))
         (check-mined-halt mined halt words)
         (check-equal? (tracer-error mined) tracer)
         (check-eq? (message->halt tracer) halt tracer)
@@ -173,8 +178,7 @@
         (define outer (installed (string-append "600060006000600073" (substring inner 2) "5afa00")))
         (define receipt (send-transaction/receipt anvil-alice outer #:gas-limit 200000))
         (check-equal? (receipt-status receipt) 1)
-        (define trace
-          (debug-trace-transaction (receipt-transaction-hash receipt) (hasheq 'tracer "callTracer")))
+        (define trace (call-trace (receipt-transaction-hash receipt)))
         (match-define (list (hash-table ('error words) _ ...)) (hash-ref trace 'calls))
         (check-equal? words "write protection")
         (check-eq? (message->halt words) 'write-protection))))
