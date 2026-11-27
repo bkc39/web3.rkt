@@ -5,8 +5,8 @@
                      (only-in racket/syntax format-id generate-temporary)
                      syntax/parse)
          racket/contract/base
-         (only-in racket/list take)
          (only-in racket/match match match-define)
+         (only-in racket/string string-append*)
          syntax/parse/define
          (only-in "../address.rkt" checksum-address?)
          (only-in "field-contracts.rkt" access-list/c hash-string/c uint256/c uint64/c)
@@ -17,7 +17,8 @@
                   node-natural
                   node-quantity->number
                   raise-node-malformed
-                  raise-node-missing)
+                  raise-node-missing
+                  raise-node-too-deep)
          "who.rkt")
 
 (provide access-list-field
@@ -49,8 +50,7 @@
 
 (struct field-row (field key kind mode provided?))
 
-;; Where a field is, for messages: the innermost `shown-levels` records it is nested in, how deep,
-;; and the caller's detail, rendered once per record so that reading is linear in the JSON.
+;; The text is rendered once per record, so that reading is linear in the JSON.
 (struct location (levels depth base text))
 
 (define shown-levels 3)
@@ -63,14 +63,16 @@
 
 (define (location-in what outer)
   (match-define (location levels depth base _text) outer)
-  (define inner-levels (cons what (take levels (min (length levels) (sub1 shown-levels)))))
+  (define inner-levels
+    (cons what (for/list ([level (in-list levels)]
+                          [_shown (in-range (sub1 shown-levels))])
+                 level)))
   (define inner-depth (add1 depth))
   (location inner-levels
             inner-depth
             base
-            (string-append (apply string-append
-                                  (for/list ([level (in-list inner-levels)])
-                                    (string-append " in " level)))
+            (string-append (string-append* (for/list ([level (in-list inner-levels)])
+                                             (string-append " in " level)))
                            (if (> inner-depth shown-levels)
                                (format ", ~a levels deep" inner-depth)
                                "")
@@ -156,7 +158,7 @@
               (lambda (who what here v)
                 (if (< (location-depth here) max-depth)
                     (reader/who who v (location-in what here))
-                    (raise-node-malformed who (located what here) v)))
+                    (raise-node-too-deep who (located what here) max-depth)))
               record?))
 
 (define read-storage-keys (field-kind-reader (list-field (fixed-data-field 32))))

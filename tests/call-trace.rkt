@@ -107,14 +107,25 @@
     (check-equal? (call-trace-output second-call) (word 5))
     (check-equal? (call-trace-calls second-call) '()))
 
-  (test-case "T2: a trace 1025 frames deep, as deep as the EVM calls, reads"
-    (check-equal? (path-length (jsexpr->call-trace (nested-in 1024 inner-json))) 1025))
+  (define refused-for-depth (hash-set inner-json 'error "max call depth exceeded"))
 
-  (test-case "T2: a trace deeper than 1025 frames is malformed"
-    (check-regexp-match
-     (pregexp (~a "^jsexpr->call-trace: malformed call trace calls 0 in call trace calls 0"
-                  " in call trace calls 0 in call trace calls 0, 1024 levels deep from the node: "))
-     (message-of (lambda () (jsexpr->call-trace (nested-in 1025 inner-json))))))
+  (define (deepest-frame trace)
+    (match (call-trace-calls trace)
+      ['() trace]
+      [(list inner) (deepest-frame inner)]))
+
+  (test-case "T2: a trace 1026 frames deep, the last a call the EVM refuses for depth, reads"
+    (define trace (jsexpr->call-trace (nested-in 1025 refused-for-depth)))
+    (check-equal? (path-length trace) 1026)
+    (check-eq? (call-trace-halt (deepest-frame trace)) 'call-depth))
+
+  (test-case "T2: a trace deeper than 1026 frames is refused for its depth"
+    (define e (raised (lambda () (jsexpr->call-trace (nested-in 1026 refused-for-depth)))))
+    (check-pred exn:fail:web3? e)
+    (check-equal? (exn-message e)
+                  (~a "jsexpr->call-trace: malformed call trace calls 0 in call trace calls 0"
+                      " in call trace calls 0 in call trace calls 0, 1025 levels deep"
+                      " from the node: nested deeper than 1025 levels")))
 
   (test-case "T2: a bad field deep in a trace names the field and the innermost levels only"
     (define message
@@ -153,7 +164,7 @@
       [,(hash-set frame-json 'calls (list inner-json "0x"))
        "call trace in call trace calls 1" "\"0x\""]
       [,(nested-in 3 (hash-set inner-json 'gas 12))
-       ,(~a "call trace gas in call trace calls 0 in call trace calls 0 in call trace calls 0")
+       "call trace gas in call trace calls 0 in call trace calls 0 in call trace calls 0"
        "12"]
       [,(nested-in 4 (hash-set inner-json 'gas 12))
        ,(~a "call trace gas in call trace calls 0 in call trace calls 0 in call trace calls 0,"
@@ -241,9 +252,10 @@
     (check-regexp-match #rx"@defproc/filling\\[\\(call-transaction/trace " manual))
 
   (test-case "T8: web3/trace, web3 and web3/anvil export their tracing names"
-    (for* ([row (in-list exported-rows)]
-           [name (in-list (second row))])
-      (check-not-false (memq name (exported-names (first row))) (~a (first row) " " name))))
+    (for ([row (in-list exported-rows)])
+      (match-define (list exporter names) row)
+      (for ([name (in-list names)])
+        (check-not-false (memq name (exported-names exporter)) (~a exporter " " name)))))
 
   (test-case "T8: web3/anvil's tracing methods are web3/trace's"
     (check-true (free-identifier=? #'anvil:debug-trace-call #'trace:debug-trace-call))
@@ -251,9 +263,10 @@
                                    #'trace:debug-trace-transaction)))
 
   (test-case "T8: web3/anvil loads neither web3/trace nor the send stack"
-    (define names (filter values (map module-name (import-closure 'web3/anvil))))
-    (for ([module (in-list '("web3/trace" "web3/private/send"))])
-      (check-false (member module names) module)))
+    (define loaded (filter-map module-name (import-closure 'web3/anvil)))
+    (for ([unloaded (in-list '("web3/trace" "web3/private/send" "web3/send" "web3/signer"
+                               "web3/halt"))])
+      (check-false (member unloaded loaded) unloaded)))
 
   (define tx-hash (filled-hash #\a))
 

@@ -2450,7 +2450,8 @@ The halt that @racket[(call-trace-error trace)] names, read with @racket[message
 @defproc[(jsexpr->call-trace [v any/c]) call-trace?]{
 A call trace, and the traces of the calls it made, from the node's JSON.  Raises
 @racket[exn:fail:web3], naming the field, for anything else, and for frames nested more than
-1024 below the top one, deeper than the EVM calls.  Unknown fields are kept in
+1025 below the top one: the EVM runs calls 1024 deep, and a tracer records the call it refuses
+beyond that as a frame.  Unknown fields are kept in
 @racket[call-trace->jsexpr].
 
 @examples[#:eval trace-eval

@@ -5,7 +5,7 @@
            rackunit
            web3
            "helpers/halts.rkt"
-           (only-in "helpers/programs.rkt" caller-of echo-init echo-runtime)
+           (only-in "helpers/programs.rkt" caller-of calls-itself echo-init echo-runtime)
            (only-in "util.rkt" anvil-alice raised word))
 
   (define refused (bytes-append (bytes #xff) (make-bytes 31 7)))
@@ -24,6 +24,11 @@
   (define (destination row)
     (define target (halting-target row))
     (if (address? target) target (installed target)))
+
+  (define (deepest-path trace)
+    (match (call-trace-calls trace)
+      ['() (list trace)]
+      [(list inner) (cons trace (deepest-path inner))]))
 
   (define (mined-failure to #:data data #:gas-limit gas)
     (define e
@@ -152,7 +157,16 @@
         (match-define (list static) (call-trace-calls trace))
         (check-equal? (call-trace-type static) "STATICCALL")
         (check-false (call-trace-value static))
-        (check-eq? (call-trace-halt static) 'write-protection))))
+        (check-eq? (call-trace-halt static) 'write-protection)))
+
+    (test-case "A11: the call refused beyond the EVM's 1024 is a frame that names the depth halt"
+      (define trace
+        (call-transaction/trace anvil-alice (installed calls-itself) #:gas-limit (expt 10 11)))
+      (define path (deepest-path trace))
+      (match-define (list _ ... refused) path)
+      (check-equal? (length path) 1026)
+      (check-equal? (call-trace-error refused) "max call depth exceeded")
+      (check-eq? (call-trace-halt refused) 'call-depth)))
 
   (cond
     [(not (current-anvil-path))

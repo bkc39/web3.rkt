@@ -7,8 +7,8 @@
 
 (provide (contract-out [call-trace-halt (-> call-trace? (or/c #f halt/c))]))
 
-;; The EVM's call depth limit is 1024, so a frame is at most 1024 frames below the top one.
-(define deepest-call 1024)
+;; The EVM runs calls 1024 deep, and a tracer records the call refused beyond that as a frame.
+(define deepest-frame-depth 1025)
 
 (define (calls-tail count)
   (match count
@@ -37,7 +37,8 @@
   [output data-field #:default #""]
   [error string-field #:optional]
   [revert-reason string-field #:key revertReason #:optional]
-  [calls (list-field (record-field jsexpr->call-trace/who call-trace? #:max-depth deepest-call))
+  [calls (list-field (record-field jsexpr->call-trace/who call-trace?
+                                   #:max-depth deepest-frame-depth))
          #:default '()])
 
 (define (call-trace-halt trace)
