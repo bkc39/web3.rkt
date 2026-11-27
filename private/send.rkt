@@ -13,6 +13,7 @@
          (only-in (submod "../eth.rkt" internal) wait-for-receipt/who)
          (only-in "../eth/receipt.rkt" receipt-block-number receipt-status)
          (only-in (submod "../eth/receipt.rkt" internal) jsexpr->receipt-of)
+         (only-in "../halt.rkt" exn->halt)
          "../rpc.rkt"
          (only-in (submod "../signer.rkt" internal)
                   raise-signer
@@ -197,26 +198,27 @@
     [1 receipt]
     [0
      (define block (receipt-block-number receipt))
-     (define-values (revert tail) (replay tx block errors provider))
+     (define-values (revert halt tail) (replay tx block errors provider))
      (raise (exn:fail:web3:transaction
              (format "~a: transaction ~a failed in block ~a: ~a" who tx-hash block tail)
              (current-continuation-marks)
              receipt
-             revert))]
+             revert
+             halt))]
     [#f (raise-node-missing who (of-transaction "receipt status" tx-hash))]))
 
 (define (rpc-replay-outcome e errors)
+  (define revert (rpc-exn->revert e #:errors errors))
   (cond
-    [(rpc-exn->revert e #:errors errors)
-     => (lambda (revert) (values revert (format "reverted with ~a" (abi-revert->string revert))))]
-    [else (values #f (exn:fail:web3:rpc-rpc-message e))]))
+    [revert (values revert #f (format "reverted with ~a" (abi-revert->string revert)))]
+    [else (values #f (exn->halt e) (exn:fail:web3:rpc-rpc-message e))]))
 
 (define (replay tx block errors provider)
   (with-handlers ([exn:fail:web3:rpc? (lambda (e) (rpc-replay-outcome e errors))]
                   [exn:fail?
-                   (lambda (e) (values #f (format "replaying it raised: ~a" (exn-message e))))])
+                   (lambda (e) (values #f #f (format "replaying it raised: ~a" (exn-message e))))])
     (eth-call tx block #:provider provider)
-    (values #f "replaying it did not fail")))
+    (values #f #f "replaying it did not fail")))
 
 ;;;; filling
 

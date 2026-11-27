@@ -38,6 +38,7 @@ support for local [anvil](https://book.getfoundry.sh/anvil/) nodes.
 | `web3/eth/block` | blocks, withdrawals and fee histories as structs: `jsexpr->block`, `block-number`, `block-transactions`, `block-transaction-hashes`, `fee-history-base-fee-per-gas`, ... |
 | `web3/event` | `log-filter`, `get-logs` (chunked, halving ranges a node refuses), `receipt-logs`; everything in `web3/abi/event` and `web3/eth/log` |
 | `web3/abi/vectors` | `abi-encode-vectors`, `abi-decode-vectors`, `abi-reject-vectors`, conformance cases checked against Foundry's `cast` (not part of `(require web3)`) |
+| `web3/halt` | `exn->halt`, `message->halt`, `halts`, `halt/c`: exceptional halts (out of gas, invalid opcode, ...) as symbols |
 | `web3/address` | `address?` (the address every procedure takes), `address->checksum-string`, `checksum-address?` (EIP-55) |
 | `web3/account` | `hex-string->secret-key`, `secret-key->address`, `public-key->address`, `sign-digest`, `recover-address`, EIP-191 messages (`hash-message`, `sign-message`, `recover-message-address`, `message-signed-by?`), `signature` (`signature->bytes`, `bytes->signature`, `signature-v`, `signature-low-s?`), `exn:fail:web3:key`, `exn:fail:web3:signature`; `secret-key?`, `generate-secret-key`, `secret-key->public-key`, `public-key?`, `secp256k1-order` from `libsecp256k1` |
 | `web3/rlp` | `rlp-encode`, `rlp-decode` (canonical only), `rlp-item?`, `natural->rlp-scalar`, `rlp-scalar->natural`, `exn:fail:web3:rlp` |

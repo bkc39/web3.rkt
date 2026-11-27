@@ -88,6 +88,7 @@
                                                #:from anvil-carol #:gas 100000 #:errors errors))))
            (check-pred exn:fail:web3:transaction? on-chain)
            (check-equal? (receipt-status (exn:fail:web3:transaction-receipt on-chain)) 0)
+           (check-false (exn:fail:web3:transaction-halt on-chain))
            (check-equal? (nonce anvil-carol) (add1 before))
            (define reverts
              (list (exn:fail:web3:rpc:revert-revert on-call)
@@ -130,11 +131,23 @@
            (check-pred exn:fail:web3:transaction? mined)
            (check-equal? (revert-string mined) "Error(\"empty name\")"))
 
-         (test-case "a send that runs out of gas raises with no revert"
+         (test-case "a send that runs out of gas raises with no revert, halted out of gas"
            (define e (raised (lambda () (contract-send token transfer anvil-bob 1 #:gas 30000))))
            (check-pred exn:fail:web3:transaction? e)
            (check-false (exn:fail:web3:transaction-revert e))
+           (check-eq? (exn:fail:web3:transaction-halt e) 'out-of-gas)
+           (check-eq? (exn->halt e) 'out-of-gas)
            (check-equal? (receipt-status (exn:fail:web3:transaction-receipt e)) 0))
+
+         (test-case "a reverting constructor mined is a revert, not a halt"
+           (define mined
+             (raised (lambda ()
+                       (deploy-contract token-code "constructor(string,string,uint256)" "" "X" 1
+                                        #:gas 3000000))))
+           (check-pred exn:fail:web3:transaction? mined)
+           (check-equal? (revert-string mined) "Error(\"empty name\")")
+           (check-false (exn:fail:web3:transaction-halt mined))
+           (check-false (exn->halt mined)))
 
          (test-case "a sender the node does not manage is the node's RPC error"
            (define e (raised (lambda () (contract-send token transfer anvil-bob 0

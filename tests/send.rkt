@@ -232,6 +232,16 @@
                              "outcome unknown: "))
      (exn-message lost)))
 
+  (test-case "F17: a signed send mined with status 0 carries the halt its replay ended in"
+    (define (invalid-jump _params)
+      (raise-rpc-error "eth_call" -32003 "EVM error InvalidJump"))
+    (define-values (failure _calls)
+      (filled (filling #:receipt failed #:replay invalid-jump)
+              '() #:procedure send-signed-transaction/receipt))
+    (check-pred exn:fail:web3:transaction? failure)
+    (check-false (exn:fail:web3:transaction-revert failure))
+    (check-eq? (exn:fail:web3:transaction-halt failure) 'invalid-jump))
+
   (test-case "F17: a signed send whose receipt is for another transaction raises"
     (define-values (e _calls)
       (filled (filling #:polled-hash? #f) '() #:procedure send-signed-transaction/receipt))

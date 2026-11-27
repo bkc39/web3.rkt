@@ -24,6 +24,7 @@
                     web3/eth/receipt
                     web3/eth/transaction-info
                     web3/event
+                    web3/halt
                     web3/rlp
                     web3/rpc
                     web3/send
@@ -35,6 +36,9 @@
           syntax/parse/define]
 
 @(define abi-eval (make-base-eval '(require web3/abi web3/address web3/rpc)))
+@(define halt-eval (make-base-eval '(require web3/halt web3/rpc)))
+@(define (evm-error name) (tt name))
+@(define (wording . content) (apply tt content))
 @(define contract-eval (make-base-eval '(require web3)))
 @(define event-eval (make-base-eval '(require web3)))
 @(define account-eval (make-base-eval '(require web3 (only-in keccak keccak256))))
@@ -152,7 +156,7 @@ support for running local
 @hyperlink["https://book.getfoundry.sh/anvil/"]{anvil} nodes.
 
 @racket[(require web3)] provides everything in @racketmodname[web3/rpc],
-@racketmodname[web3/eth], @racketmodname[web3/abi],
+@racketmodname[web3/eth], @racketmodname[web3/abi], @racketmodname[web3/halt],
 @racketmodname[web3/address], @racketmodname[web3/account], @racketmodname[web3/rlp],
 @racketmodname[web3/units], @racketmodname[web3/transaction],
 @racketmodname[web3/signer], @racketmodname[web3/send], @racketmodname[web3/contract],
@@ -457,6 +461,8 @@ compiled artifact, which holds the init code.
 A send is estimated first, so one that would revert raises @racket[exn:fail:web3:rpc:revert] and
 is not sent; one mined and failed raises @racket[exn:fail:web3:transaction].  Either way
 @racket[exn->abi-revert] gives the revert, decoded with the errors given as @racket[#:errors].
+A failure without revert data, such as running out of gas, is a halt, and @racket[exn->halt]
+gives it as a symbol.
 
 @racketblock[
 (define-runtime-path token-artifact "contracts/out/Token.sol/Token.json")
@@ -2312,7 +2318,8 @@ and signs nothing; @racket[#f] sends no sender.  The call carries only the field
 @racket[chain-id] given is checked against the node's.  Fields of a type other than
 @racket[type], or of two types, raise @racket[exn:fail:contract] before any request.  A revert
 raises @racket[exn:fail:web3:rpc:revert] decoded against @racket[errors], as for
-@racket[contract-call]; other errors from the node pass through unchanged.
+@racket[contract-call]; other errors from the node pass through unchanged, and
+@racket[exn->halt] reads the halt of one that names a halt.
 
 @examples[#:eval send-eval
           (define echo
@@ -2712,6 +2719,102 @@ A call that reverted, with its decoded @racket[revert].}
 payloads and @racket["Panic(0x11)"] for @tt{Panic} payloads; @racket[#f]
 for anything else, including malformed data.}
 
+@subsection[#:tag "halts"]{Halts}
+
+@defmodule[web3/halt]
+
+An execution that fails without revert data halts: it runs out of gas, meets an invalid opcode,
+overflows the stack.  A node reports a halt only in words, and each node has its own; these
+procedures read them as symbols.
+
+@defthing[halt/c flat-contract?]{
+One of the symbols in @racket[halts].}
+
+@defthing[halts (listof halt/c)]{
+The halts, in the order of the table below.}
+
+@defproc[(message->halt [message string?]) (or/c #f halt/c)]{
+The halt that @racket[message], a node's or a call tracer's words, names, or @racket[#f].
+Matching ignores case.  A halt's words are the whole message, or, where the table shows a
+@italic{detail}, their start followed by @tt{: } and a detail that is not empty and does not
+start with white space; so words that merely contain a halt's give @racket[#f], and so does any
+message that starts
+@tt{execution reverted}, whatever its reason says.
+
+anvil's errors from @tt{eth_call} and @tt{eth_estimateGas} are mostly @tt{EVM error} followed by
+a name.  Its call tracer (@racket[debug-trace-transaction] with @tt{callTracer}), its other
+errors and go-ethereum use words; @italic{N} and @italic{M} stand for numbers.
+
+@tabular[#:style 'boxed
+         #:sep @hspace[2]
+         #:row-properties '(bottom-border ())
+ (list (list @bold{halt} @bold{anvil's @tt{EVM error}} @bold{anvil's words}
+             @bold{go-ethereum's words})
+       (list @racket['out-of-gas]
+             @elem{@evm-error{OutOfGas}, @evm-error{MemoryOOG}, @evm-error{MemoryLimitOOG},
+                   @evm-error{PrecompileOOG}, @evm-error{InvalidOperandOOG},
+                   @evm-error{ReentrancySentryOOG}}
+             @elem{@wording{out of gas}, @wording{out of gas: @italic{detail}}; from an
+                   estimate, @wording{Out of gas: gas required exceeds allowance: @italic{N}}}
+             @elem{@wording{out of gas}, @wording{contract creation code storage out of gas},
+                   @wording{gas uint64 overflow}; from an estimate,
+                   @wording{gas required exceeds allowance (@italic{N})}})
+       (list @racket['stack-overflow] @evm-error{StackOverflow} @wording{Out of stack}
+             @wording{stack limit reached @italic{N} (@italic{M})})
+       (list @racket['stack-underflow] @evm-error{StackUnderflow} @wording{stack underflow}
+             @wording{stack underflow (@italic{N} <=> @italic{M})})
+       (list @racket['invalid-opcode] @evm-error{InvalidFEOpcode}
+             @wording{invalid opcode: INVALID} @wording{invalid opcode: INVALID})
+       (list @racket['undefined-opcode]
+             @elem{@evm-error{OpcodeNotFound}, @evm-error{NotActivated}}
+             @wording{invalid opcode}
+             @elem{@wording{invalid opcode: @italic{detail}}, for a detail that does not start
+                   @tt{INVALID}, such as @tt{opcode 0xc not defined} or @tt{PUSH0}})
+       (list @racket['invalid-jump] @evm-error{InvalidJump} @wording{invalid jump destination}
+             @wording{invalid jump destination})
+       (list @racket['return-data-out-of-bounds] @evm-error{OutOfOffset}
+             @wording{return data out of bounds} @wording{return data out of bounds})
+       (list @racket['precompile-failure] @evm-error{PrecompileError}
+             @wording{precompiled failed} @elem{—})
+       (list @racket['write-protection]
+             @elem{@evm-error{StateChangeDuringStaticCall},
+                   @evm-error{CallNotAllowedInsideStatic}}
+             @wording{write protection} @wording{write protection})
+       (list @racket['call-depth] @evm-error{CallTooDeep} @elem{—}
+             @wording{max call depth exceeded})
+       (list @racket['code-size] @evm-error{CreateContractSizeLimit}
+             @wording{max code size exceeded} @wording{max code size exceeded})
+       (list @racket['initcode-size] @evm-error{CreateInitCodeSizeLimit}
+             @wording{max initcode size exceeded} @wording{max initcode size exceeded})
+       (list @racket['invalid-code] @evm-error{CreateContractStartingWithEF}
+             @wording{invalid code: must not begin with 0xef}
+             @wording{invalid code: must not begin with 0xef})
+       (list @racket['address-collision] @evm-error{CreateCollision}
+             @wording{contract address collision} @wording{contract address collision}))]
+
+A @racket['precompile-failure] is a precompile that refused its input, such as a point not on
+the curve; go-ethereum reports each precompile's failure in that precompile's own words, which
+name no halt.  A @racket['write-protection] or @racket['call-depth] halt ends a nested call only:
+the call that made it sees a call that failed, so they appear in a call tracer's frames, not in
+the error of a call or a transaction.  A node refuses a transaction whose own init code is over
+the size limit, before it runs and in the words of @racket['initcode-size], so nothing is mined
+and @racket[exn->halt] of that refusal names the halt too.
+
+@examples[#:eval halt-eval
+          (message->halt "EVM error OutOfGas")
+          (message->halt "Out of stack")
+          (message->halt "execution reverted: out of gas")]}
+
+@defproc[(exn->halt [e exn?]) (or/c #f halt/c)]{
+For an @racket[exn:fail:web3:rpc] that is not an @racket[exn:fail:web3:rpc:revert], the halt
+its @racket[rpc-message] names; for an @racket[exn:fail:web3:transaction], its @racket[halt];
+@racket[#f] for anything else.
+
+@examples[#:eval halt-eval
+          (exn->halt (with-handlers ([exn:fail:web3:rpc? values])
+                       (raise-rpc-error "eth_call" -32003 "EVM error InvalidFEOpcode")))
+          (exn->halt (exn:fail "EVM error InvalidFEOpcode" (current-continuation-marks)))]}
+
 @subsection[#:tag "abi-errors"]{Errors}
 
 @declare-exporting[web3/abi/type web3/abi]
@@ -3041,8 +3144,10 @@ returns its receipt once mined.  Outputs in
 the instance's ABI errors, provider and sender are the defaults; names,
 signatures and @racket[value] are checked as for @racket[contract-call].
 Without @racket[gas] the gas is estimated first, so a transaction that would revert raises
-@racket[exn:fail:web3:rpc:revert] and is not sent.  A transaction mined with
-status 0 raises @racket[exn:fail:web3:transaction].  A malformed or zero
+@racket[exn:fail:web3:rpc:revert] and is not sent, and one that would halt raises
+@racket[exn:fail:web3:rpc], whose halt @racket[exn->halt] reads.  A transaction mined with
+status 0 raises @racket[exn:fail:web3:transaction], with the revert or the halt its replay
+ended in.  A malformed or zero
 estimate raises @racket[exn:fail:web3] and nothing is sent.
 
 Once the transaction is sent, the receipt is awaited for up to 30 seconds.
@@ -3120,12 +3225,16 @@ The address @tt{CREATE2} gives @racket[init-code] deployed by
           (create2-address "0x0000000000000000000000000000000000000000" 0 #"\0")]}
 
 @defstruct*[(exn:fail:web3:transaction exn:fail:web3)
-            ([receipt receipt?] [revert (or/c #f abi-revert?)])]{
-A transaction that was mined and failed.  @racket[revert] is what replaying
-it with @racket[eth-call] at its block reverted with, or @racket[#f] when the
-replay did not revert or could not be made.  The replay runs after the whole
-block, so it may not reproduce the failure when other transactions in the
-block changed the state it depends on.}
+            ([receipt receipt?] [revert (or/c #f abi-revert?)] [halt (or/c #f halt/c)])]{
+A transaction that was mined and failed.  It is replayed with @racket[eth-call] at its block:
+@racket[revert] is what the replay reverted with, and @racket[halt] the halt it ended in (see
+@secref["halts"]).  Both are @racket[#f] when the replay did not fail, could not be made, or
+failed in words from which no revert could be read and that name no halt in the table; the
+message carries the
+node's words.  The replay runs after the whole block, so it may not reproduce the failure when
+other transactions in the block changed the state it depends on.  A creation is replayed from
+the sender's next nonce, so at another address, and a failure that depends on the address, such
+as an address collision, is not reproduced.}
 
 @subsection{Contract Instances}
 
