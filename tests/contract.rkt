@@ -324,6 +324,19 @@
                           name)
       (check-equal? calls (list (list "eth_estimateGas" transfer-tx)) name)))
 
+  (test-case "contract-estimate-gas refuses an estimate of 0 and one of 2^64 or more"
+    (define huge "0x10000000000000000")
+    (define malformed (format "malformed gas estimate from the node: ~s" huge))
+    (for ([row (in-list `(("0x0" "the node estimated 0 gas") (,huge ,malformed)))])
+      (match-define (list estimate reason) row)
+      (define message (string-append "contract-estimate-gas: " reason))
+      (define-values (e _calls)
+        (run-mock (sending #:estimate estimate)
+                  (lambda () (contract-estimate-gas token "transfer(address,uint256)" anvil-bob 10
+                                                    #:from anvil-alice))))
+      (check-pred exn:fail:web3? e estimate)
+      (check-equal? (exn-message e) message estimate)))
+
   (test-case "a deploy mined with status 0 raises even when the receipt has an address"
     (define receipt
       (hash-set* failed 'blockNumber "0x3" 'contractAddress (string-downcase token)))

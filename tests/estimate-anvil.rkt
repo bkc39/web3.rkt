@@ -28,15 +28,16 @@
     (test-case "A2: #:block is honoured: before echo was deployed, the address holds no code"
       (define before (sub1 (receipt-block-number deployed)))
       (check-equal? (estimate-transaction anvil-alice echo #:data data #:block before)
-                    (floor-gas data))
-      (check-equal? (estimate-transaction anvil-alice echo #:data data #:block "latest")
-                    (estimate-transaction anvil-alice echo #:data data)))
+                    (floor-gas data)))
 
-    (test-case "A3: a signer's estimate is its address's"
+    (test-case "A3: a signer's estimate is its address's, not the zero address's"
       (define signer (local-signer (hex-string->secret-key (first anvil-keys))))
+      (define value (ether->wei 1))
       (check-equal? (signer-address signer) anvil-alice)
-      (check-equal? (estimate-transaction signer echo #:data data)
-                    (estimate-transaction anvil-alice echo #:data data)))
+      (check-pred exn:fail:web3:rpc?
+                  (raised (lambda () (estimate-transaction #f echo #:data data #:value value))))
+      (check-equal? (estimate-transaction signer echo #:data data #:value value)
+                    (estimate-transaction anvil-alice echo #:data data #:value value)))
 
     (test-case "A4: a call that reverts raises exn:fail:web3:rpc:revert with the revert data"
       (define e (raised (lambda () (estimate-transaction anvil-alice echo #:data refused))))

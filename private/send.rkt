@@ -41,6 +41,7 @@
          fill-transaction
          fill-transaction/who
          filling->
+         node-gas-estimate
          of-transaction
          receipt-timeout
          send-signed-transaction
@@ -160,15 +161,17 @@
                    (lambda (e) (raise (or (rpc-exn->revert-exn e #:errors errors) e)))])
     (thunk)))
 
-(define (estimate-gas who tx errors provider #:limit [limit #f])
-  (define estimate
-    (call-raising-reverts errors
-                          (lambda () (rpc-call "eth_estimateGas" (list tx) #:provider provider))))
-  (match (node-quantity->number who "gas estimate" estimate)
+(define (node-gas-estimate who answer)
+  (match (node-natural who "gas estimate" answer 64)
     [0 (raise (exn:fail:web3 (format "~a: the node estimated 0 gas" who)
                              (current-continuation-marks)))]
-    [gas #:when (and limit (>= gas limit)) (raise-node-malformed who "gas estimate" estimate)]
     [gas gas]))
+
+(define (estimate-gas who tx errors provider)
+  (node-gas-estimate who
+                     (call-raising-reverts
+                      errors
+                      (lambda () (rpc-call "eth_estimateGas" (list tx) #:provider provider)))))
 
 (define (with-message e message)
   (define marks (exn-continuation-marks e))
@@ -286,7 +289,7 @@
 
 (define (filled-gas-limit who order estimated provider)
   (or (fill-order-gas-limit order)
-      (estimate-gas who estimated (fill-order-errors order) provider #:limit (expt 2 64))))
+      (estimate-gas who estimated (fill-order-errors order) provider)))
 
 (define (filled-nonce who address order provider)
   (or (fill-order-nonce order)

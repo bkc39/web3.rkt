@@ -10,7 +10,7 @@
            (only-in web3/private/send
                     [call-transaction unchecked-call]
                     [send-transaction unchecked-send])
-           (only-in "helpers/call-objects.rkt" call-object-rows)
+           (only-in "helpers/call-objects.rkt" call-object-rows conflict-rows)
            "helpers/mock.rkt"
            (only-in "helpers/secrets.rkt" check-no-leak marker-hex marker-integer)
            (only-in "helpers/signers.rkt" watched watched-calls)
@@ -118,15 +118,6 @@
     (define-values (e _calls)
       (called '() #:answers (answers "eth_call" (lambda (_params) (raise refusal)))))
     (check-eq? e refusal))
-
-  (define conflict-rows
-    '(((#:type 0 #:access-list ()) "#:type 0 takes no #:access-list")
-      ((#:type 1 #:max-priority-fee-per-gas 1) "#:type 1 takes no #:max-priority-fee-per-gas")
-      ((#:type 2 #:gas-price 1) "#:type 2 takes no #:gas-price")
-      ((#:gas-price 1 #:max-fee-per-gas 2)
-       "#:gas-price and #:max-fee-per-gas are for different transaction types")
-      ((#:max-priority-fee-per-gas 3 #:max-fee-per-gas 2)
-       "#:max-priority-fee-per-gas is more than #:max-fee-per-gas")))
 
   (test-case "C7: fields of two types are refused before any request"
     (for ([row (in-list conflict-rows)])

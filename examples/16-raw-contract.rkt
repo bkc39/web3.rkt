@@ -27,8 +27,10 @@
         (call-transaction signer echo #:data refused)))
     (printf "revert ~a\n" (bytes->hex-string (abi-revert-data revert)))
     (anvil-set-code broken invalid-opcode)
-    (printf "halt ~a\n" (with-handlers ([exn:fail:web3:rpc? exn->halt])
-                          (call-transaction signer broken)))
+    (define halt
+      (with-handlers ([exn:fail:web3:rpc? exn->halt])
+        (call-transaction signer broken)))
+    (printf "halt ~a\n" halt)
     (define receipt (send-transaction/receipt signer echo #:data word))
     (define trace (transaction-call-trace (receipt-transaction-hash receipt)))
     (printf "trace ~a output ~a gas used ~a\n"

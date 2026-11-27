@@ -3,9 +3,19 @@
 (require (only-in web3 bytes->hex-string)
          (only-in "../util.rkt" anvil-alice anvil-bob anvil-carol))
 
-(provide call-object-rows)
+(provide call-object-rows
+         conflict-rows)
 
 (define storage-key (make-bytes 32 1))
+
+(define conflict-rows
+  '(((#:type 0 #:access-list ()) "#:type 0 takes no #:access-list")
+    ((#:type 1 #:max-priority-fee-per-gas 1) "#:type 1 takes no #:max-priority-fee-per-gas")
+    ((#:type 2 #:gas-price 1) "#:type 2 takes no #:gas-price")
+    ((#:gas-price 1 #:max-fee-per-gas 2)
+     "#:gas-price and #:max-fee-per-gas are for different transaction types")
+    ((#:max-priority-fee-per-gas 3 #:max-fee-per-gas 2)
+     "#:max-priority-fee-per-gas is more than #:max-fee-per-gas")))
 
 (define call-object-rows
   `((() ,anvil-alice ,anvil-bob #hasheq((from . ,anvil-alice) (to . ,anvil-bob)))

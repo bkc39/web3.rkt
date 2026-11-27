@@ -7,15 +7,13 @@
            rackunit
            (only-in web3 bytes->hex-string hex-string->bytes)
            (only-in "../helpers/examples.rkt" example-output example-tests)
-           (only-in "../helpers/programs.rkt" echo-init echo-runtime)
+           (only-in "../helpers/programs.rkt" creation-prefix echo-runtime)
            (only-in "../helpers/secrets.rkt" check-no-leak))
 
   (define-runtime-path program "../../examples/16-raw-contract.rkt")
 
   (define key
     (hex-string->bytes "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"))
-
-  (define creation-prefix "0x602280600b6000396000f3")
 
   (define expected
     `("deployed 0x5FbDB2315678afecb367f032d93F642f64180aa3"
@@ -29,9 +27,8 @@
 
   (test-case "X1: the program states the tests' echo contract, runtime and creation prefix"
     (define source (file->string program))
-    (check-equal? echo-init (bytes-append (hex-string->bytes creation-prefix) echo-runtime))
     (check-true (string-contains? source (format "~s" (bytes->hex-string echo-runtime))))
-    (check-true (string-contains? source (format "~s" creation-prefix))))
+    (check-true (string-contains? source (format "~s" (bytes->hex-string creation-prefix)))))
 
   (example-tests "16-raw-contract" #:anvil
     (define output (example-output "16-raw-contract"))

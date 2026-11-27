@@ -8,24 +8,24 @@
            rackunit
            (only-in libsecp256k1 integer->secret-key)
            web3
-           (only-in "helpers/call-objects.rkt" call-object-rows)
+           (only-in "helpers/call-objects.rkt" call-object-rows conflict-rows)
            "helpers/mock.rkt"
            (only-in "helpers/secrets.rkt" check-no-leak marker-hex marker-integer)
            (only-in "helpers/signers.rkt" watched watched-calls)
            (only-in "modules.rkt" exported-names)
            (only-in "util.rkt" anvil-alice anvil-bob check-blames-here insufficient-balance))
 
-  (define estimate "0x5830")
+  (define node-estimate "0x5830")
 
   (define (answers . overrides)
-    (apply hash-set* (hash "eth_chainId" "0x7a69" "eth_estimateGas" estimate
+    (apply hash-set* (hash "eth_chainId" "0x7a69" "eth_estimateGas" node-estimate
                            "eth_call" "0x")
            overrides))
 
-  (define (estimated fields
-                     #:from [from anvil-alice]
-                     #:to [to anvil-bob]
-                     #:answers [handler (answers)])
+  (define (run-estimate fields
+                        #:from [from anvil-alice]
+                        #:to [to anvil-bob]
+                        #:answers [handler (answers)])
     (run-mock handler (lambda () (call-with-fields estimate-transaction fields from to))))
 
   (define (sent-params procedure method fields from to)
@@ -48,7 +48,7 @@
     (for ([row (in-list call-object-rows)])
       (match-define (list fields from to _object) row)
       (define name (format "~s ~s ~s" fields from to))
-      (define-values (result calls) (estimated fields #:from from #:to to))
+      (define-values (result calls) (run-estimate fields #:from from #:to to))
       (check-equal? result (list #x5830) name)
       (check-equal? (method-names calls)
                     (if (memq '#:chain-id fields)
@@ -59,87 +59,91 @@
   (test-case "E2: #:block reaches the request"
     (for ([block (list 5 "pending" "earliest" 0)]
           [sent (list "0x5" "pending" "earliest" "0x0")])
-      (define-values (_result calls) (estimated `(#:block ,block)))
+      (define-values (_result calls) (run-estimate `(#:block ,block)))
       (check-equal? calls
                     `(("eth_estimateGas" ,(hasheq 'from anvil-alice 'to anvil-bob) ,sent))
                     (format "~s" block))))
 
   (test-case "E3: a signer gives its address and signs nothing"
     (define signer (watched))
-    (define-values (result calls) (estimated '() #:from signer))
+    (define-values (result calls) (run-estimate '() #:from signer))
     (check-equal? result (list #x5830))
     (check-equal? calls `(("eth_estimateGas" ,(hasheq 'from anvil-alice 'to anvil-bob) "latest")))
     (check-equal? (watched-calls signer) '(address)))
 
-  (test-case "E4: the answer is read as a quantity below 2^64"
-    (for ([answer (list "0x5208" "0x0" "0xffffffffffffffff")]
-          [expected (list 21000 0 (sub1 (expt 2 64)))])
-      (define-values (result _calls) (estimated '() #:answers (answers "eth_estimateGas" answer)))
+  (define malformed #rx"^estimate-transaction: malformed gas estimate from the node: ")
+
+  (test-case "E4: the answer is read as a quantity below 2^64 other than 0"
+    (for ([answer (list "0x5208" "0x1" "0xffffffffffffffff")]
+          [expected (list 21000 1 (sub1 (expt 2 64)))])
+      (define-values (result _calls)
+        (run-estimate '() #:answers (answers "eth_estimateGas" answer)))
       (check-equal? result (list expected) answer))
-    (for ([answer (list 42 "0x" "5208" "0x10000000000000000" 'null)])
-      (define-values (e _calls) (estimated '() #:answers (answers "eth_estimateGas" answer)))
-      (check-pred exn:fail:web3? e (format "~s" answer))
-      (check-false (exn:fail:contract? e) (format "~s" answer))
-      (check-regexp-match #rx"^estimate-transaction: malformed gas estimate from the node: "
-                          (exn-message e)
-                          (format "~s" answer))))
+    (for ([row (in-list `((42 ,malformed) ("0x" ,malformed) ("5208" ,malformed)
+                          ("0x10000000000000000" ,malformed) (null ,malformed)
+                          ("0x0" #rx"^estimate-transaction: the node estimated 0 gas$")))])
+      (match-define (list answer message) row)
+      (define name (format "~s" answer))
+      (define-values (e _calls) (run-estimate '() #:answers (answers "eth_estimateGas" answer)))
+      (check-pred exn:fail:web3? e name)
+      (check-false (exn:fail:contract? e) name)
+      (check-regexp-match message (exn-message e) name)))
 
   (define payload (bytes-append (bytes #xff) (make-bytes 31 1)))
 
-  (test-case "E5: a revert raises exn:fail:web3:rpc:revert carrying its payload"
-    (define-values (e calls)
-      (estimated '()
-                 #:answers (answers "eth_estimateGas"
-                                    (reverting "eth_estimateGas" (bytes->hex-string payload)))))
-    (check-pred exn:fail:web3:rpc:revert? e)
-    (check-equal? (exn:fail:web3:rpc-method e) "eth_estimateGas")
-    (check-equal? (abi-revert-data (exn->abi-revert e)) payload)
-    (check-equal? (method-names calls) '("eth_estimateGas")))
+  (define revert-rows
+    `((() ,payload #f ())
+      ((#:errors (,insufficient-balance)) ,insufficient-payload "InsufficientBalance" (0 5000))))
 
-  (test-case "E5: a revert is decoded against #:errors"
-    (define-values (e _calls)
-      (estimated `(#:errors (,insufficient-balance))
-                 #:answers (answers "eth_estimateGas" (reverting "eth_estimateGas"))))
-    (check-pred exn:fail:web3:rpc:revert? e)
-    (define revert (exn->abi-revert e))
-    (check-equal? (abi-revert-name revert) "InsufficientBalance")
-    (check-equal? (abi-revert-arguments revert) '(0 5000))
-    (check-equal? (abi-revert-data revert) insufficient-payload))
+  (test-case "E5: a revert raises exn:fail:web3:rpc:revert with its payload, decoded by #:errors"
+    (for ([row (in-list revert-rows)])
+      (match-define (list fields data error-name arguments) row)
+      (define name (format "~s" fields))
+      (define-values (e calls)
+        (run-estimate fields
+                      #:answers (answers "eth_estimateGas"
+                                         (reverting "eth_estimateGas" (bytes->hex-string data)))))
+      (check-pred exn:fail:web3:rpc:revert? e name)
+      (check-equal? (exn:fail:web3:rpc-method e) "eth_estimateGas" name)
+      (define revert (exn->abi-revert e))
+      (check-equal? (abi-revert-data revert) data name)
+      (check-equal? (abi-revert-name revert) error-name name)
+      (check-equal? (abi-revert-arguments revert) arguments name)
+      (check-equal? (method-names calls) '("eth_estimateGas") name)))
 
   (test-case "E6: any other error from the node passes through unchanged, its halt readable"
     (define refusal
       (with-handlers ([exn:fail:web3:rpc? values])
         (raise-rpc-error "eth_estimateGas" -32003 "EVM error InvalidFEOpcode")))
     (define-values (e _calls)
-      (estimated '() #:answers (answers "eth_estimateGas" (lambda (_params) (raise refusal)))))
+      (run-estimate '() #:answers (answers "eth_estimateGas" (lambda (_params) (raise refusal)))))
     (check-eq? e refusal)
     (check-eq? (exn->halt e) 'invalid-opcode))
 
-  (define conflict-rows
-    '(((#:type 0 #:access-list ()) "#:type 0 takes no #:access-list")
-      ((#:type 1 #:max-priority-fee-per-gas 1) "#:type 1 takes no #:max-priority-fee-per-gas")
-      ((#:type 2 #:gas-price 1) "#:type 2 takes no #:gas-price")
-      ((#:gas-price 1 #:max-fee-per-gas 2)
-       "#:gas-price and #:max-fee-per-gas are for different transaction types")
-      ((#:max-priority-fee-per-gas 3 #:max-fee-per-gas 2)
-       "#:max-priority-fee-per-gas is more than #:max-fee-per-gas")))
+  (define (check-refused fields refused? message methods)
+    (define-values (e calls) (run-estimate fields))
+    (define name (format "~s" fields))
+    (check-pred refused? e name)
+    (check-equal? (exn-message e) message name)
+    (check-equal? (method-names calls) methods name))
+
+  (define (conflict? e)
+    (and (exn:fail:contract? e) (not (exn:fail:contract:blame? e))))
+
+  (define (wrong-chain? e)
+    (and (exn:fail:web3:fill? e) (eq? (exn:fail:web3:fill-reason e) 'chain-id)))
 
   (test-case "E7: fields of two types are refused before any request"
     (for ([row (in-list conflict-rows)])
       (match-define (list fields text) row)
-      (define-values (e calls) (estimated fields))
-      (check-true (and (exn:fail:contract? e) (not (exn:fail:contract:blame? e))) text)
-      (check-equal? (exn-message e) (string-append "estimate-transaction: " text) text)
-      (check-equal? calls '() text)))
+      (check-refused fields conflict? (string-append "estimate-transaction: " text) '())))
 
   (test-case "E7: a #:chain-id other than the node's raises exn:fail:web3:fill, estimating nothing"
-    (define-values (e calls) (estimated '(#:chain-id 1)))
-    (check-pred exn:fail:web3:fill? e)
-    (check-equal? (exn:fail:web3:fill-reason e) 'chain-id)
-    (check-equal? (exn-message e)
-                  (string-append "estimate-transaction: wrong chain: #:chain-id is 1,"
-                                 " but the node's chain is 31337"))
-    (check-equal? (method-names calls) '("eth_chainId")))
+    (check-refused '(#:chain-id 1)
+                   wrong-chain?
+                   (string-append "estimate-transaction: wrong chain: #:chain-id is 1,"
+                                  " but the node's chain is 31337")
+                   '("eth_chainId")))
 
   (test-case "E8: wrong arguments blame the caller before any request, and show no key"
     (define node (mock-provider (answers)))

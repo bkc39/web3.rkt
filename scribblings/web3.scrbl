@@ -893,9 +893,9 @@ given and returns the return data.  A revert raises @racket[exn:fail:web3:rpc:re
 @racket[exn:fail:web3:rpc], and @racket[exn->halt] names it: @racket['invalid-opcode] for code
 @tt{fe} installed with @racket[anvil-set-code].  A receipt does not hold a send's return data;
 its @racket[transaction-call-trace] does, as @racket[call-trace-output].
-@racket[estimate-transaction] estimates the call @racket[call-transaction] makes: for this echo,
-the gas the send then used, above the @racket[intrinsic-gas] and @racket[floor-gas] of its call
-data.
+@racket[estimate-transaction] estimates the call @racket[call-transaction] makes; on anvil, the
+estimate for this echo is the gas the send used, above the @racket[intrinsic-gas] and
+@racket[floor-gas] of its call data.
 
 @racketblock[
 (with-anvil (#:args '("--accounts" "0"))
@@ -908,8 +908,10 @@ data.
       (call-transaction signer echo #:data refused)))
   (printf "revert ~a\n" (bytes->hex-string (abi-revert-data revert)))
   (anvil-set-code broken invalid-opcode)
-  (printf "halt ~a\n" (with-handlers ([exn:fail:web3:rpc? exn->halt])
-                        (call-transaction signer broken)))
+  (define halt
+    (with-handlers ([exn:fail:web3:rpc? exn->halt])
+      (call-transaction signer broken)))
+  (printf "halt ~a\n" halt)
   (define receipt (send-transaction/receipt signer echo #:data word))
   (define trace (transaction-call-trace (receipt-transaction-hash receipt)))
   (printf "trace ~a output ~a gas used ~a\n"
@@ -2459,11 +2461,12 @@ raises @racket[exn:fail:web3:rpc:revert] decoded against @racket[errors], as for
                  exact-nonnegative-integer?]{
 The gas the node estimates for the call @racket[call-transaction] makes with the same arguments:
 @tt{eth_estimateGas} of the same transaction object at @racket[block].  Arguments are checked as
-@racket[call-transaction] checks them, a signer gives its address and nothing is signed.  A
+@racket[call-transaction] checks them; a signer gives its address and nothing is signed.  A
 @racket[gas-limit] given is the most the estimate may use.  A revert raises
 @racket[exn:fail:web3:rpc:revert] decoded against @racket[errors]; other errors from the node
 pass through unchanged, and @racket[exn->halt] reads the halt of one that names a halt.  An
-answer that is not a quantity below 2@superscript{64} raises @racket[exn:fail:web3].
+answer of 0, or one that is not a quantity below 2@superscript{64}, raises
+@racket[exn:fail:web3].
 
 @examples[#:eval send-eval
           (define estimating (mock-provider (hash "eth_estimateGas" "0x5830")))
