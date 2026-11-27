@@ -132,12 +132,13 @@
       (check-equal? (exn-message e) (string-append "estimate-transaction: " text) text)
       (check-equal? calls '() text)))
 
-  (test-case "E7: a #:chain-id other than the node's raises exn:fail:web3:fill and estimates nothing"
+  (test-case "E7: a #:chain-id other than the node's raises exn:fail:web3:fill, estimating nothing"
     (define-values (e calls) (estimated '(#:chain-id 1)))
     (check-pred exn:fail:web3:fill? e)
     (check-equal? (exn:fail:web3:fill-reason e) 'chain-id)
     (check-equal? (exn-message e)
-                  "estimate-transaction: wrong chain: #:chain-id is 1, but the node's chain is 31337")
+                  (string-append "estimate-transaction: wrong chain: #:chain-id is 1,"
+                                 " but the node's chain is 31337"))
     (check-equal? (method-names calls) '("eth_chainId")))
 
   (test-case "E8: wrong arguments blame the caller before any request, and show no key"

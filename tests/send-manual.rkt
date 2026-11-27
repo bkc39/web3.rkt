@@ -46,7 +46,14 @@
                 "latest")))
        (void)
        (void)
-       (value #"\336\255\276\357"))))
+       (value #"\336\255\276\357"))
+      ((void)
+       (value 22576)
+       (value (("eth_estimateGas"
+                #hasheq((from . "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")
+                        (to . "0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
+                        (data . ,(string-append "0x" (make-string 62 #\0) "2a")))
+                "latest"))))))
 
   (test-case "M1: the manual's sending examples give what the manual shows"
     (check-manual-examples "send-eval" expectations))
