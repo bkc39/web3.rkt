@@ -202,7 +202,8 @@
              (format "~a: transaction ~a failed in block ~a: ~a" who tx-hash block tail)
              (current-continuation-marks)
              receipt
-             revert))]
+             revert
+             #f))]
     [#f (raise-node-missing who (of-transaction "receipt status" tx-hash))]))
 
 (define (rpc-replay-outcome e errors)

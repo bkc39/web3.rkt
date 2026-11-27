@@ -27,7 +27,7 @@
 (struct exn:fail:web3 exn:fail ())
 (struct exn:fail:web3:rpc exn:fail:web3 (method code rpc-message data))
 (struct exn:fail:web3:rpc:revert exn:fail:web3:rpc (revert))
-(struct exn:fail:web3:transaction exn:fail:web3 (receipt revert))
+(struct exn:fail:web3:transaction exn:fail:web3 (receipt revert halt))
 (struct exn:fail:web3:fill exn:fail:web3 (reason))
 (struct exn:fail:web3:abi exn:fail:web3 ())
 (struct exn:fail:web3:abi:type exn:fail:web3:abi (input position))

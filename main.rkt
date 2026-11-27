@@ -8,6 +8,7 @@
 ;;   web3/abi/type        ABI types as structs, strings and s-expressions; signatures
 ;;   web3/abi/event-type  events as structs, strings and s-expressions
 ;;   web3/abi/description ABI items and contract descriptions from strings, s-expressions and JSON
+;;   web3/halt            exceptional halts as symbols, from a node's or a tracer's words
 ;;   web3/address         EIP-55 checksums; addresses as bytes and integers
 ;;   web3/account         secret keys, addresses, signing digests and EIP-191 messages,
 ;;                        recovering signers
@@ -38,6 +39,7 @@
          "contract.rkt"
          "eth.rkt"
          "event.rkt"
+         "halt.rkt"
          "rlp.rkt"
          "rpc.rkt"
          "send.rkt"
@@ -53,6 +55,7 @@
                        "contract.rkt"
                        "eth.rkt"
                        "event.rkt"
+                       "halt.rkt"
                        "rlp.rkt"
                        "rpc.rkt"
                        "send.rkt"

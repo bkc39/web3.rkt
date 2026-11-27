@@ -175,11 +175,12 @@
     (check-equal? (exn:fail:web3:rpc:revert-revert e) insufficient-revert)
     (check-equal? calls (list (list "eth_estimateGas" transfer-tx))))
 
+  (define (mined-failure replay #:errors [errors (list insufficient-balance)])
+    (run-mock (sending #:receipt failed #:replay replay)
+              (lambda () (contract-send token "transfer(address,uint256)" anvil-bob 10
+                                        #:from anvil-alice #:gas 100000 #:errors errors))))
+
   (test-case "a send mined with status 0 raises exn:fail:web3:transaction with the replay's revert"
-    (define (mined-failure replay #:errors [errors (list insufficient-balance)])
-      (run-mock (sending #:receipt failed #:replay replay)
-                (lambda () (contract-send token "transfer(address,uint256)" anvil-bob 10
-                                          #:from anvil-alice #:gas 100000 #:errors errors))))
     (define-values (e calls) (mined-failure (reverting "eth_call")))
     (check-pred exn:fail:web3:transaction? e)
     (check-eq? (receipt->jsexpr (exn:fail:web3:transaction-receipt e)) failed)
@@ -212,6 +213,32 @@
       (check-equal? (exn-message e)
                     (format "contract-send: transaction ~a failed in block 5: replaying it raised: ~a"
                             tx-hash message))))
+
+  (test-case "a send mined with status 0 carries the halt its replay ended in, and no revert"
+    (for ([row (in-list '((-32003 "EVM error OutOfGas" out-of-gas)
+                          (-32003 "EVM error StackOverflow" stack-overflow)
+                          (-32000 "invalid opcode: INVALID" invalid-opcode)
+                          (-32000 "stack limit reached 1024 (1023)" stack-overflow)))])
+      (match-define (list code words halt) row)
+      (define-values (e _calls) (mined-failure (lambda (_) (raise-rpc-error "eth_call" code words))))
+      (check-pred exn:fail:web3:transaction? e words)
+      (check-false (exn:fail:web3:transaction-revert e) words)
+      (check-eq? (exn:fail:web3:transaction-halt e) halt words)
+      (check-eq? (exn->halt e) halt words)
+      (check-equal? (exn-message e)
+                    (format "contract-send: transaction ~a failed in block 5: ~a" tx-hash words))))
+
+  (test-case "a send mined with status 0 has no halt when its replay reverts, passes or fails otherwise"
+    (for ([replay (in-list (list (reverting "eth_call")
+                                 "0x"
+                                 (lambda (_) (raise-rpc-error "eth_call" -32000 "header not found"))
+                                 (lambda (_) (raise (exn:fail:web3 "eth_call: out of gas"
+                                                                   (current-continuation-marks))))
+                                 42))])
+      (define-values (e _calls) (mined-failure replay))
+      (check-pred exn:fail:web3:transaction? e)
+      (check-false (exn:fail:web3:transaction-halt e) (exn-message e))
+      (check-false (exn->halt e) (exn-message e))))
 
   (test-case "a failure after the send names the transaction and keeps the error's kind"
     (define (unknown-outcome receipt [thunk (lambda ()
@@ -500,7 +527,7 @@
                   "0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38"))
 
   (test-case "exn:fail:web3:transaction is an exn:fail:web3, not an RPC error"
-    (define e (exn:fail:web3:transaction "m" (current-continuation-marks) mined #f))
+    (define e (exn:fail:web3:transaction "m" (current-continuation-marks) mined #f #f))
     (check-true (exn:fail:web3? e))
     (check-false (exn:fail:web3:rpc? e)))
 
