@@ -7,7 +7,7 @@
            web3/abi/type
            web3/address
            "abi-gen.rkt"
-           "modules.rkt"
+           (only-in "modules.rkt" collection direct-imports import-closure module-name)
            "util.rkt")
 
   ;; The eight from EIP-55, then two from cast to-check-sum-address.
@@ -130,17 +130,37 @@
       (check-equal? (bytes->address address-bytes) address)
       (check-equal? (address->bytes address) address-bytes)))
 
+  (test-case "each procedure of web3/address is named for itself"
+    (define procedures
+      `((,address? address?)
+        (,address->bytes address->bytes)
+        (,address->checksum-string address->checksum-string)
+        (,address->integer address->integer)
+        (,bytes->address bytes->address)
+        (,checksum-address? checksum-address?)
+        (,integer->address integer->address)))
+    (for ([row (in-list procedures)])
+      (match-define (list procedure name) row)
+      (check-equal? (object-name procedure) name (symbol->string name))))
+
+  (define (sorted-names names)
+    (sort (remove-duplicates names) string<?))
+
   (define (web3-modules root)
     (define names (filter values (map module-name (import-closure root))))
-    (check-equal? (filter (lambda (name) (member (collection name) '("net" "json"))) names) '())
-    (sort (remove-duplicates (filter (lambda (name) (equal? (collection name) "web3")) names))
-          string<?))
+    (check-equal? (filter (lambda (name) (member (collection name) '("net" "json" "libsecp256k1")))
+                          names)
+                  '())
+    (sorted-names (filter (lambda (name) (equal? (collection name) "web3")) names)))
 
-  (test-case "web3/private/address needs only racket/base libraries, keccak and web3/private/hex"
+  (test-case "web3/private/address needs only racket/base, keccak and web3/private/hex"
+    (define self (module-path-index-resolve (module-path-index-join 'web3/private/address #f) #t))
+    (check-equal? (sorted-names (map module-name (direct-imports self)))
+                  '("keccak/main" "racket/base" "web3/private/hex"))
     (check-equal? (web3-modules 'web3/private/address)
                   '("web3/private/address" "web3/private/hex")))
 
-  (test-case "web3/address adds only the argument contracts and what they name"
+  (test-case "web3/address adds only the argument contracts and what they name, not libsecp256k1"
     (check-equal? (web3-modules 'web3/address)
                   '("web3/address" "web3/private/address" "web3/private/argument"
                     "web3/private/hex" "web3/private/signature" "web3/private/signer"))))

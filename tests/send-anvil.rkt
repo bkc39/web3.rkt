@@ -275,9 +275,8 @@
         (with-handlers ([exn:fail:web3:rpc:revert? values])
           (call-transaction account3 echo #:data calldata)))
       (check-pred exn:fail:web3:rpc:revert? e)
-      (when (exn:fail:web3:rpc:revert? e)
-        (check-equal? (exn:fail:web3:rpc-method e) "eth_call")
-        (check-equal? (abi-revert-data (exn->abi-revert e)) calldata)))
+      (check-equal? (exn:fail:web3:rpc-method e) "eth_call")
+      (check-equal? (abi-revert-data (exn->abi-revert e)) calldata))
 
     (test-case "T3: a call to #f runs its data as creation code"
       (check-equal? (call-transaction #f #f #:data echo-init) echo-runtime)
@@ -290,10 +289,10 @@
       (check-equal? (receipt-status receipt) 1)
       (check-equal? (receipt-from receipt) (signer-address signer))
       (check-equal? (pending (signer-address signer)) (add1 nonce))
-      (match-define (list l) (receipt-logs receipt))
-      (check-equal? (log-address l) echo)
-      (check-equal? (log-topics l) (list (bytes->hex-string (word->bytes 42))))
-      (check-equal? (log-data l) (word->bytes 7))
+      (match-define (list echoed) (receipt-logs receipt))
+      (check-equal? (log-address echoed) echo)
+      (check-equal? (log-topics echoed) (list (bytes->hex-string (word->bytes 42))))
+      (check-equal? (log-data echoed) (word->bytes 7))
       (define tx-hash (send-transaction signer echo #:data (word->bytes 8)))
       (check-equal? (receipt-from (wait-for-receipt tx-hash)) (signer-address signer))))
 

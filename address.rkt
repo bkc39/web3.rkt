@@ -2,6 +2,7 @@
 
 (require racket/contract/base
          (only-in "private/address.rkt"
+                  address->bytes
                   address->checksum-string
                   address->integer
                   address-modulus
@@ -9,12 +10,11 @@
                   bytes->address
                   checksum-address?
                   integer->address)
-         (only-in "private/argument.rkt" address/c argument/c)
-         (only-in "private/hex.rkt" hex->bytes))
+         (only-in "private/argument.rkt" address/c argument/c))
 
 (provide (contract-out
           [address? (-> any/c boolean?)]
-          [rename hex->bytes address->bytes (-> address/c bytes?)]
+          [address->bytes (-> address/c bytes?)]
           [address->checksum-string (-> address/c string?)]
           [address->integer (-> address/c exact-nonnegative-integer?)]
           [bytes->address (-> address-bytes/c checksum-address?)]

@@ -3,7 +3,8 @@
 (require (only-in keccak keccak256)
          (only-in "hex.rkt" address-hex-string? bytes->hex natural->bytes))
 
-(provide address->checksum-string
+(provide address->bytes
+         address->checksum-string
          address->integer
          address-modulus
          address?
@@ -42,6 +43,9 @@
 
 (define (address->integer address)
   (string->number (substring address 2) 16))
+
+(define (address->bytes address)
+  (natural->bytes (address->integer address) 20))
 
 (define (integer->address number)
   (bytes->address (natural->bytes number 20)))

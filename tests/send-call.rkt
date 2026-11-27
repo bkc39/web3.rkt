@@ -162,6 +162,19 @@
       (check-equal? (exn-message e) (string-append "call-transaction: " text) text)
       (check-equal? calls '() text)))
 
+  (test-case "C7: the fields are checked before a signer's address is read, as fill-transaction's are"
+    (define text "#:gas-price and #:max-fee-per-gas are for different transaction types")
+    (for ([procedure (list call-transaction fill-transaction)])
+      (define name (symbol->string (object-name procedure)))
+      (define-values (e calls)
+        (run-mock (answers)
+                  (lambda ()
+                    (call-with-fields procedure '(#:gas-price 1 #:max-fee-per-gas 2)
+                                      (addressless) anvil-bob))))
+      (check-pred exn:fail:contract? e name)
+      (check-equal? (exn-message e) (format "~a: ~a" name text) name)
+      (check-equal? calls '() name)))
+
   (test-case "C7: a #:chain-id other than the node's raises exn:fail:web3:fill and calls nothing"
     (define-values (e calls) (called '(#:chain-id 1)))
     (check-pred exn:fail:web3:fill? e)

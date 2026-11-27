@@ -484,8 +484,8 @@
 
 (define/filling (call-transaction who from to order #:block [block "latest"])
   (define provider (fill-order-provider order))
-  (define address (and from (sender-address who from)))
   (checked-rows who order)
+  (define address (and from (sender-address who from)))
   (when (fill-order-chain-id order)
     (node-chain-id who order provider))
   (define tx (fields-object address (hash-set (fill-order->hash order) 'to to)))
