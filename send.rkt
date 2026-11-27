@@ -2,10 +2,11 @@
 
 (require racket/contract/base
          (only-in "eth/receipt.rkt" receipt?)
-         (only-in "private/contracts.rkt" sender/c)
+         (only-in "private/contracts.rkt" from/c sender/c)
+         (only-in "private/eth-params.rkt" block-param/c)
          "private/exn.rkt"
-         (only-in "private/argument.rkt" address/c)
          (only-in "private/send.rkt"
+                  call-transaction
                   fill-transaction
                   filling->
                   send-signed-transaction
@@ -18,8 +19,9 @@
 
 (provide (struct-out exn:fail:web3:fill)
          (contract-out
+          [call-transaction (filling-> from/c [#:block block-param/c] bytes?)]
           [fill-transaction (filling-> sender/c transaction?)]
           [send-signed-transaction (filling-> signer/c transaction-hash/c)]
           [send-signed-transaction/receipt (filling-> signer/c receipt?)]
-          [send-transaction (filling-> address/c transaction-hash/c)]
-          [send-transaction/receipt (filling-> address/c receipt?)]))
+          [send-transaction (filling-> sender/c transaction-hash/c)]
+          [send-transaction/receipt (filling-> sender/c receipt?)]))

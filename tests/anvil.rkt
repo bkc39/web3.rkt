@@ -104,7 +104,20 @@
 
        (test-case "anvil-set-storage-at sets a storage slot"
          (anvil-set-storage-at contract 3 (bytes->hex-string (word->bytes 99)))
-         (check-equal? (hex-string->number (eth-get-storage-at contract 3 "latest")) 99))
+         (check-equal? (hex-string->number (eth-get-storage-at contract 3 "latest")) 99)
+         (anvil-set-storage-at contract 4 (sub1 (expt 2 256)))
+         (check-equal? (eth-get-storage-at contract 4 "latest")
+                       (string-append "0x" (make-string 64 #\f)))
+         (anvil-set-storage-at contract 5 258)
+         (check-equal? (hex-string->bytes (eth-get-storage-at contract 5 "latest"))
+                       (word->bytes 258)))
+
+       (test-case "anvil-set-code takes the code as bytes"
+         (define coded "0x00000000000000000000000000000000000c0de1")
+         (anvil-set-code coded (hex-string->bytes return-42))
+         (check-equal? (eth-get-code coded "latest") return-42)
+         (anvil-set-code coded #"")
+         (check-equal? (eth-get-code coded "latest") "0x"))
 
        (test-case "an impersonated address sends until impersonation stops"
          (anvil-set-balance stranger (expt 10 18))

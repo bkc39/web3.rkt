@@ -6,8 +6,17 @@
 
 (provide (contract-out
           [address? (-> any/c boolean?)]
+          [address->bytes (-> address? bytes?)]
           [address->checksum-string (-> address? string?)]
-          [checksum-address? (-> any/c boolean?)]))
+          [address->integer (-> address? exact-nonnegative-integer?)]
+          [bytes->address (-> address-bytes/c checksum-address?)]
+          [checksum-address? (-> any/c boolean?)]
+          [integer->address (-> address-integer/c checksum-address?)]))
+
+(define address-bytes/c
+  (flat-named-contract 'address-bytes/c (lambda (v) (and (bytes? v) (= (bytes-length v) 20)))))
+(define address-integer/c
+  (flat-named-contract 'address-integer/c (integer-in 0 (sub1 (expt 2 160)))))
 
 (module* private #f
   (provide address->checksum-string
@@ -37,3 +46,15 @@
 
 (define (checksum-address? v)
   (and (address-hex-string? v) (string=? v (address->checksum-string v))))
+
+(define (address->bytes _address)
+  (error 'unimplemented))
+
+(define (bytes->address _bs)
+  (error 'unimplemented))
+
+(define (address->integer _address)
+  (error 'unimplemented))
+
+(define (integer->address _n)
+  (error 'unimplemented))

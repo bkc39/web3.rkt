@@ -106,6 +106,36 @@
     (check-blames-here (address->checksum-string "5aaeb6053f3e94c9b9a09f33669435e7ef1beaed"))
     (check-blames-here (address->checksum-string "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")))
 
+  (test-case "an address is its 20 bytes and its number, and back in its EIP-55 form"
+    (for ([a (in-list vectors)])
+      (define bs (address->bytes a))
+      (check-equal? (bytes-length bs) 20 a)
+      (check-equal? (address->bytes (string-downcase a)) bs a)
+      (check-equal? (address->bytes (upcase-hex a)) bs a)
+      (check-equal? (bytes->address bs) a a)
+      (define n (address->integer a))
+      (check-equal? n (string->number (substring a 2) 16) a)
+      (check-equal? (address->integer (string-downcase a)) n a)
+      (check-equal? (integer->address n) a a))
+    (check-equal? (integer->address 0) zero-address)
+    (check-equal? (integer->address (sub1 (expt 2 160)))
+                  "0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF")
+    (check-equal? (integer->address 1) "0x0000000000000000000000000000000000000001")
+    (check-equal? (address->bytes zero-address) (make-bytes 20 0))
+    (check-equal? (address->integer zero-address) 0))
+
+  (test-case "the conversions refuse what is not an address, 20 bytes or 160 bits"
+    (check-blames-here (bytes->address (make-bytes 19 1)))
+    (check-blames-here (bytes->address (make-bytes 21 1)))
+    (check-blames-here (bytes->address "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed"))
+    (check-blames-here (integer->address -1))
+    (check-blames-here (integer->address (expt 2 160)))
+    (check-blames-here (integer->address 1.0))
+    (check-blames-here (address->bytes "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD"))
+    (check-blames-here (address->bytes (make-bytes 20 1)))
+    (check-blames-here (address->integer "0x123"))
+    (check-blames-here (address->integer 42)))
+
   (test-case "web3/address needs only racket/base libraries, keccak and web3/private/hex"
     (define names (filter values (map module-name (import-closure 'web3/address))))
     (check-equal? (filter (lambda (n) (member (collection n) '("net" "json"))) names) '())

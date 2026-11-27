@@ -8,7 +8,7 @@
 ;;   web3/abi/type        ABI types as structs, strings and s-expressions; signatures
 ;;   web3/abi/event-type  events as structs, strings and s-expressions
 ;;   web3/abi/description ABI items and contract descriptions from strings, s-expressions and JSON
-;;   web3/address         EIP-55 checksums
+;;   web3/address         EIP-55 checksums; addresses as bytes and integers
 ;;   web3/account         secret keys, addresses, signing digests and EIP-191 messages,
 ;;                        recovering signers
 ;;   web3/rlp             Recursive Length Prefix: encoding, strict decoding, scalars
@@ -28,9 +28,10 @@
 ;;   web3/eth/transaction-info  transactions as a node describes them
 ;;   web3/anvil           anvil_* / evm_* / debug_* endpoints, managing anvil processes
 ;;
-;; `(require web3)` provides all of them.
+;; `(require web3)` provides all of them, and keccak's keccak256.
 
-(require "abi.rkt"
+(require (only-in keccak keccak256)
+         "abi.rkt"
          "account.rkt"
          "address.rkt"
          "anvil.rkt"
@@ -44,7 +45,8 @@
          "transaction.rkt"
          "units.rkt")
 
-(provide (all-from-out "abi.rkt"
+(provide keccak256
+         (all-from-out "abi.rkt"
                        "account.rkt"
                        "address.rkt"
                        "anvil.rkt"

@@ -39,13 +39,20 @@
 
 ;;;; anvil / hardhat-style methods
 
-(define-jsonrpc-endpoint anvil_setCode (-> address/c hex-string? void?)
+(define (code->hex code)
+  (if (bytes? code) (error 'unimplemented) code))
+
+(define (storage-value->hex value)
+  (if (exact-integer? value) (error 'unimplemented) value))
+
+(define-jsonrpc-endpoint anvil_setCode (-> address/c [(or/c hex-string? bytes?) code->hex] void?)
   #:result-transform void)
 (define-jsonrpc-endpoint anvil_setBalance
   (-> address/c [exact-nonnegative-integer? number->hex-string] void?)
   #:result-transform void)
 (define-jsonrpc-endpoint anvil_setStorageAt
-  (-> address/c [exact-nonnegative-integer? number->hex-string] hex-string? void?)
+  (-> address/c [exact-nonnegative-integer? number->hex-string]
+      [(or/c hex-string? (integer-in 0 (sub1 (expt 2 256)))) storage-value->hex] void?)
   #:result-transform void)
 (define-jsonrpc-endpoint anvil_mine (-> void?)
   #:result-transform void)

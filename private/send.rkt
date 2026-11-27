@@ -30,6 +30,8 @@
 
 (provide call-object
          call-raising-reverts
+         call-transaction
+         call-transaction/who
          estimate-gas
          fill-reason/c
          fill-reasons
@@ -88,13 +90,17 @@
                    [unset (in-list (list sent.unset ...))]
                    #:unless (equal? value unset))
         (values name value)))
-    (define-syntax-parse-rule (define/filling (name:id who:id from:id to:id fields:id)
+    (define-syntax-parse-rule (define/filling (name:id who:id from:id to:id fields:id
+                                                       (~seq extra-kw:keyword [extra:id default:expr])
+                                                       (... ...))
                                 body:expr (... ...+))
-      (define/who (name who from to (~@ key.kw [key.field key.unset]) ...)
+      (define/who (name who from to (~@ key.kw [key.field key.unset]) ...
+                        (... (~@ extra-kw [extra default])) (... ...))
         (define fields (new-order key.field ...))
         body (... ...)))
-    (define-syntax-parse-rule (filling-> first/c:expr result/c:expr)
-      (opaque-> first/c to/c [key.kw key.contract] ... result/c))))
+    (define-syntax-parse-rule (filling-> first/c:expr [extra-kw:keyword extra/c:expr] (... ...)
+                                         result/c:expr)
+      (opaque-> first/c to/c [key.kw key.contract] ... [extra-kw extra/c] (... ...) result/c))))
 
 (define-fill-keywords fill-order define/filling filling->
   #:fields
@@ -464,3 +470,8 @@
 (define/filling (send-transaction/receipt who address to order)
   (define-values (_tx-hash receipt) (send-from-node/receipt who address to order))
   receipt)
+
+;;;; calls
+
+(define/filling (call-transaction who from to order #:block [block "latest"])
+  (error 'unimplemented))

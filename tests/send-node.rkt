@@ -5,9 +5,10 @@
            racket/list
            racket/match
            rackunit
+           (only-in libsecp256k1 integer->secret-key)
            web3
            "helpers/mock.rkt"
-           (only-in "helpers/signers.rkt" signer0)
+           (only-in "helpers/signers.rkt" signer0 watched watched-calls)
            (only-in "util.rkt" anvil-alice anvil-bob anvil-carol check-blames-here filled-hash
                     insufficient-balance))
 
@@ -212,16 +213,39 @@
   (test-case "S8: wrong arguments blame the caller"
     (parameterize ([current-provider (mock-provider (node-answers))])
       (for ([procedure (list send-transaction send-transaction/receipt)])
-        (define e (with-handlers ([exn:fail? values]) (procedure signer0 anvil-bob)))
+        (define e
+          (with-handlers ([exn:fail? values]) (procedure (integer->secret-key 7) anvil-bob)))
         (check-pred exn:fail:contract:blame? e)
-        (check-regexp-match #rx": not an address: not a string\n.*\n  given: a signer\n"
-                            (exn-message e))
+        (check-regexp-match
+         (string-append ": not an address or a signer: neither a string nor a signer\n"
+                        "  argument: 1st\n  given: a secret key\n")
+         (exn-message e))
         (check-blames-here (procedure 42 anvil-bob))
         (check-blames-here (procedure anvil-alice "bob"))
         (check-blames-here (procedure anvil-alice))
         (check-blames-here (procedure anvil-alice anvil-bob #:value -1))
         (check-blames-here (procedure anvil-alice anvil-bob #:data "0x"))
         (check-blames-here (procedure anvil-alice anvil-bob #:gas 1)))))
+
+  (test-case "S13: a signer's send is signed here and sent raw, an address's is the node's"
+    (define answers (hash-set (filling) "eth_sendTransaction" tx-hash))
+    (for ([procedure (list send-transaction send-transaction/receipt)]
+          [signed (list send-signed-transaction send-signed-transaction/receipt)])
+      (define name (format "~a" (object-name procedure)))
+      (define signer (watched))
+      (define-values (result calls) (sent procedure '(#:value 5) #:from signer #:answers answers))
+      (define-values (expected expected-calls)
+        (sent signed '(#:value 5) #:from (watched) #:answers answers))
+      (check-equal? (map (lambda (v) (if (receipt? v) (receipt->jsexpr v) v)) result)
+                    (map (lambda (v) (if (receipt? v) (receipt->jsexpr v) v)) expected)
+                    name)
+      (check-equal? calls expected-calls name)
+      (check-not-false (member "eth_sendRawTransaction" (method-names calls)) name)
+      (check-false (member "eth_sendTransaction" (method-names calls)) name)
+      (check-not-false (memq 'digest (watched-calls signer)) name)
+      (define-values (_by-address address-calls) (sent procedure '(#:value 5) #:answers answers))
+      (check-not-false (member "eth_sendTransaction" (method-names address-calls)) name)
+      (check-false (member "eth_sendRawTransaction" (method-names address-calls)) name)))
 
   (test-case "a mixed-case address with a wrong checksum is refused before any request"
     (define wrong-checksum "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")

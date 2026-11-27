@@ -50,7 +50,23 @@
           `(,(string-append "send-transaction: " checksum-reason) "argument: 2nd" ,(quoted typo)))
      (row "send-transaction's from"
           (lambda () (send-transaction typo anvil-bob #:value 1))
-          `(,(string-append "send-transaction: " checksum-reason) "argument: 1st" ,(quoted typo)))
+          `(,(string-append "send-transaction: " sender-checksum-reason)
+            "argument: 1st" ,(quoted typo)))
+     (row "call-transaction's from"
+          (lambda () (call-transaction typo anvil-bob))
+          `(,(string-append "call-transaction: " sender-checksum-reason)
+            "argument: 1st" ,(quoted typo)))
+     (row "call-transaction's to"
+          (lambda () (call-transaction anvil-alice typo))
+          `(,(string-append "call-transaction: " checksum-reason) "argument: 2nd" ,(quoted typo)))
+     (row "a 32-byte string where call-transaction's from goes"
+          (lambda () (call-transaction (string-append "0x" (make-string 64 #\a)) anvil-bob))
+          '("call-transaction: not an address or a signer: not 0x and 40 hex digits"
+            "argument: 1st" "given: a string of 66 characters"))
+     (row "a secret key where call-transaction's from goes"
+          (lambda () (call-transaction (integer->secret-key 7) anvil-bob))
+          '("call-transaction: not an address or a signer: neither a string nor a signer"
+            "argument: 1st" "given: a secret key"))
      (row "contract-call's #:from"
           (lambda () (contract-call anvil-bob "f()()" #:from typo))
           `(,(string-append "contract-call: " sender-checksum-reason)
@@ -187,6 +203,7 @@
       (match-define (cons secret given) secret+given)
       (check-hidden (lambda () (send-transaction secret anvil-bob #:value 1)) secret given)
       (check-hidden (lambda () (fill-transaction secret anvil-bob)) secret given)
+      (check-hidden (lambda () (call-transaction secret anvil-bob)) secret given)
       (check-hidden (lambda () (contract-call anvil-bob "f()()" #:from secret)) secret given)
       (check-hidden (lambda () (c-f anvil-bob 1 #:from secret)) secret given)
       (check-hidden (lambda () (eth-get-transaction-receipt secret)) secret given)))

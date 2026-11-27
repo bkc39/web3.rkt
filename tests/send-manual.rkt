@@ -37,7 +37,16 @@
                         (to . "0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
                         (data . "0x")
                         (value . "0x14d1120d7b160000")
-                        (gas . "0x5208"))))))))
+                        (gas . "0x5208"))))))
+      ((void)
+       (value ,(bytes-append (make-bytes 31 0) #"\52"))
+       (value (("eth_call"
+                #hasheq((to . "0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
+                        (data . ,(string-append "0x" (make-string 62 #\0) "2a")))
+                "latest")))
+       (void)
+       (void)
+       (value #"\336\255\276\357"))))
 
   (test-case "M1: the manual's sending examples give what the manual shows"
     (check-manual-examples "send-eval" expectations))
