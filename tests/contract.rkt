@@ -230,16 +230,20 @@
                     (format "contract-send: transaction ~a failed in block 5: ~a" tx-hash words))))
 
   (test-case "a mined send has no halt when its replay reverts, passes or fails otherwise"
-    (for ([replay (in-list (list (reverting "eth_call")
-                                 "0x"
-                                 (lambda (_) (raise-rpc-error "eth_call" -32000 "header not found"))
-                                 (lambda (_) (raise (exn:fail:web3 "eth_call: out of gas"
-                                                                   (current-continuation-marks))))
-                                 42))])
+    (define replays
+      `(("a revert" ,(reverting "eth_call"))
+        ("a replay that passes" "0x")
+        ("an RPC error naming no halt"
+         ,(lambda (_) (raise-rpc-error "eth_call" -32000 "header not found")))
+        ("an error that is not an RPC error"
+         ,(lambda (_) (raise (exn:fail:web3 "eth_call: out of gas" (current-continuation-marks)))))
+        ("a malformed result" 42)))
+    (for ([row (in-list replays)])
+      (match-define (list label replay) row)
       (define-values (e _calls) (mined-failure replay))
-      (check-pred exn:fail:web3:transaction? e)
-      (check-false (exn:fail:web3:transaction-halt e) (exn-message e))
-      (check-false (exn->halt e) (exn-message e))))
+      (check-pred exn:fail:web3:transaction? e label)
+      (check-false (exn:fail:web3:transaction-halt e) label)
+      (check-false (exn->halt e) label)))
 
   (test-case "a failure after the send names the transaction and keeps the error's kind"
     (define (unknown-outcome receipt [thunk (lambda ()

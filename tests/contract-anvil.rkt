@@ -140,10 +140,12 @@
            (check-equal? (receipt-status (exn:fail:web3:transaction-receipt e)) 0))
 
          (test-case "a reverting constructor mined is a revert, not a halt"
-           (define mined (raised (lambda ()
-                                   (deploy-contract token-code "constructor(string,string,uint256)" "" "X" 1
-                                                    #:gas 3000000))))
+           (define mined
+             (raised (lambda ()
+                       (deploy-contract token-code "constructor(string,string,uint256)" "" "X" 1
+                                        #:gas 3000000))))
            (check-pred exn:fail:web3:transaction? mined)
+           (check-equal? (revert-string mined) "Error(\"empty name\")")
            (check-false (exn:fail:web3:transaction-halt mined))
            (check-false (exn->halt mined)))
 

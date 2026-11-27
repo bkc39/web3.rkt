@@ -2,27 +2,26 @@
 
 (require racket/contract/base
          racket/match
+         (only-in racket/string non-empty-string? string-prefix?)
          "private/exn.rkt")
 
-;; Each halt, anvil's names after `EVM error`, and the words of call tracers
-;; and go-ethereum.  The words are lowercase, as a message is when it is
-;; matched; a string is the whole message.
 (define halt-table
   '((out-of-gas
      ("OutOfGas" "MemoryOOG" "MemoryLimitOOG" "PrecompileOOG" "InvalidOperandOOG"
       "ReentrancySentryOOG")
-     ("out of gas" #px"^out of gas: " "contract creation code storage out of gas"
-      "gas uint64 overflow" #px"^gas required exceeds allowance \\(\\d+\\)$"))
-    (stack-overflow ("StackOverflow") ("out of stack" #px"^stack limit reached \\d+ \\(\\d+\\)$"))
+     ("out of gas" (detail "out of gas") "contract creation code storage out of gas"
+      "gas uint64 overflow" #px"gas required exceeds allowance \\(\\d+\\)"))
+    (stack-overflow ("StackOverflow") ("Out of stack" #px"stack limit reached \\d+ \\(\\d+\\)"))
     (stack-underflow
      ("StackUnderflow")
-     ("stack underflow" #px"^stack underflow \\(\\d+ <=> \\d+\\)$"))
-    (invalid-opcode ("InvalidFEOpcode") ("invalid opcode: invalid"))
+     ("stack underflow" #px"stack underflow \\(\\d+ <=> \\d+\\)"))
+    (invalid-opcode ("InvalidFEOpcode") ("invalid opcode: INVALID"))
     (undefined-opcode
      ("OpcodeNotFound" "NotActivated")
-     ("invalid opcode" #px"^invalid opcode: (?!invalid$)\\S"))
+     ("invalid opcode" (detail "invalid opcode" (except "INVALID"))))
     (invalid-jump ("InvalidJump") ("invalid jump destination"))
     (return-data-out-of-bounds ("OutOfOffset") ("return data out of bounds"))
+    (precompile-failure ("PrecompileError") ("precompiled failed"))
     (write-protection
      ("StateChangeDuringStaticCall" "CallNotAllowedInsideStatic")
      ("write protection"))
@@ -32,7 +31,32 @@
     (invalid-code ("CreateContractStartingWithEF") ("invalid code: must not begin with 0xef"))
     (address-collision ("CreateCollision") ("contract address collision"))))
 
-(define halts (map car halt-table))
+(define (wording->predicate wording)
+  (match wording
+    [(? string?)
+     (define whole (string-downcase wording))
+     (lambda (words) (string=? words whole))]
+    [(list 'detail start (list 'except excepted) ...)
+     (define prefix (string-downcase (string-append start ": ")))
+     (define refused (map string-downcase excepted))
+     (lambda (words)
+       (define detail (and (string-prefix? words prefix) (substring words (string-length prefix))))
+       (and (non-empty-string? detail)
+            (not (for/or ([word (in-list refused)]) (string-prefix? detail word)))))]
+    [(? pregexp?)
+     (define whole (pregexp (format "^(?i:~a)$" (object-name wording))))
+     (lambda (words) (regexp-match? whole words))]))
+
+(define-values (halts name-rows wording-rows)
+  (for/lists (halts name-rows wording-rows) ([row (in-list halt-table)])
+    (match-define (list halt names wordings) row)
+    (values halt
+            (for/list ([name (in-list names)]) (cons (string-downcase name) halt))
+            (for/list ([wording (in-list wordings)]) (cons (wording->predicate wording) halt)))))
+
+(define name-halts (make-immutable-hash (apply append name-rows)))
+
+(define wording-halts (apply append wording-rows))
 
 (define halt/c (flat-named-contract 'halt/c (apply or/c halts)))
 
@@ -42,30 +66,13 @@
           [message->halt (-> string? (or/c #f halt/c))]
           [exn->halt (-> exn? (or/c #f halt/c))]))
 
-(define name-halts
-  (for*/hash ([row (in-list halt-table)]
-              #:do [(match-define (list halt names _) row)]
-              [name (in-list names)])
-    (values (string-downcase name) halt)))
-
-(define word-halts
-  (for*/list ([row (in-list halt-table)]
-              #:do [(match-define (list halt _ wordings) row)]
-              [wording (in-list wordings)])
-    (cons wording halt)))
-
-(define (names? wording words)
-  (if (string? wording)
-      (string=? wording words)
-      (regexp-match? wording words)))
-
 (define (message->halt message)
   (define words (string-downcase message))
   (match words
     [(regexp #rx"^execution reverted") #f]
     [(pregexp #px"^evm error (\\w+)$" (list _ name)) (hash-ref name-halts name #f)]
-    [_ (for/first ([row (in-list word-halts)]
-                   #:when (names? (car row) words))
+    [_ (for/first ([row (in-list wording-halts)]
+                   #:when ((car row) words))
          (cdr row))]))
 
 (define (exn->halt e)

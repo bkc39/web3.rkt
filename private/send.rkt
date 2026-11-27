@@ -208,10 +208,9 @@
     [#f (raise-node-missing who (of-transaction "receipt status" tx-hash))]))
 
 (define (rpc-replay-outcome e errors)
+  (define revert (rpc-exn->revert e #:errors errors))
   (cond
-    [(rpc-exn->revert e #:errors errors)
-     => (lambda (revert)
-          (values revert #f (format "reverted with ~a" (abi-revert->string revert))))]
+    [revert (values revert #f (format "reverted with ~a" (abi-revert->string revert)))]
     [else (values #f (exn->halt e) (exn:fail:web3:rpc-rpc-message e))]))
 
 (define (replay tx block errors provider)

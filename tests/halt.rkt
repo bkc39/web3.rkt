@@ -2,7 +2,9 @@
 
 (module+ test
   (require (only-in racket/contract flat-contract-predicate)
+           (only-in racket/file file->string)
            racket/list
+           racket/match
            rackunit
            (only-in scribble/example make-base-eval)
            (only-in web3 decode-revert exn:fail:web3 exn:fail:web3:rpc exn:fail:web3:rpc:revert
@@ -20,6 +22,7 @@
       (undefined-opcode "OpcodeNotFound" "NotActivated")
       (invalid-jump "InvalidJump")
       (return-data-out-of-bounds "OutOfOffset")
+      (precompile-failure "PrecompileError")
       (write-protection "StateChangeDuringStaticCall" "CallNotAllowedInsideStatic")
       (call-depth "CallTooDeep")
       (code-size "CreateContractSizeLimit")
@@ -37,6 +40,7 @@
       (undefined-opcode "invalid opcode")
       (invalid-jump "invalid jump destination")
       (return-data-out-of-bounds "return data out of bounds")
+      (precompile-failure "precompiled failed")
       (write-protection "write protection")
       (code-size "max code size exceeded")
       (initcode-size "max initcode size exceeded")
@@ -60,15 +64,49 @@
       (invalid-code "invalid code: must not begin with 0xef")
       (address-collision "contract address collision")))
 
+  (define other-cases
+    '((out-of-gas "evm error outofgas")
+      (stack-overflow "EVM ERROR STACKOVERFLOW" "OUT OF STACK")
+      (invalid-opcode "invalid opcode: invalid")
+      (invalid-jump "Invalid Jump Destination")))
+
   (define (check-rows rows message-of)
     (for* ([row (in-list rows)]
            [wording (in-list (rest row))])
       (define message (message-of wording))
       (check-eq? (message->halt message) (first row) message)))
 
+  (define (check-no-halt messages)
+    (for ([message (in-list messages)])
+      (check-false (message->halt message) message)))
+
   (define (rpc-exn message #:code [code -32003])
     (exn:fail:web3:rpc (format "eth_call: ~a" message) (current-continuation-marks)
                        "eth_call" code message #f))
+
+  (define (failed halt)
+    (exn:fail:web3:transaction "f: failed" (current-continuation-marks) #f #f halt))
+
+  (define halt? (flat-contract-predicate halt/c))
+
+  (define placeholders '(("N" . "1024") ("M" . "1023") ("detail" . "out of memory")))
+
+  (define (marked form row)
+    (define pattern (pregexp (format "@~a\\{((?:[^{}]|\\{[^{}]*\\})*)\\}" form)))
+    (for/list ([content (in-list (regexp-match* pattern row #:match-select cadr))])
+      (regexp-replace* #px"@italic\\{(\\w+)\\}" content
+                       (lambda (_italic name) (cdr (assoc name placeholders))))))
+
+  (define (manual-halt-rows)
+    (define manual (file->string (collection-file-path "scribblings/web3.scrbl" "web3")))
+    (match-define (list _ table)
+      (regexp-match #px"@subsection\\[#:tag \"halts\"\\].*?(@tabular\\[.*?)\n\n" manual))
+    (for/list ([row (in-list (rest (regexp-split #rx"\\(list @racket\\['" table)))])
+      (match-define (list _ halt) (regexp-match #px"^([a-z-]+)\\]" row))
+      (define errors
+        (for/list ([name (in-list (marked "evm-error" row))])
+          (string-append "EVM error " name)))
+      (list* (string->symbol halt) (append errors (marked "wording" row)))))
 
   (test-case "H1: anvil's EVM error names give their halts"
     (check-rows anvil-names (lambda (name) (string-append "EVM error " name))))
@@ -80,82 +118,103 @@
     (check-rows geth-words values))
 
   (test-case "H4: matching ignores case"
-    (check-eq? (message->halt "evm error outofgas") 'out-of-gas)
-    (check-eq? (message->halt "EVM ERROR STACKOVERFLOW") 'stack-overflow)
-    (check-eq? (message->halt "OUT OF STACK") 'stack-overflow)
-    (check-eq? (message->halt "invalid opcode: invalid") 'invalid-opcode)
-    (check-eq? (message->halt "Invalid Jump Destination") 'invalid-jump))
+    (check-rows other-cases values))
 
   (test-case "H5: a revert is never a halt, whatever its reason says"
-    (for ([message (in-list '("execution reverted"
-                              "execution reverted: out of gas"
-                              "execution reverted: out of gas token"
-                              "execution reverted: EVM error OutOfGas"
-                              "execution reverted: invalid opcode: INVALID"
-                              "Execution Reverted: stack underflow"))])
-      (check-false (message->halt message) message)))
+    (check-no-halt '("execution reverted"
+                     "execution reverted: out of gas"
+                     "execution reverted: out of gas token"
+                     "execution reverted: EVM error OutOfGas"
+                     "execution reverted: invalid opcode: INVALID"
+                     "Execution Reverted: stack underflow")))
 
   (test-case "H6: words that name no halt give #f"
-    (for ([message (in-list '(""
-                              "nonce too low"
-                              "insufficient funds for gas * price + value"
-                              "intrinsic gas too low"
-                              "out of gasoline"
-                              "running out of gas"
-                              "EVM error Revert"
-                              "EVM error OutOfFunds"
-                              "EVM error OutOfGasX"
-                              "EVM error"
-                              "the EVM error OutOfGas"
-                              "VM Exception while processing transaction: out of gas"
-                              "invalid opcode:"
-                              "invalid opcode: "
-                              "stack underflow (a <=> b)"
-                              "stack limit reached"
-                              "write protection enabled"))])
-      (check-false (message->halt message) message)))
+    (check-no-halt '(""
+                     "nonce too low"
+                     "insufficient funds for gas * price + value"
+                     "intrinsic gas too low"
+                     "out of gasoline"
+                     "running out of gas"
+                     "EVM error Revert"
+                     "EVM error OutOfFunds"
+                     "EVM error OutOfGasX"
+                     "EVM error"
+                     "the EVM error OutOfGas"
+                     "VM Exception while processing transaction: out of gas"
+                     "invalid opcode:"
+                     "invalid opcode: "
+                     "stack underflow (a <=> b)"
+                     "stack limit reached"
+                     "write protection enabled")))
 
-  (test-case "H7: halts and halt/c agree, and every halt has a wording"
-    (define halt? (flat-contract-predicate halt/c))
-    (check-equal? (remove-duplicates halts) halts)
+  (test-case "H7: words with a detail need `: ` and a detail after them"
+    (check-no-halt '("out of gas: " "out of gas:" "out of gas:out of memory" "out of gas - x")))
+
+  (test-case "H8: INVALID followed by more words is not an undefined opcode, nor any halt"
+    (check-no-halt '("invalid opcode: INVALID " "invalid opcode: INVALID, at pc 3")))
+
+  (test-case "H9: halts has no duplicates"
+    (check-equal? (remove-duplicates halts) halts))
+
+  (test-case "H10: halt/c accepts every halt"
     (for ([halt (in-list halts)])
-      (check-true (halt? halt) (format "~a" halt)))
-    (for ([value (in-list '(revert out-of-gas? "out-of-gas" #f))])
-      (check-false (halt? value) (format "~s" value)))
-    (check-equal? (map first anvil-names) halts)
-    (check-equal? (map first geth-words) halts))
+      (check-true (halt? halt) (format "~a" halt))))
 
-  (test-case "H8: exn->halt reads an RPC error's message, not a revert's"
+  (test-case "H11: halt/c refuses what is not a halt"
+    (for ([value (in-list '(revert out-of-gas? "out-of-gas" #f))])
+      (check-false (halt? value) (format "~s" value))))
+
+  (test-case "H12: halts are in the order of anvil's names, and all but a precompile's are geth's"
+    (check-equal? (map first anvil-names) halts)
+    (check-equal? (map first geth-words) (remq 'precompile-failure halts)))
+
+  (test-case "H13: the manual's table has the halts in order"
+    (check-equal? (map first (manual-halt-rows)) halts))
+
+  (test-case "H14: every wording the manual's table shows gives the halt of its row"
+    (check-rows (manual-halt-rows) values))
+
+  (test-case "H15: exn->halt reads an RPC error's message"
     (check-eq? (exn->halt (rpc-exn "EVM error InvalidJump")) 'invalid-jump)
     (check-eq? (exn->halt (rpc-exn "out of gas" #:code -32000)) 'out-of-gas)
-    (check-false (exn->halt (rpc-exn "nonce too low")))
+    (check-false (exn->halt (rpc-exn "nonce too low"))))
+
+  (test-case "H16: exn->halt of a revert is #f, whatever its message"
     (define revert
       (exn:fail:web3:rpc:revert "eth_call: reverted" (current-continuation-marks)
                                 "eth_call" 3 "out of gas" #f (decode-revert #"")))
     (check-false (exn->halt revert)))
 
-  (test-case "H8: exn->halt reads a failed transaction's halt field"
-    (define (failed halt)
-      (exn:fail:web3:transaction "f: failed" (current-continuation-marks) #f #f halt))
+  (test-case "H17: exn->halt reads a failed transaction's halt field"
     (check-eq? (exn->halt (failed 'stack-overflow)) 'stack-overflow)
     (check-false (exn->halt (failed #f))))
 
-  (test-case "H8: exn->halt of any other exception is #f, whatever its message"
+  (test-case "H18: exn->halt of a failed transaction built with what is not a halt is #f"
+    (for ([value (in-list '(revert "out-of-gas" 0))])
+      (check-false (exn->halt (failed value)) (format "~s" value))))
+
+  (test-case "H19: exn->halt of any other exception is #f, whatever its message"
     (check-false (exn->halt (exn:fail:web3 "out of gas" (current-continuation-marks))))
     (check-false (exn->halt (exn:fail "EVM error OutOfGas" (current-continuation-marks)))))
 
-  (test-case "H9: the arguments are checked by contract"
+  (test-case "H20: the arguments are checked by contract"
     (check-blames-here (message->halt 'out-of-gas))
     (check-blames-here (exn->halt "EVM error OutOfGas")))
 
-  (test-case "H10: web3 re-exports web3/halt, which needs only racket/base and private/exn"
+  (test-case "H21: web3 re-exports web3/halt"
     (define all (exported-names 'web3))
     (for ([name (in-list (exported-names 'web3/halt))])
-      (check-not-false (memq name all) (format "~a" name)))
+      (check-not-false (memq name all) (format "~a" name))))
+
+  (test-case "H22: web3/halt exports its four names"
     (check-equal? (sort (exported-names 'web3/halt) symbol<?)
-                  '(exn->halt halt/c halts message->halt))
+                  '(exn->halt halt/c halts message->halt)))
+
+  (test-case "H23: web3/halt needs only racket/base libraries and private/exn"
     (define names (filter values (map module-name (import-closure 'web3/halt))))
-    (check-equal? (sort (filter (lambda (n) (equal? (collection n) "web3")) names) string<?)
-                  '("web3/halt" "web3/private/exn"))
-    (define ev (make-base-eval))
-    (check-not-exn (lambda () (ev '(require web3 web3/halt))))))
+    (check-equal? (sort (filter (lambda (name) (equal? (collection name) "web3")) names) string<?)
+                  '("web3/halt" "web3/private/exn")))
+
+  (test-case "H24: web3 and web3/halt require together"
+    (define evaluator (make-base-eval))
+    (check-not-exn (lambda () (evaluator '(require web3 web3/halt))))))

@@ -37,6 +37,8 @@
 
 @(define abi-eval (make-base-eval '(require web3/abi web3/address web3/rpc)))
 @(define halt-eval (make-base-eval '(require web3/halt web3/rpc)))
+@(define (evm-error name) (tt name))
+@(define (wording . content) (apply tt content))
 @(define contract-eval (make-base-eval '(require web3)))
 @(define event-eval (make-base-eval '(require web3)))
 @(define account-eval (make-base-eval '(require web3 (only-in keccak keccak256))))
@@ -2733,9 +2735,10 @@ The halts, in the order of the table below.}
 
 @defproc[(message->halt [message string?]) (or/c #f halt/c)]{
 The halt that @racket[message], a node's or a call tracer's words, names, or @racket[#f].
-Matching ignores case and takes the whole message, so words that merely contain a halt's give
-@racket[#f], and so does any message that starts @tt{execution reverted}, whatever its reason
-says.
+Matching ignores case.  A halt's words are the whole message, or, where the table shows a
+@italic{detail}, their start followed by @tt{: } and a detail that is not empty; so words that
+merely contain a halt's give @racket[#f], and so does any message that starts
+@tt{execution reverted}, whatever its reason says.
 
 anvil's errors from @tt{eth_call} and @tt{eth_estimateGas} are mostly @tt{EVM error} followed by
 a name.  Its call tracer (@racket[debug-trace-transaction] with @tt{callTracer}), its other
@@ -2747,45 +2750,54 @@ errors and go-ethereum use words; @italic{N} and @italic{M} stand for numbers.
  (list (list @bold{halt} @bold{anvil's @tt{EVM error}} @bold{anvil's words}
              @bold{go-ethereum's words})
        (list @racket['out-of-gas]
-             @elem{@tt{OutOfGas}, @tt{MemoryOOG}, @tt{MemoryLimitOOG}, @tt{PrecompileOOG},
-                   @tt{InvalidOperandOOG}, @tt{ReentrancySentryOOG}}
-             @elem{@tt{out of gas}, @tt{out of gas:} and a detail; from an estimate,
-                   @tt{Out of gas: gas required exceeds allowance: @italic{N}}}
-             @elem{@tt{out of gas}, @tt{contract creation code storage out of gas},
-                   @tt{gas uint64 overflow}; from an estimate,
-                   @tt{gas required exceeds allowance (@italic{N})}})
-       (list @racket['stack-overflow] @tt{StackOverflow} @tt{Out of stack}
-             @tt{stack limit reached @italic{N} (@italic{M})})
-       (list @racket['stack-underflow] @tt{StackUnderflow} @tt{stack underflow}
-             @tt{stack underflow (@italic{N} <=> @italic{M})})
-       (list @racket['invalid-opcode] @tt{InvalidFEOpcode} @tt{invalid opcode: INVALID}
-             @tt{invalid opcode: INVALID})
-       (list @racket['undefined-opcode] @elem{@tt{OpcodeNotFound}, @tt{NotActivated}}
-             @tt{invalid opcode}
-             @elem{@tt{invalid opcode:} and any other opcode, such as
-                   @tt{invalid opcode: opcode 0xc not defined}})
-       (list @racket['invalid-jump] @tt{InvalidJump} @tt{invalid jump destination}
-             @tt{invalid jump destination})
-       (list @racket['return-data-out-of-bounds] @tt{OutOfOffset} @tt{return data out of bounds}
-             @tt{return data out of bounds})
+             @elem{@evm-error{OutOfGas}, @evm-error{MemoryOOG}, @evm-error{MemoryLimitOOG},
+                   @evm-error{PrecompileOOG}, @evm-error{InvalidOperandOOG},
+                   @evm-error{ReentrancySentryOOG}}
+             @elem{@wording{out of gas}, @wording{out of gas: @italic{detail}}; from an
+                   estimate, @wording{Out of gas: gas required exceeds allowance: @italic{N}}}
+             @elem{@wording{out of gas}, @wording{contract creation code storage out of gas},
+                   @wording{gas uint64 overflow}; from an estimate,
+                   @wording{gas required exceeds allowance (@italic{N})}})
+       (list @racket['stack-overflow] @evm-error{StackOverflow} @wording{Out of stack}
+             @wording{stack limit reached @italic{N} (@italic{M})})
+       (list @racket['stack-underflow] @evm-error{StackUnderflow} @wording{stack underflow}
+             @wording{stack underflow (@italic{N} <=> @italic{M})})
+       (list @racket['invalid-opcode] @evm-error{InvalidFEOpcode}
+             @wording{invalid opcode: INVALID} @wording{invalid opcode: INVALID})
+       (list @racket['undefined-opcode]
+             @elem{@evm-error{OpcodeNotFound}, @evm-error{NotActivated}}
+             @wording{invalid opcode}
+             @elem{@wording{invalid opcode: @italic{detail}}, for a detail that does not start
+                   @tt{INVALID}, such as @tt{opcode 0xc not defined} or @tt{PUSH0}})
+       (list @racket['invalid-jump] @evm-error{InvalidJump} @wording{invalid jump destination}
+             @wording{invalid jump destination})
+       (list @racket['return-data-out-of-bounds] @evm-error{OutOfOffset}
+             @wording{return data out of bounds} @wording{return data out of bounds})
+       (list @racket['precompile-failure] @evm-error{PrecompileError}
+             @wording{precompiled failed} @elem{—})
        (list @racket['write-protection]
-             @elem{@tt{StateChangeDuringStaticCall}, @tt{CallNotAllowedInsideStatic}}
-             @tt{write protection} @tt{write protection})
-       (list @racket['call-depth] @tt{CallTooDeep} @elem{—} @tt{max call depth exceeded})
-       (list @racket['code-size] @tt{CreateContractSizeLimit} @tt{max code size exceeded}
-             @tt{max code size exceeded})
-       (list @racket['initcode-size] @tt{CreateInitCodeSizeLimit}
-             @elem{@tt{max initcode size exceeded}, for a transaction's own init code}
-             @tt{max initcode size exceeded})
-       (list @racket['invalid-code] @tt{CreateContractStartingWithEF}
-             @tt{invalid code: must not begin with 0xef}
-             @tt{invalid code: must not begin with 0xef})
-       (list @racket['address-collision] @tt{CreateCollision} @tt{contract address collision}
-             @tt{contract address collision}))]
+             @elem{@evm-error{StateChangeDuringStaticCall},
+                   @evm-error{CallNotAllowedInsideStatic}}
+             @wording{write protection} @wording{write protection})
+       (list @racket['call-depth] @evm-error{CallTooDeep} @elem{—}
+             @wording{max call depth exceeded})
+       (list @racket['code-size] @evm-error{CreateContractSizeLimit}
+             @wording{max code size exceeded} @wording{max code size exceeded})
+       (list @racket['initcode-size] @evm-error{CreateInitCodeSizeLimit}
+             @wording{max initcode size exceeded} @wording{max initcode size exceeded})
+       (list @racket['invalid-code] @evm-error{CreateContractStartingWithEF}
+             @wording{invalid code: must not begin with 0xef}
+             @wording{invalid code: must not begin with 0xef})
+       (list @racket['address-collision] @evm-error{CreateCollision}
+             @wording{contract address collision} @wording{contract address collision}))]
 
-A @racket['write-protection] or @racket['call-depth] halt ends a nested call only: the call that
-made it sees a call that failed, so they appear in a call tracer's frames, not in the error of a
-call or a transaction.
+A @racket['precompile-failure] is a precompile that refused its input, such as a point not on
+the curve; go-ethereum reports each precompile's failure in that precompile's own words, which
+name no halt.  A @racket['write-protection] or @racket['call-depth] halt ends a nested call only:
+the call that made it sees a call that failed, so they appear in a call tracer's frames, not in
+the error of a call or a transaction.  A node refuses a transaction whose own init code is over
+the size limit, before it runs and in the words of @racket['initcode-size], so nothing is mined
+and @racket[exn->halt] of that refusal names the halt too.
 
 @examples[#:eval halt-eval
           (message->halt "EVM error OutOfGas")
@@ -3215,9 +3227,12 @@ The address @tt{CREATE2} gives @racket[init-code] deployed by
             ([receipt receipt?] [revert (or/c #f abi-revert?)] [halt (or/c #f halt/c)])]{
 A transaction that was mined and failed.  It is replayed with @racket[eth-call] at its block:
 @racket[revert] is what the replay reverted with, and @racket[halt] the halt it ended in (see
-@secref["halts"]).  Both are @racket[#f] when the replay did not fail or could not be made.  The
-replay runs after the whole block, so it may not reproduce the failure when other transactions
-in the block changed the state it depends on.}
+@secref["halts"]).  Both are @racket[#f] when the replay did not fail, could not be made, or
+failed in words that name neither a revert nor a halt in the table; the message carries the
+node's words.  The replay runs after the whole block, so it may not reproduce the failure when
+other transactions in the block changed the state it depends on.  A creation is replayed from
+the sender's next nonce, so at another address, and a failure that depends on the address, such
+as an address collision, is not reproduced.}
 
 @subsection{Contract Instances}
 
