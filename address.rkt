@@ -2,7 +2,7 @@
 
 (require racket/contract/base
          (only-in keccak keccak256)
-         (only-in "private/hex.rkt" address-hex-string? bytes->hex))
+         (only-in "private/hex.rkt" address-hex-string? bytes->hex hex->bytes natural->bytes))
 
 (provide (contract-out
           [address? (-> any/c boolean?)]
@@ -22,7 +22,7 @@
   (provide address->checksum-string
            digest->address)
   (define (digest->address digest)
-    (address->checksum-string (bytes->hex (subbytes digest 12)))))
+    (bytes->address (subbytes digest 12))))
 
 (define (address->checksum-string address)
   (define lower (string-downcase (substring address 2)))
@@ -47,14 +47,14 @@
 (define (checksum-address? v)
   (and (address-hex-string? v) (string=? v (address->checksum-string v))))
 
-(define (address->bytes _address)
-  (error 'unimplemented))
+(define (address->bytes address)
+  (hex->bytes address))
 
-(define (bytes->address _bs)
-  (error 'unimplemented))
+(define (bytes->address bs)
+  (address->checksum-string (bytes->hex bs)))
 
-(define (address->integer _address)
-  (error 'unimplemented))
+(define (address->integer address)
+  (string->number (substring address 2) 16))
 
-(define (integer->address _n)
-  (error 'unimplemented))
+(define (integer->address n)
+  (bytes->address (natural->bytes n 20)))

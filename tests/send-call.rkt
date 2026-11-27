@@ -7,6 +7,9 @@
            rackunit
            (only-in libsecp256k1 integer->secret-key)
            web3
+           (only-in web3/private/send
+                    [call-transaction unchecked-call]
+                    [send-transaction unchecked-send])
            "helpers/mock.rkt"
            (only-in "helpers/secrets.rkt" check-no-leak marker-hex marker-integer)
            (only-in "helpers/signers.rkt" watched watched-calls)
@@ -38,7 +41,8 @@
       (() ,(string-downcase anvil-alice) ,(string-downcase anvil-bob)
           #hasheq((from . ,anvil-alice) (to . ,anvil-bob)))
       ((#:data #"\x60\x80") ,anvil-alice #f #hasheq((from . ,anvil-alice) (data . "0x6080")))
-      ((#:data #"" #:value 0) ,anvil-alice ,anvil-bob #hasheq((from . ,anvil-alice) (to . ,anvil-bob)))
+      ((#:data #"" #:value 0) ,anvil-alice ,anvil-bob
+                              #hasheq((from . ,anvil-alice) (to . ,anvil-bob)))
       ((#:value 5 #:gas-limit 30000) #f ,anvil-bob
        #hasheq((to . ,anvil-bob) (value . "0x5") (gas . "0x7530")))
       ((#:type 0 #:gas-price 7 #:nonce 0) ,anvil-alice ,anvil-bob
@@ -68,8 +72,9 @@
       (check-equal? (params-of calls "eth_call") (list (list object "latest")) name)))
 
   (test-case "C1: the keywords are send-transaction's and #:block"
-    (define-values (required allowed) (procedure-keywords call-transaction))
-    (define-values (_send-required send-allowed) (procedure-keywords send-transaction))
+    (define-values (required allowed) (procedure-keywords unchecked-call))
+    (define-values (_send-required send-allowed) (procedure-keywords unchecked-send))
+    (check-not-false (memq '#:gas-limit send-allowed))
     (check-equal? required '())
     (check-equal? allowed (sort (cons '#:block send-allowed) keyword<?)))
 
@@ -96,15 +101,15 @@
       (define-values (result _calls) (called '() #:answers (answers "eth_call" answer)))
       (check-equal? result (list expected) answer))
     (for ([answer (list 42 "0x1" "2a" 'null)])
-      (define-values (result _calls) (called '() #:answers (answers "eth_call" answer)))
-      (check-pred exn:fail:web3? (first result) (format "~s" answer))))
+      (define-values (e _calls) (called '() #:answers (answers "eth_call" answer)))
+      (check-pred exn:fail:web3? e (format "~s" answer))))
 
   (define payload (bytes-append (bytes #xff) (make-bytes 31 1)))
 
   (test-case "C5: a revert raises exn:fail:web3:rpc:revert carrying its payload"
-    (define-values (result calls)
-      (called '() #:answers (answers "eth_call" (reverting "eth_call" (bytes->hex-string payload)))))
-    (match-define (list e) result)
+    (define-values (e calls)
+      (called '()
+              #:answers (answers "eth_call" (reverting "eth_call" (bytes->hex-string payload)))))
     (check-pred exn:fail:web3:rpc:revert? e)
     (when (exn:fail:web3:rpc:revert? e)
       (check-equal? (exn:fail:web3:rpc-method e) "eth_call")
@@ -113,10 +118,9 @@
     (check-equal? (method-names calls) '("eth_call")))
 
   (test-case "C5: a revert is decoded against #:errors"
-    (define-values (result _calls)
+    (define-values (e _calls)
       (called `(#:errors (,insufficient-balance))
               #:answers (answers "eth_call" (reverting "eth_call"))))
-    (match-define (list e) result)
     (check-pred exn:fail:web3:rpc:revert? e)
     (when (exn:fail:web3:rpc:revert? e)
       (define revert (exn->abi-revert e))
@@ -128,9 +132,9 @@
     (define refusal
       (with-handlers ([exn:fail:web3:rpc? values])
         (raise-rpc-error "eth_call" -32000 "header not found")))
-    (define-values (result _calls)
+    (define-values (e _calls)
       (called '() #:answers (answers "eth_call" (lambda (_params) (raise refusal)))))
-    (check-eq? (first result) refusal))
+    (check-eq? e refusal))
 
   (define conflict-rows
     '(((#:type 0 #:access-list ()) "#:type 0 takes no #:access-list")
@@ -144,15 +148,13 @@
   (test-case "C7: fields of two types are refused before any request"
     (for ([row (in-list conflict-rows)])
       (match-define (list fields text) row)
-      (define-values (result calls) (called fields))
-      (match-define (list e) result)
+      (define-values (e calls) (called fields))
       (check-true (and (exn:fail:contract? e) (not (exn:fail:contract:blame? e))) text)
       (check-equal? (exn-message e) (string-append "call-transaction: " text) text)
       (check-equal? calls '() text)))
 
   (test-case "C7: a #:chain-id other than the node's raises exn:fail:web3:fill and calls nothing"
-    (define-values (result calls) (called '(#:chain-id 1)))
-    (match-define (list e) result)
+    (define-values (e calls) (called '(#:chain-id 1)))
     (check-pred exn:fail:web3:fill? e)
     (check-equal? (exn:fail:web3:fill-reason e) 'chain-id)
     (check-equal? (exn-message e)

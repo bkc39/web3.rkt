@@ -145,12 +145,13 @@
                       (lambda () (message-signed-by? signed "m" wrong-checksum))
                       (lambda () (transaction->jsexpr example-eip1559 #:from wrong-checksum)))]
           [who (list "send-transaction" "node-signer" "message-signed-by?" "transaction->jsexpr")]
-          [argument (list "1st" "1st" "3rd" "#:from")])
+          [argument (list "1st" "1st" "3rd" "#:from")]
+          [noun (list "an address or a signer" "an address" "an address" "an address")])
       (define e (refusal call))
       (check-pred exn:fail:contract:blame? e who)
       (check-true (string-prefix?
                    (exn-message e)
-                   (format "~a: not an address: mixed case that is not its EIP-55 checksum\n" who))
+                   (format "~a: not ~a: mixed case that is not its EIP-55 checksum\n" who noun))
                   (exn-message e))
       (check-equal? (field (exn-message e) "argument") argument)
       (check-equal? (field (exn-message e) "given") (format "~s" wrong-checksum))))

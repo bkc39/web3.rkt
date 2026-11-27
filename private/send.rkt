@@ -91,8 +91,8 @@
                    #:unless (equal? value unset))
         (values name value)))
     (define-syntax-parse-rule (define/filling (name:id who:id from:id to:id fields:id
-                                                       (~seq extra-kw:keyword [extra:id default:expr])
-                                                       (... ...))
+                                               (~seq extra-kw:keyword [extra:id default:expr])
+                                               (... ...))
                                 body:expr (... ...+))
       (define/who (name who from to (~@ key.kw [key.field key.unset]) ...
                         (... (~@ extra-kw [extra default])) (... ...))
@@ -133,12 +133,15 @@
       (signer-address/who who sender)
       (address->checksum-string sender)))
 
-(define (order-object from to order . fields)
+(define (fields-object from fields)
   (for/fold ([object (if from (hasheq 'from (address->checksum-string from)) (hasheq))])
-            ([(name value) (in-hash (apply hash-set* (fill-order->hash order)
-                                           'to to 'data (fill-order-data order) fields))]
+            ([(name value) (in-hash fields)]
              #:when value)
     (hash-set object (field-json-key name) (field->jsexpr name value))))
+
+(define (order-object from to order . fields)
+  (fields-object from (apply hash-set* (fill-order->hash order)
+                             'to to 'data (fill-order-data order) fields)))
 
 (define (call-object #:to [to #f] #:from from #:data data #:value value #:gas gas
                      #:access-list [access-list #f])
@@ -463,15 +466,30 @@
           (settle who tx-hash (order->call-object order address to gas)
                   (fill-order-errors order) (fill-order-provider order))))
 
-(define/filling (send-transaction who address to order)
-  (define-values (tx-hash _gas) (send-from-node who address to order))
-  tx-hash)
+(define/filling (send-transaction who sender to order)
+  (cond
+    [(signer? sender) (signed-transaction-hash (send-raw who sender to order))]
+    [else
+     (define-values (tx-hash _gas) (send-from-node who sender to order))
+     tx-hash]))
 
-(define/filling (send-transaction/receipt who address to order)
-  (define-values (_tx-hash receipt) (send-from-node/receipt who address to order))
+(define/filling (send-transaction/receipt who sender to order)
+  (define-values (_tx-hash receipt)
+    (if (signer? sender)
+        (send-raw/receipt who sender to order)
+        (send-from-node/receipt who sender to order)))
   receipt)
 
 ;;;; calls
 
 (define/filling (call-transaction who from to order #:block [block "latest"])
-  (error 'unimplemented))
+  (define provider (fill-order-provider order))
+  (checked-rows who order)
+  (when (fill-order-chain-id order)
+    (node-chain-id who order provider))
+  (define tx
+    (fields-object (and from (sender-address who from)) (hash-set (fill-order->hash order) 'to to)))
+  (define result
+    (call-raising-reverts (fill-order-errors order)
+                          (lambda () (eth-call tx block #:provider provider))))
+  (node-data->bytes who "return data" result))

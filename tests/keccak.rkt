@@ -10,10 +10,10 @@
     (check-equal? (web3:bytes->hex-string (web3:keccak256 #""))
                   "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"))
 
-  (test-case "a module may require both web3 and keccak"
+  (test-case "a module may require keccak256 from both web3 and keccak"
     (define program
       '(module both racket/base
-         (require keccak web3)
+         (require (only-in keccak keccak256) web3)
          (provide hashed)
          (define hashed (keccak256 #"abc"))))
     (define hashed

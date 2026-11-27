@@ -18,6 +18,7 @@
          "eth.rkt"
          (only-in "private/argument.rkt" address/c hash-argument/c)
          (only-in "private/eth-params.rkt" transaction-object/c)
+         (only-in "private/hex.rkt" bytes->hex natural->bytes)
          "rpc.rkt")
 
 (provide anvil-set-code
@@ -40,10 +41,10 @@
 ;;;; anvil / hardhat-style methods
 
 (define (code->hex code)
-  (if (bytes? code) (error 'unimplemented) code))
+  (if (bytes? code) (bytes->hex code) code))
 
 (define (storage-value->hex value)
-  (if (exact-integer? value) (error 'unimplemented) value))
+  (if (exact-integer? value) (bytes->hex (natural->bytes value 32)) value))
 
 (define-jsonrpc-endpoint anvil_setCode (-> address/c [(or/c hex-string? bytes?) code->hex] void?)
   #:result-transform void)

@@ -7,7 +7,7 @@
                     racket/generic
                     racket/match
                     racket/runtime-path
-                    web3
+                    (except-in web3 keccak256)
                     web3/abi
                     web3/account
                     web3/abi/description
@@ -2305,8 +2305,9 @@ a failed transaction is replayed without its nonce and fees.
                  bytes?]{
 The return data of @tt{eth_call} of the transaction from @racket[from] to @racket[to]
 (@racket[#f] runs @racket[data] as creation code) at @racket[block].  A signer gives its address
-and signs nothing; @racket[#f] sends no sender.  The call carries the fields given and nothing
-else: nothing is estimated or looked up, except that a @racket[chain-id] is checked against the
+and signs nothing; @racket[#f] sends no sender.  The call carries the fields given, except a
+@racket[value] of 0 and empty @racket[data], and nothing else: nothing is estimated or looked up,
+except that a @racket[chain-id] is checked against the
 node's as for @racket[send-transaction].  Fields of a type other than @racket[type], or of two
 types, raise @racket[exn:fail:contract] before any request.  A revert raises
 @racket[exn:fail:web3:rpc:revert], decoded against @racket[errors], as a @racket[contract-call]'s
@@ -2570,7 +2571,7 @@ raised; a byte string is hashed as given.
           (eval:error (function-selector "foo"))]
 
 @racket[(require web3)] also provides @racketidfont{keccak256}, the same binding as
-@racketmodname[keccak]'s, so requiring both is no conflict.}
+the @tt{keccak} package's, so requiring it from both is no conflict.}
 
 @defproc[(word->bytes [n (integer-in 0 (sub1 (expt 2 256)))]) bytes?]{
 @racket[n] as a 32-byte big-endian word.}
