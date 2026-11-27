@@ -213,14 +213,13 @@
     (define-values (result calls)
       (run-mock (traced-by "debug_traceTransaction") (lambda () (transaction-call-trace tx-hash))))
     (check-equal? result (list (jsexpr->call-trace frame-json)))
-    (check-equal? calls `(("debug_traceTransaction" (,tx-hash ,call-tracer)))))
+    (check-equal? calls `(("debug_traceTransaction" ,tx-hash ,call-tracer))))
 
   (test-case "T9: transaction-call-trace reads the node's answer as untrusted"
     (for ([answer (list 'null (list frame-json) (hash-set frame-json 'gas "zz"))])
-      (define-values (result _calls)
+      (define-values (e _calls)
         (run-mock (traced-by "debug_traceTransaction" answer)
                   (lambda () (transaction-call-trace tx-hash))))
-      (match-define (list e) result)
       (check-pred exn:fail:web3? e (~s answer))
       (check-false (exn:fail:contract? e) (~s answer))
       (check-regexp-match #rx"^transaction-call-trace: malformed call trace" (exn-message e))))
@@ -257,7 +256,7 @@
       (run-mock (traced-by method) (lambda () (call-with-fields procedure fields from to))))
     (for/list ([call (in-list calls)]
                #:when (equal? (first call) method))
-      (second call)))
+      (rest call)))
 
   (test-case "T10: call-transaction/trace sends the object call-transaction sends"
     (for ([row (in-list object-rows)])
@@ -276,17 +275,16 @@
                   (lambda () (call-transaction/trace anvil-alice anvil-bob #:block block))))
       (check-equal? result (list (jsexpr->call-trace frame-json)) (~s block))
       (check-equal? calls
-                    `(("debug_traceCall" (,(hasheq 'from anvil-alice 'to anvil-bob) ,sent
-                                          ,call-tracer)))
+                    `(("debug_traceCall" ,(hasheq 'from anvil-alice 'to anvil-bob) ,sent
+                                         ,call-tracer))
                     (~s block))))
 
   (test-case "T12: a revert the node raises is exn:fail:web3:rpc:revert, decoded against #:errors"
-    (define-values (result _calls)
+    (define-values (e _calls)
       (run-mock (traced-by "debug_traceCall" (reverting "debug_traceCall"))
                 (lambda ()
                   (call-transaction/trace anvil-alice anvil-bob
                                           #:errors (list "InsufficientBalance(uint256,uint256)")))))
-    (match-define (list e) result)
     (check-pred exn:fail:web3:rpc:revert? e)
     (check-equal? (exn:fail:web3:rpc-method e) "debug_traceCall")
     (check-equal? (abi-revert-name (exn->abi-revert e)) "InsufficientBalance")
@@ -299,11 +297,11 @@
     (define-values (passed _calls)
       (run-mock (traced-by "debug_traceCall" (lambda (_params) (raise refusal)))
                 (lambda () (call-transaction/trace anvil-alice anvil-bob))))
-    (check-eq? (first passed) refusal)
+    (check-eq? passed refusal)
     (define-values (malformed _more)
       (run-mock (traced-by "debug_traceCall" (hash-set frame-json 'input 5))
                 (lambda () (call-transaction/trace anvil-alice anvil-bob))))
-    (check-equal? (exn-message (first malformed))
+    (check-equal? (exn-message malformed)
                   "call-transaction/trace: malformed call trace input from the node: 5"))
 
   (test-case "T13: call-transaction/trace refuses fields of two types and a wrong chain id"
@@ -311,13 +309,13 @@
       (run-mock (traced-by "debug_traceCall")
                 (lambda ()
                   (call-transaction/trace anvil-alice anvil-bob #:type 0 #:access-list '()))))
-    (check-equal? (exn-message (first conflict))
+    (check-equal? (exn-message conflict)
                   "call-transaction/trace: #:type 0 takes no #:access-list")
     (check-equal? conflict-calls '())
     (define-values (wrong wrong-calls)
       (run-mock (traced-by "debug_traceCall")
                 (lambda () (call-transaction/trace anvil-alice anvil-bob #:chain-id 1))))
-    (check-pred exn:fail:web3:fill? (first wrong))
+    (check-pred exn:fail:web3:fill? wrong)
     (check-equal? (method-names wrong-calls) '("eth_chainId")))
 
   (define wrong-checksum "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")
@@ -354,8 +352,8 @@
     (check-equal? (trace-call (hasheq 'to anvil-bob) '("trace" "stateDiff") 7 #:provider node)
                   (hasheq 'trace listed 'output "0x"))
     (check-equal? (mock-provider-calls node)
-                  `(("trace_transaction" (,tx-hash))
-                    ("trace_call" (,(hasheq 'to anvil-bob) ("trace" "stateDiff") "0x7")))))
+                  `(("trace_transaction" ,tx-hash)
+                    ("trace_call" ,(hasheq 'to anvil-bob) ("trace" "stateDiff") "0x7"))))
 
   (test-case "T15: trace-call refuses trace types it does not know, before any request"
     (define node (mock-provider (hash "trace_call" (hasheq))))

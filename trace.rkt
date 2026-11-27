@@ -33,7 +33,12 @@
 (define call-tracer (hasheq 'tracer "callTracer"))
 
 (define (transaction-call-trace tx-hash #:provider [provider (current-provider)])
-  (error 'unimplemented))
+  (jsexpr->call-trace/who 'transaction-call-trace
+                          (rpc-call "debug_traceTransaction" (list tx-hash call-tracer)
+                                    #:provider provider)))
 
 (define/filling (call-transaction/trace who from to order #:block [block "latest"])
-  (error 'unimplemented))
+  (define (request tx provider)
+    (rpc-call "debug_traceCall" (list tx (block-param->string block) call-tracer)
+              #:provider provider))
+  (jsexpr->call-trace/who who (call-order who from to order request)))

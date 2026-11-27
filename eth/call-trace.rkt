@@ -41,7 +41,9 @@
   [calls (list-field (record-field jsexpr->call-trace/who call-trace?)) #:default '()])
 
 (define (call-trace-halt trace)
-  (error 'unimplemented))
+  (match (call-trace-error trace)
+    [#f #f]
+    [words (message->halt words)]))
 
 (module* internal #f
   (provide call-trace-fields
