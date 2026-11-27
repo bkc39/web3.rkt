@@ -1,7 +1,5 @@
 #lang racket/base
 
-;; The gas a transaction pays before it runs, computed without a node.
-
 (module+ test
   (require racket/match
            rackunit

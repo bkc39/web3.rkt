@@ -1,8 +1,5 @@
 #lang racket/base
 
-;; Local development nodes: anvil's own RPC methods, debug tracing (from
-;; trace.rkt), and starting / stopping an anvil process.
-;;
 ;;   (with-anvil ()                       ; fresh node, current-provider set
 ;;     (eth-accounts))
 ;;
@@ -19,8 +16,8 @@
          (only-in "private/argument.rkt" address/c)
          (only-in "private/field-contracts.rkt" uint256/c)
          (only-in "private/hex.rkt" bytes->hex natural->bytes)
-         "rpc.rkt"
-         (only-in "trace.rkt" debug-trace-call debug-trace-transaction))
+         (only-in "private/trace-endpoints.rkt" debug-trace-call debug-trace-transaction)
+         "rpc.rkt")
 
 (provide anvil-set-code
          anvil-set-balance

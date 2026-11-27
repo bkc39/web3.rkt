@@ -7,8 +7,8 @@
 
 (provide (contract-out [call-trace-halt (-> call-trace? (or/c #f halt/c))]))
 
-(define call-types
-  '("CALL" "STATICCALL" "DELEGATECALL" "CALLCODE" "CREATE" "CREATE2" "SELFDESTRUCT"))
+;; The EVM's call depth limit is 1024, so a frame is at most 1024 frames below the top one.
+(define deepest-call 1024)
 
 (define (calls-tail count)
   (match count
@@ -17,18 +17,17 @@
     [_ (format " ~a calls" count)]))
 
 (define (write-call-trace trace port _mode)
+  (define words (call-trace-error trace))
   (fprintf port "#<call-trace ~a ~a to ~a gas used ~a~a~a>"
            (call-trace-type trace)
            (call-trace-from trace)
            (or (call-trace-to trace) "nothing")
            (call-trace-gas-used trace)
            (calls-tail (length (call-trace-calls trace)))
-           (match (call-trace-error trace)
-             [#f ""]
-             [words (format " error ~s" words)])))
+           (if words (format " error ~s" words) "")))
 
 (define-node-record call-trace #:noun "call trace" #:printer write-call-trace
-  [type (choice-field 'call-type call-types)]
+  [type string-field]
   [from address-field]
   [to address-field #:optional]
   [value quantity-field #:optional]
@@ -38,12 +37,12 @@
   [output data-field #:default #""]
   [error string-field #:optional]
   [revert-reason string-field #:key revertReason #:optional]
-  [calls (list-field (record-field jsexpr->call-trace/who call-trace?)) #:default '()])
+  [calls (list-field (record-field jsexpr->call-trace/who call-trace? #:max-depth deepest-call))
+         #:default '()])
 
 (define (call-trace-halt trace)
-  (match (call-trace-error trace)
-    [#f #f]
-    [words (message->halt words)]))
+  (define words (call-trace-error trace))
+  (and words (message->halt words)))
 
 (module* internal #f
   (provide call-trace-fields

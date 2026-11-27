@@ -1,9 +1,7 @@
 #lang racket/base
 
-;; Hand-assembled programs that halt on anvil, each with the halt it names, the words anvil's
-;; eth_call gives and the words its call tracer gives.
-
-(require (only-in web3 integer->address))
+(require (only-in web3 integer->address)
+         (only-in "programs.rkt" push-address))
 
 (provide (struct-out halting)
          bn254-pairing
@@ -51,8 +49,12 @@
 
 (define bn254-pairing (integer->address 8))
 
+(define nothing-out-nothing-in "6000600060006000")
+(define gas-static-call "5afa")
+(define stop "00")
+
 (define (static-call-to address)
-  (string-append "600060006000600073" (substring address 2) "5afa00"))
+  (string-append nothing-out-nothing-in (push-address address) gas-static-call stop))
 
 (struct halting (halt target input gas words tracer))
 

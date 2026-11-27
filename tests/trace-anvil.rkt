@@ -1,24 +1,14 @@
 #lang racket/base
 
-;; Call traces and parity-style traces of calls and mined transactions on anvil.  Skipped when
-;; anvil is not available.
-
 (module+ test
-  (require racket/list
-           racket/match
+  (require racket/match
            rackunit
            web3
            "helpers/halts.rkt"
+           (only-in "helpers/programs.rkt" caller-of echo-init echo-runtime)
            (only-in "util.rkt" anvil-alice raised word))
 
-  (define echo-runtime
-    (hex-string->bytes "0x6000358060005260f81c60ff14601c57602a60206000a160206000f35b60206000fd"))
-  (define echo-init (bytes-append (hex-string->bytes "0x602280600b6000396000f3") echo-runtime))
   (define refused (bytes-append (bytes #xff) (make-bytes 31 7)))
-
-  (define (caller-of callee)
-    (string-append "366000600037" "60206000366000600073" (substring callee 2) "5af1"
-                   "503d600060003e3d6000f3"))
 
   (define next-address
     (let ([counter (box #x7ace00)])
@@ -77,8 +67,9 @@
       (check-pred exn:fail:web3:rpc:revert?
                   (raised (lambda () (call-transaction anvil-alice echo #:data refused)))))
 
+    (define outer (installed (caller-of echo)))
+
     (test-case "A5: a contract that calls another has the inner call in call-trace-calls"
-      (define outer (installed (caller-of echo)))
       (define receipt (send-transaction/receipt anvil-alice outer #:data (word 5)))
       (define trace (transaction-call-trace (receipt-transaction-hash receipt)))
       (check-equal? (call-trace-output trace) (word 5))
@@ -87,31 +78,38 @@
       (check-equal? (call-trace-to inner) echo)
       (check-equal? (call-trace-input inner) (word 5))
       (check-equal? (call-trace-output inner) (word 5))
-      (check-equal? (call-trace-calls inner) '())
-      (match-define (list called) (call-trace-calls (call-transaction/trace anvil-alice outer
-                                                                            #:data refused)))
+      (check-equal? (call-trace-calls inner) '()))
+
+    (test-case "A5: an inner call that reverts is a frame with the error and the revert data"
+      (define trace (call-transaction/trace anvil-alice outer #:data refused))
+      (match-define (list called) (call-trace-calls trace))
       (check-equal? (call-trace-error called) "execution reverted")
       (check-equal? (call-trace-output called) refused))
 
-    (test-case "A6: trace-transaction and trace-call answer parity traces"
+    (define tx (hasheq 'from anvil-alice 'to echo 'data (bytes->hex-string (word 9))))
+
+    (test-case "A6: trace-transaction answers the mined send's parity frames"
       (define receipt (send-transaction/receipt anvil-alice echo #:data (word 9)))
-      (match-define (list (? hash? frame)) (trace-transaction (receipt-transaction-hash receipt)))
+      (define tx-hash (receipt-transaction-hash receipt))
+      (match-define (list (? hash? frame)) (trace-transaction tx-hash))
+      (define result (hash-ref frame 'result))
       (check-equal? (hash-ref frame 'type) "call")
-      (check-equal? (hash-ref (hash-ref frame 'result) 'output) (bytes->hex-string (word 9)))
-      (check-equal? (hash-ref frame 'transactionHash) (receipt-transaction-hash receipt))
-      (define tx (hasheq 'from anvil-alice 'to echo 'data (bytes->hex-string (word 9))))
+      (check-equal? (hash-ref result 'output) (bytes->hex-string (word 9)))
+      (check-equal? (hash-ref frame 'transactionHash) tx-hash))
+
+    (test-case "A6: trace-call answers the traces its types ask for and the output"
       (define traced (trace-call tx '("trace") "latest"))
+      (define everything (trace-call tx '("trace" "vmTrace" "stateDiff") "latest"))
       (check-equal? (hash-ref traced 'output) (bytes->hex-string (word 9)))
       (check-pred list? (hash-ref traced 'trace))
       (check-equal? (hash-ref traced 'vmTrace) 'null)
-      (define everything (trace-call tx '("trace" "vmTrace" "stateDiff") "latest"))
       (check-pred hash? (hash-ref everything 'vmTrace))
-      (check-pred hash? (hash-ref everything 'stateDiff))
-      (match-define (list (? hash? reverted)) (hash-ref (trace-call (hash-set tx 'data
-                                                                              (bytes->hex-string
-                                                                               refused))
-                                                                    '("trace") "latest")
-                                                        'trace))
+      (check-pred hash? (hash-ref everything 'stateDiff)))
+
+    (test-case "A6: trace-call's frame of a call that reverts has the error Reverted"
+      (define reverting-tx (hash-set tx 'data (bytes->hex-string refused)))
+      (define traced (trace-call reverting-tx '("trace") "latest"))
+      (match-define (list (? hash? reverted)) (hash-ref traced 'trace))
       (check-equal? (hash-ref reverted 'error) "Reverted")))
 
   (define (halt-cases)

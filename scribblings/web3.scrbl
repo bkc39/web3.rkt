@@ -2077,7 +2077,9 @@ The gas a transaction with @racket[data] pays before any code runs: 21000; 4 for
 more and 2 for each 32-byte word of @racket[data], rounded up
 (@hyperlink["https://eips.ethereum.org/EIPS/eip-3860"]{EIP-3860}, from Shanghai); and 2400 for each
 address of @racket[access-list] and 1900 for each of its storage keys
-(@hyperlink["https://eips.ethereum.org/EIPS/eip-2930"]{EIP-2930}).
+(@hyperlink["https://eips.ethereum.org/EIPS/eip-2930"]{EIP-2930}).  The per-byte figures are
+Istanbul's and the per-word charge Shanghai's, so the count is right from Shanghai on; blob gas
+and EIP-7702 authorizations are not counted.
 
 @examples[#:eval transaction-eval
           (intrinsic-gas #"")
@@ -2413,9 +2415,7 @@ Recognizes call traces: one frame of the call tracer, a call or a creation with 
 calls it made.  A call trace prints with its type, its addresses, the gas it used, how many calls
 it made and its error.}
 
-@deftogether[(@defproc[(call-trace-type [trace call-trace?])
-                       (or/c "CALL" "STATICCALL" "DELEGATECALL" "CALLCODE" "CREATE" "CREATE2"
-                             "SELFDESTRUCT")]
+@deftogether[(@defproc[(call-trace-type [trace call-trace?]) string?]
               @defproc[(call-trace-from [trace call-trace?]) checksum-address?]
               @defproc[(call-trace-to [trace call-trace?]) (or/c #f checksum-address?)]
               @defproc[(call-trace-value [trace call-trace?]) (or/c #f uint256/c)]
@@ -2426,15 +2426,12 @@ it made and its error.}
               @defproc[(call-trace-error [trace call-trace?]) (or/c #f string?)]
               @defproc[(call-trace-revert-reason [trace call-trace?]) (or/c #f string?)]
               @defproc[(call-trace-calls [trace call-trace?]) (listof call-trace?)])]{
-The fields of a frame, each the tracer's field of the same name in camelCase.  @racket[#f] is a
-field the tracer leaves out or sends as @tt{null}: @racket[call-trace-to] for a creation that
-failed, @racket[call-trace-value] for a static call, @racket[call-trace-error] for a frame that
-succeeded, and @racket[call-trace-revert-reason] for one that did not revert with a reason.  An
-absent output is @racket[#""] and absent calls @racket['()].  @racket[call-trace-input] is the call
-data or the init code, @racket[call-trace-output] the return data, the revert data or the code a
-creation deployed, and @racket[call-trace-error] the tracer's words, such as
-@tt{execution reverted}.  The tracer's @tt{logs}, which it sends when asked with
-@tt{withLog}, are left in @racket[call-trace->jsexpr].
+The fields of a frame, each the tracer's field of the same name in camelCase: the type as the
+tracer writes it, such as @racket["CALL"], @racket["STATICCALL"], @racket["DELEGATECALL"],
+@racket["CALLCODE"], @racket["CREATE"], @racket["CREATE2"] or @racket["SELFDESTRUCT"]; the input,
+call data or init code; the output, return data, revert data or deployed code; and the error, the
+tracer's words, such as @tt{execution reverted}.  An absent output is @racket[#""], absent calls
+@racket['()], and the tracer's @tt{logs} stay in @racket[call-trace->jsexpr].
 
 @examples[#:eval trace-eval
           (define trace (jsexpr->call-trace call-trace-json))
@@ -2452,7 +2449,8 @@ The halt that @racket[(call-trace-error trace)] names, read with @racket[message
 
 @defproc[(jsexpr->call-trace [v any/c]) call-trace?]{
 A call trace, and the traces of the calls it made, from the node's JSON.  Raises
-@racket[exn:fail:web3], naming the field, for anything else.  Unknown fields are kept in
+@racket[exn:fail:web3], naming the field, for anything else, and for frames nested more than
+1024 below the top one, deeper than the EVM calls.  Unknown fields are kept in
 @racket[call-trace->jsexpr].
 
 @examples[#:eval trace-eval

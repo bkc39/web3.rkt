@@ -1,7 +1,5 @@
 #lang racket/base
 
-;; Call traces read from the node's JSON, and the requests that fetch them, against mock nodes.
-
 (module+ test
   (require (only-in racket/contract exn:fail:contract:blame?)
            (only-in racket/file file->string)
@@ -11,11 +9,14 @@
            racket/string
            rackunit
            web3
+           (prefix-in anvil: (only-in web3/anvil debug-trace-call debug-trace-transaction))
+           (prefix-in trace: (only-in web3/trace debug-trace-call debug-trace-transaction))
            (only-in (submod web3/eth/call-trace internal) call-trace-fields)
+           (only-in (submod web3/trace internal) call-tracer-options)
            "helpers/mock.rkt"
            (only-in "helpers/records.rkt"
                     check-fields check-in-web3-and-manual message-of provided-accessors)
-           (only-in "modules.rkt" exported-names)
+           (only-in "modules.rkt" exported-names import-closure module-name)
            (only-in "util.rkt" anvil-alice anvil-bob anvil-carol check-blames-here filled-hash
                     raised word))
 
@@ -54,6 +55,16 @@
             'input "0x60ef60005360016000f3"
             'error "invalid code: must not begin with 0xef"))
 
+  (define (nested-in depth frame)
+    (for/fold ([nested frame])
+              ([_level (in-range depth)])
+      (hash-set inner-json 'calls (list nested))))
+
+  (define (path-length trace)
+    (match (call-trace-calls trace)
+      ['() 1]
+      [(list inner) (add1 (path-length inner))]))
+
   (define expected-fields
     `([type "CALL"]
       [from ,anvil-alice]
@@ -84,7 +95,7 @@
     (check-false (call-trace-error (jsexpr->call-trace (hash-remove failed-creation-json 'error))))
     (check-false (call-trace-to (jsexpr->call-trace (hash-set failed-creation-json 'to 'null)))))
 
-  (test-case "T2: nested calls are call traces, to any depth"
+  (test-case "T2: nested calls are call traces"
     (define deepest (hash-set inner-json 'type "STATICCALL"))
     (define middle (hash-set* inner-json 'type "DELEGATECALL" 'calls (list deepest deepest)))
     (define trace (jsexpr->call-trace (hash-set frame-json 'calls (list middle inner-json))))
@@ -96,9 +107,27 @@
     (check-equal? (call-trace-output second-call) (word 5))
     (check-equal? (call-trace-calls second-call) '()))
 
-  (test-case "T2: every frame type the call tracer names reads"
+  (test-case "T2: a trace 1025 frames deep, as deep as the EVM calls, reads"
+    (check-equal? (path-length (jsexpr->call-trace (nested-in 1024 inner-json))) 1025))
+
+  (test-case "T2: a trace deeper than 1025 frames is malformed"
+    (check-regexp-match
+     (pregexp (~a "^jsexpr->call-trace: malformed call trace calls 0 in call trace calls 0"
+                  " in call trace calls 0 in call trace calls 0, 1024 levels deep from the node: "))
+     (message-of (lambda () (jsexpr->call-trace (nested-in 1025 inner-json))))))
+
+  (test-case "T2: a bad field deep in a trace names the field and the innermost levels only"
+    (define message
+      (message-of (lambda () (jsexpr->call-trace (nested-in 1000 (hash-set inner-json 'gas 12))))))
+    (check-equal? message
+                  (~a "jsexpr->call-trace: malformed call trace gas in call trace calls 0"
+                      " in call trace calls 0 in call trace calls 0, 1000 levels deep"
+                      " from the node: 12"))
+    (check-true (< (string-length message) 200)))
+
+  (test-case "T2: a frame of any type the node names reads"
     (for ([type (in-list '("CALL" "STATICCALL" "DELEGATECALL" "CALLCODE" "CREATE" "CREATE2"
-                           "SELFDESTRUCT"))])
+                           "SELFDESTRUCT" "EOFCREATE" "call"))])
       (check-equal? (call-trace-type (jsexpr->call-trace (hash-set inner-json 'type type))) type)))
 
   (define malformed-rows
@@ -110,7 +139,7 @@
       [,(hash-set frame-json 'calls 'null) "call trace calls" "'null"]
       [,(hash-set frame-json 'from "0x1234") "call trace from" "\"0x1234\""]
       [,(hash-set frame-json 'to "0x1234") "call trace to" "\"0x1234\""]
-      [,(hash-set frame-json 'type "call") "call trace type" "\"call\""]
+      [,(hash-set frame-json 'type 5) "call trace type" "5"]
       [,(hash-set frame-json 'type 'null) "call trace type" "'null"]
       [,(hash-set frame-json 'error 5) "call trace error" "5"]
       [,(hash-set frame-json 'revertReason #t) "call trace revert reason" "#t"]
@@ -122,7 +151,14 @@
       [,(hash-set frame-json 'calls (list (hash-set inner-json 'gas 12)))
        "call trace gas in call trace calls 0" "12"]
       [,(hash-set frame-json 'calls (list inner-json "0x"))
-       "call trace in call trace calls 1" "\"0x\""]))
+       "call trace in call trace calls 1" "\"0x\""]
+      [,(nested-in 3 (hash-set inner-json 'gas 12))
+       ,(~a "call trace gas in call trace calls 0 in call trace calls 0 in call trace calls 0")
+       "12"]
+      [,(nested-in 4 (hash-set inner-json 'gas 12))
+       ,(~a "call trace gas in call trace calls 0 in call trace calls 0 in call trace calls 0,"
+            " 4 levels deep")
+       "12"]))
 
   (test-case "T3: a malformed frame raises exn:fail:web3 naming the field"
     (for ([row (in-list malformed-rows)])
@@ -186,43 +222,71 @@
     (check-blames-here (call-trace-halt (hasheq)))
     (check-blames-here (call-trace->jsexpr (hasheq))))
 
-  (test-case "T8: every accessor is in web3, web3/trace and the manual"
-    (define names
-      (append (provided-accessors "call-trace" call-trace-fields)
-              '(call-trace? call-trace-halt jsexpr->call-trace call-trace->jsexpr
-                transaction-call-trace trace-transaction trace-call
-                debug-trace-call debug-trace-transaction)))
-    (check-in-web3-and-manual names)
-    (define manual (file->string (collection-file-path "scribblings/web3.scrbl" "web3")))
-    (check-regexp-match #rx"@defproc/filling\\[\\(call-transaction/trace " manual)
-    (define traced (exported-names 'web3/trace))
-    (check-not-false (memq 'call-transaction/trace (exported-names 'web3)))
-    (for ([name (in-list (cons 'call-transaction/trace names))])
-      (check-not-false (memq name traced) (~a name)))
-    (define anvil (exported-names 'web3/anvil))
-    (check-not-false (memq 'debug-trace-call anvil))
-    (check-not-false (memq 'debug-trace-transaction anvil)))
+  (define documented
+    (append (provided-accessors "call-trace" call-trace-fields)
+            '(call-trace? call-trace-halt jsexpr->call-trace call-trace->jsexpr
+              transaction-call-trace trace-transaction trace-call
+              debug-trace-call debug-trace-transaction)))
 
-  (define call-tracer (hasheq 'tracer "callTracer"))
+  (define exported-rows
+    `([web3/trace ,(cons 'call-transaction/trace documented)]
+      [web3 (call-transaction/trace)]
+      [web3/anvil (debug-trace-call debug-trace-transaction)]))
+
+  (test-case "T8: every accessor is in web3 and the manual"
+    (check-in-web3-and-manual documented))
+
+  (test-case "T8: call-transaction/trace's manual entry lists the fill keywords"
+    (define manual (file->string (collection-file-path "scribblings/web3.scrbl" "web3")))
+    (check-regexp-match #rx"@defproc/filling\\[\\(call-transaction/trace " manual))
+
+  (test-case "T8: web3/trace, web3 and web3/anvil export their tracing names"
+    (for* ([row (in-list exported-rows)]
+           [name (in-list (second row))])
+      (check-not-false (memq name (exported-names (first row))) (~a (first row) " " name))))
+
+  (test-case "T8: web3/anvil's tracing methods are web3/trace's"
+    (check-true (free-identifier=? #'anvil:debug-trace-call #'trace:debug-trace-call))
+    (check-true (free-identifier=? #'anvil:debug-trace-transaction
+                                   #'trace:debug-trace-transaction)))
+
+  (test-case "T8: web3/anvil loads neither web3/trace nor the send stack"
+    (define names (filter values (map module-name (import-closure 'web3/anvil))))
+    (for ([module (in-list '("web3/trace" "web3/private/send"))])
+      (check-false (member module names) module)))
+
   (define tx-hash (filled-hash #\a))
 
   (define (traced-by method [answer frame-json] #:chain-id [chain-id "0x7a69"])
     (hash method answer "eth_chainId" chain-id "eth_call" (bytes->hex-string (word 1))))
 
+  (define alice-to-bob
+    (make-keyword-procedure
+     (lambda (keywords arguments)
+       (lambda ()
+         (keyword-apply call-transaction/trace keywords arguments (list anvil-alice anvil-bob))))))
+
   (test-case "T9: transaction-call-trace sends debug_traceTransaction with the call tracer"
     (define-values (result calls)
       (run-mock (traced-by "debug_traceTransaction") (lambda () (transaction-call-trace tx-hash))))
     (check-equal? result (list (jsexpr->call-trace frame-json)))
-    (check-equal? calls `(("debug_traceTransaction" ,tx-hash ,call-tracer))))
+    (check-equal? calls `(("debug_traceTransaction" ,tx-hash ,call-tracer-options))))
+
+  (define untrusted-rows
+    `([null #rx"^debug_traceTransaction: unexpected result 'null$"]
+      [,(list frame-json) #rx"^debug_traceTransaction: unexpected result "]
+      [,(hash-set frame-json 'gas "zz")
+       #rx"^transaction-call-trace: malformed call trace gas from the node: \"zz\"$"]))
 
   (test-case "T9: transaction-call-trace reads the node's answer as untrusted"
-    (for ([answer (list 'null (list frame-json) (hash-set frame-json 'gas "zz"))])
+    (for ([row (in-list untrusted-rows)])
+      (match-define (list answer message) row)
       (define-values (e _calls)
         (run-mock (traced-by "debug_traceTransaction" answer)
                   (lambda () (transaction-call-trace tx-hash))))
       (check-pred exn:fail:web3? e (~s answer))
       (check-false (exn:fail:contract? e) (~s answer))
-      (check-regexp-match #rx"^transaction-call-trace: malformed call trace" (exn-message e))))
+      (check-regexp-match message (exn-message e))))
 
   (define storage-key (make-bytes 32 1))
 
@@ -265,58 +329,53 @@
       (define called (sent-params call-transaction "eth_call" fields from to))
       (define traced (sent-params call-transaction/trace "debug_traceCall" fields from to))
       (check-equal? called (list (list object "latest")) name)
-      (check-equal? traced (list (list object "latest" call-tracer)) name)))
+      (check-equal? traced (list (list object "latest" call-tracer-options)) name)))
 
   (test-case "T11: call-transaction/trace sends #:block and reads the trace"
     (for ([block (list 5 "pending" "earliest")]
           [sent (list "0x5" "pending" "earliest")])
       (define-values (result calls)
-        (run-mock (traced-by "debug_traceCall")
-                  (lambda () (call-transaction/trace anvil-alice anvil-bob #:block block))))
+        (run-mock (traced-by "debug_traceCall") (alice-to-bob #:block block)))
       (check-equal? result (list (jsexpr->call-trace frame-json)) (~s block))
       (check-equal? calls
                     `(("debug_traceCall" ,(hasheq 'from anvil-alice 'to anvil-bob) ,sent
-                                         ,call-tracer))
+                                         ,call-tracer-options))
                     (~s block))))
 
   (test-case "T12: a revert the node raises is exn:fail:web3:rpc:revert, decoded against #:errors"
     (define-values (e _calls)
       (run-mock (traced-by "debug_traceCall" (reverting "debug_traceCall"))
-                (lambda ()
-                  (call-transaction/trace anvil-alice anvil-bob
-                                          #:errors (list "InsufficientBalance(uint256,uint256)")))))
+                (alice-to-bob #:errors (list "InsufficientBalance(uint256,uint256)"))))
     (check-pred exn:fail:web3:rpc:revert? e)
     (check-equal? (exn:fail:web3:rpc-method e) "debug_traceCall")
     (check-equal? (abi-revert-name (exn->abi-revert e)) "InsufficientBalance")
     (check-equal? (abi-revert-data (exn->abi-revert e)) insufficient-payload))
 
-  (test-case "T12: other errors pass through, and a malformed trace raises exn:fail:web3"
+  (test-case "T12: an error the node raises that is not a revert passes through"
     (define refusal
       (with-handlers ([exn:fail:web3:rpc? values])
         (raise-rpc-error "debug_traceCall" -32601 "Method not found")))
     (define-values (passed _calls)
-      (run-mock (traced-by "debug_traceCall" (lambda (_params) (raise refusal)))
-                (lambda () (call-transaction/trace anvil-alice anvil-bob))))
-    (check-eq? passed refusal)
-    (define-values (malformed _more)
-      (run-mock (traced-by "debug_traceCall" (hash-set frame-json 'input 5))
-                (lambda () (call-transaction/trace anvil-alice anvil-bob))))
+      (run-mock (traced-by "debug_traceCall" (lambda (_params) (raise refusal))) (alice-to-bob)))
+    (check-eq? passed refusal))
+
+  (test-case "T12: a malformed trace raises exn:fail:web3 under call-transaction/trace"
+    (define-values (malformed _calls)
+      (run-mock (traced-by "debug_traceCall" (hash-set frame-json 'input 5)) (alice-to-bob)))
     (check-equal? (exn-message malformed)
                   "call-transaction/trace: malformed call trace input from the node: 5"))
 
-  (test-case "T13: call-transaction/trace refuses fields of two types and a wrong chain id"
-    (define-values (conflict conflict-calls)
-      (run-mock (traced-by "debug_traceCall")
-                (lambda ()
-                  (call-transaction/trace anvil-alice anvil-bob #:type 0 #:access-list '()))))
-    (check-equal? (exn-message conflict)
-                  "call-transaction/trace: #:type 0 takes no #:access-list")
-    (check-equal? conflict-calls '())
-    (define-values (wrong wrong-calls)
-      (run-mock (traced-by "debug_traceCall")
-                (lambda () (call-transaction/trace anvil-alice anvil-bob #:chain-id 1))))
+  (test-case "T13: call-transaction/trace refuses fields of two types before any request"
+    (define-values (conflict calls)
+      (run-mock (traced-by "debug_traceCall") (alice-to-bob #:type 0 #:access-list '())))
+    (check-equal? (exn-message conflict) "call-transaction/trace: #:type 0 takes no #:access-list")
+    (check-equal? calls '()))
+
+  (test-case "T13: call-transaction/trace refuses a chain id that is not the node's"
+    (define-values (wrong calls)
+      (run-mock (traced-by "debug_traceCall") (alice-to-bob #:chain-id 1)))
     (check-pred exn:fail:web3:fill? wrong)
-    (check-equal? (method-names wrong-calls) '("eth_chainId")))
+    (check-equal? (method-names calls) '("eth_chainId")))
 
   (define wrong-checksum "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")
   (define checksum-mismatch "mixed case that is not its EIP-55 checksum")
@@ -344,16 +403,20 @@
       (check-equal? (first-lines e 2) lines)
       (check-equal? (mock-provider-calls node) '() (first lines))))
 
-  (test-case "T15: trace-transaction and trace-call send the parity methods"
-    (define listed (list (hasheq 'type "call" 'action (hasheq))))
-    (define node (mock-provider (hash "trace_transaction" listed
-                                      "trace_call" (hasheq 'trace listed 'output "0x"))))
-    (check-equal? (trace-transaction tx-hash #:provider node) listed)
+  (define parity-frames (list (hasheq 'type "call" 'action (hasheq))))
+
+  (test-case "T15: trace-transaction sends trace_transaction"
+    (define node (mock-provider (hash "trace_transaction" parity-frames)))
+    (check-equal? (trace-transaction tx-hash #:provider node) parity-frames)
+    (check-equal? (mock-provider-calls node) `(("trace_transaction" ,tx-hash))))
+
+  (test-case "T15: trace-call sends trace_call with its types and block"
+    (define answer (hasheq 'trace parity-frames 'output "0x"))
+    (define node (mock-provider (hash "trace_call" answer)))
     (check-equal? (trace-call (hasheq 'to anvil-bob) '("trace" "stateDiff") 7 #:provider node)
-                  (hasheq 'trace listed 'output "0x"))
+                  answer)
     (check-equal? (mock-provider-calls node)
-                  `(("trace_transaction" ,tx-hash)
-                    ("trace_call" ,(hasheq 'to anvil-bob) ("trace" "stateDiff") "0x7"))))
+                  `(("trace_call" ,(hasheq 'to anvil-bob) ("trace" "stateDiff") "0x7"))))
 
   (test-case "T15: trace-call refuses trace types it does not know, before any request"
     (define node (mock-provider (hash "trace_call" (hasheq))))

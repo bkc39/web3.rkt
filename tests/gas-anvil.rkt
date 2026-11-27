@@ -1,7 +1,5 @@
 #lang racket/base
 
-;; intrinsic-gas and floor-gas against anvil as the oracle.  Skipped when anvil is not available.
-
 (module+ test
   (require racket/format
            rackunit

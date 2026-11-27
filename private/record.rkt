@@ -5,7 +5,8 @@
                      (only-in racket/syntax format-id generate-temporary)
                      syntax/parse)
          racket/contract/base
-         (only-in racket/match match)
+         (only-in racket/list take)
+         (only-in racket/match match match-define)
          syntax/parse/define
          (only-in "../address.rkt" checksum-address?)
          (only-in "field-contracts.rkt" access-list/c hash-string/c uint256/c uint64/c)
@@ -27,7 +28,6 @@
          byte-field
          check-asked
          check-block-asked
-         choice-field
          data-field
          define-node-record
          (struct-out field-kind)
@@ -37,6 +37,7 @@
          hash-field
          lenient-uint64-field
          list-field
+         located
          quantity-field
          ratio-field
          read-field
@@ -47,6 +48,33 @@
 (struct field-kind (name reader contract))
 
 (struct field-row (field key kind mode provided?))
+
+;; Where a field is, for messages: the innermost `shown-levels` records it is nested in, how deep,
+;; and the caller's detail, rendered once per record so that reading is linear in the JSON.
+(struct location (levels depth base text))
+
+(define shown-levels 3)
+
+(define (detail->location detail)
+  (if (location? detail) detail (location '() 0 detail detail)))
+
+(define (located what here)
+  (string-append what (location-text here)))
+
+(define (location-in what outer)
+  (match-define (location levels depth base _text) outer)
+  (define inner-levels (cons what (take levels (min (length levels) (sub1 shown-levels)))))
+  (define inner-depth (add1 depth))
+  (location inner-levels
+            inner-depth
+            base
+            (string-append (apply string-append
+                                  (for/list ([level (in-list inner-levels)])
+                                    (string-append " in " level)))
+                           (if (> inner-depth shown-levels)
+                               (format ", ~a levels deep" inner-depth)
+                               "")
+                           base)))
 
 (define (hash-abbreviation digest)
   (string-append (substring digest 0 10) "…"))
@@ -67,10 +95,10 @@
   record)
 
 (define (read-field kind who what v)
-  ((field-kind-reader kind) who what "" v))
+  ((field-kind-reader kind) who what (detail->location "") v))
 
 (define (node-kind name read contract)
-  (field-kind name (lambda (who what detail v) (read who (string-append what detail) v)) contract))
+  (field-kind name (lambda (who what here v) (read who (located what here) v)) contract))
 
 (define (natural-field name bits contract)
   (node-kind name (lambda (who what v) (node-natural who what v bits)) contract))
@@ -86,13 +114,8 @@
 (define (read-ratio who what v)
   (if (and (real? v) (<= 0 v 1)) v (raise-node-malformed who what v)))
 
-(define (read-string who what v)
+(define (read-json-string who what v)
   (if (string? v) v (raise-node-malformed who what v)))
-
-(define (choice-field name choices)
-  (node-kind name
-             (lambda (who what v) (if (member v choices) v (raise-node-malformed who what v)))
-             (apply or/c choices)))
 
 (define quantity-field (node-kind 'quantity node-quantity->number uint256/c))
 (define ratio-field (node-kind 'ratio read-ratio (real-in 0 1)))
@@ -101,7 +124,7 @@
 (define byte-field (natural-field 'byte 8 byte?))
 (define bit-field (natural-field 'bit 1 (or/c 0 1)))
 (define boolean-field (node-kind 'boolean read-boolean boolean?))
-(define string-field (node-kind 'string read-string string?))
+(define string-field (node-kind 'string read-json-string string?))
 (define address-field (node-kind 'address node-address->string checksum-address?))
 (define hash-field (node-kind 'hash node-hash->string hash-string/c))
 (define data-field (node-kind 'data node-data->bytes bytes?))
@@ -118,29 +141,32 @@
   (define read-element (field-kind-reader kind))
   (define element/c (field-kind-contract kind))
   (field-kind (list 'list (field-kind-name kind) max-length)
-              (lambda (who what detail v)
+              (lambda (who what here v)
                 (if (and (list? v) (<= (length v) max-length))
                     (for/list ([element (in-list v)]
                                [index (in-naturals)])
-                      (read-element who (format "~a ~a" what index) detail element))
-                    (raise-node-malformed who (string-append what detail) v)))
+                      (read-element who (format "~a ~a" what index) here element))
+                    (raise-node-malformed who (located what here) v)))
               (if (= max-length +inf.0)
                   (listof element/c)
                   (and/c (listof element/c) (property/c length (<=/c max-length))))))
 
-(define (record-field reader/who record?)
+(define (record-field reader/who record? #:max-depth [max-depth +inf.0])
   (field-kind (list 'record (object-name record?))
-              (lambda (who what detail v) (reader/who who v (string-append " in " what detail)))
+              (lambda (who what here v)
+                (if (< (location-depth here) max-depth)
+                    (reader/who who v (location-in what here))
+                    (raise-node-malformed who (located what here) v)))
               record?))
 
 (define read-storage-keys (field-kind-reader (list-field (fixed-data-field 32))))
 
-(define (read-access-entry who what detail v)
+(define (read-access-entry who what here v)
   (match v
     [(hash-table ('address address) ('storageKeys keys) _ ...)
-     (cons (node-address->string who (string-append what " address" detail) address)
-           (read-storage-keys who (string-append what " storage keys") detail keys))]
-    [_ (raise-node-malformed who (string-append what detail) v)]))
+     (cons (node-address->string who (located (string-append what " address") here) address)
+           (read-storage-keys who (string-append what " storage keys") here keys))]
+    [_ (raise-node-malformed who (located what here) v)]))
 
 (define access-list-field
   (field-kind 'access-list
@@ -149,13 +175,13 @@
 
 (define absent (string->uninterned-symbol "absent"))
 
-(define (read-row who v key kind what detail mode default)
+(define (read-row who v key kind what here mode default)
   (define raw (hash-ref v key absent))
   (cond
     [(and (eq? mode 'optional) (memq raw (list absent 'null))) #f]
     [(and (eq? mode 'default) (eq? raw absent)) default]
-    [(eq? raw absent) (raise-node-missing who (string-append what detail))]
-    [else ((field-kind-reader kind) who what detail raw)]))
+    [(eq? raw absent) (raise-node-missing who (located what here))]
+    [else ((field-kind-reader kind) who what here raw)]))
 
 (define (row-contract kind mode)
   (if (eq? mode 'optional) (or/c #f (field-kind-contract kind)) (field-kind-contract kind)))
@@ -209,16 +235,17 @@
       #:property prop:custom-write printer
       #:property prop:custom-print-quotable 'never)
     (define/who (jsexpr->name who v [detail ""])
+      (define here (detail->location detail))
       (cond
         [(hash? v)
          (define record
-           (new-name (read-row who v 'row.key row.kind-id row.what detail row.mode
+           (new-name (read-row who v 'row.key row.kind-id row.what here row.mode
                                (~? row.value #f))
                      ...
                      v))
-         (check who detail record)
+         (check who (location-text here) record)
          record]
-        [else (raise-node-malformed who (string-append noun detail) v)]))
+        [else (raise-node-malformed who (located noun here) v)]))
     (define row.kind-id row.kind) ...
     (define (name->jsexpr record)
       (name-raw record))
