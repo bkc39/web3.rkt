@@ -156,7 +156,7 @@
   (-> address/c [block-param/c block-param->string] exact-nonnegative-integer?)
   #:result-transform quantity->number)
 (define-jsonrpc-endpoint eth_getStorageAt
-  (-> address/c [exact-nonnegative-integer? number->hex-string] [block-param/c block-param->string]
+  (-> address/c [storage-slot/c number->hex-string] [block-param/c block-param->string]
       hex-string?))
 (define-jsonrpc-endpoint eth_getTransactionCount
   (-> address/c [block-param/c block-param->string] exact-nonnegative-integer?)

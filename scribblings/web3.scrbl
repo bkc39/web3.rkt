@@ -1171,7 +1171,7 @@ since the Merge and answer with an error.}
                     [#:provider provider (or/c #f provider?) (current-provider)])
          hex-string?]{
 Keccak-256 of @racket[data], computed by the node.  To hash locally, use
-@racketidfont{keccak256} from the @tt{keccak} package.}
+@racketidfont{keccak256}, which @racketmodname[web3] provides.}
 
 @subsection{State}
 
@@ -1188,7 +1188,7 @@ The balance of @racket[address] in wei.}
 The number of transactions sent from @racket[address]: its next nonce.}
 
 @defproc[(eth-get-storage-at [address address?]
-                             [slot exact-nonnegative-integer?]
+                             [slot storage-slot/c]
                              [block block-param/c]
                              [#:provider provider (or/c #f provider?) (current-provider)])
          hex-string?]{
@@ -1667,7 +1667,8 @@ Whether @racket[v] is an address string in its EIP-55 form.
           (checksum-address? "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed")]}
 
 @deftogether[(@defproc[(address->bytes [address address?]) bytes?]
-              @defproc[(bytes->address [bs (and/c bytes? (λ (bs) (= (bytes-length bs) 20)))])
+              @defproc[(bytes->address
+                        [address-bytes (and/c bytes? (property/c bytes-length (=/c 20)))])
                        checksum-address?])]{
 An address as its 20 bytes, and 20 bytes as an address in its EIP-55 form.
 
@@ -1676,7 +1677,7 @@ An address as its 20 bytes, and 20 bytes as an address in its EIP-55 form.
           (bytes->address (make-bytes 20 255))]}
 
 @deftogether[(@defproc[(address->integer [address address?]) exact-nonnegative-integer?]
-              @defproc[(integer->address [n (integer-in 0 (sub1 (expt 2 160)))])
+              @defproc[(integer->address [number (integer-in 0 (sub1 (expt 2 160)))])
                        checksum-address?])]{
 An address as the number its 20 bytes are in big-endian order, and such a number as an address in
 its EIP-55 form.
@@ -2271,7 +2272,8 @@ Sends from one signer in several threads at once may get the same one.}
                                 [to (or/c #f address?)])
                                receipt?])]{
 From a signer, these are @racket[send-signed-transaction] and
-@racket[send-signed-transaction/receipt] with the same arguments.
+@racket[send-signed-transaction/receipt] with the same arguments: a @racket[node-signer] too signs
+with @tt{eth_signTransaction}, and the transaction is sent raw.
 
 From an address, an account the node holds, the transaction to @racket[to] (@racket[#f] creates a
 contract) is signed and sent by the node with @tt{eth_sendTransaction}, returning its hash, or with
@@ -2305,13 +2307,12 @@ a failed transaction is replayed without its nonce and fees.
                  bytes?]{
 The return data of @tt{eth_call} of the transaction from @racket[from] to @racket[to]
 (@racket[#f] runs @racket[data] as creation code) at @racket[block].  A signer gives its address
-and signs nothing; @racket[#f] sends no sender.  The call carries the fields given, except a
-@racket[value] of 0 and empty @racket[data], and nothing else: nothing is estimated or looked up,
-except that a @racket[chain-id] is checked against the
-node's as for @racket[send-transaction].  Fields of a type other than @racket[type], or of two
-types, raise @racket[exn:fail:contract] before any request.  A revert raises
-@racket[exn:fail:web3:rpc:revert], decoded against @racket[errors], as a @racket[contract-call]'s
-does; @racket[exn->abi-revert] reads it.  Other errors from the node pass through unchanged.
+and signs nothing; @racket[#f] sends no sender.  The call carries only the fields given, less a
+@racket[value] of 0 and empty @racket[data]; nothing is estimated or looked up, but a
+@racket[chain-id] given is checked against the node's.  Fields of a type other than
+@racket[type], or of two types, raise @racket[exn:fail:contract] before any request.  A revert
+raises @racket[exn:fail:web3:rpc:revert] decoded against @racket[errors], as for
+@racket[contract-call]; other errors from the node pass through unchanged.
 
 @examples[#:eval send-eval
           (define echo
@@ -3557,8 +3558,8 @@ Replaces the code at @racket[address] with @racket[code], as hex or as bytes.}
 Sets the balance of @racket[address].}
 
 @defproc[(anvil-set-storage-at [address address?]
-                               [slot exact-nonnegative-integer?]
-                               [value (or/c hex-string? (integer-in 0 (sub1 (expt 2 256))))]
+                               [slot storage-slot/c]
+                               [value (or/c hex-string? uint256/c)]
                                [#:provider provider (or/c #f provider?) (current-provider)])
          void?]{
 Sets storage @racket[slot] of @racket[address] to @racket[value]: 32 bytes of hex, or a number,

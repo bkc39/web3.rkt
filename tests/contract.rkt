@@ -537,7 +537,7 @@
   (test-case "web3/private/node needs no JSON or transport modules"
     (define node (module-path-index-resolve (module-path-index-join 'web3/private/node #f) #t))
     (check-equal? (sort (filter values (map module-name (direct-imports node))) string<?)
-                  '("racket/base" "web3/address" "web3/private/exn" "web3/private/hex"))
+                  '("racket/base" "web3/private/address" "web3/private/exn" "web3/private/hex"))
     (define names (filter values (map module-name (import-closure 'web3/private/node))))
     (check-equal? (filter (lambda (n) (or (member (collection n) '("json" "net"))
                                           (member n '("web3/rpc" "web3/eth"))))

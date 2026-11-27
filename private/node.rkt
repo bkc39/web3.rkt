@@ -1,6 +1,6 @@
 #lang racket/base
 
-(require (only-in (submod "../address.rkt" private) address->checksum-string)
+(require (only-in "address.rkt" address->checksum-string)
          "exn.rkt"
          (only-in "hex.rkt" address-hex-string? hash-hex-string? hex->bytes hex-data-string?))
 

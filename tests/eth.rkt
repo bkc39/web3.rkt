@@ -375,7 +375,18 @@
     (check-regexp-match #rx"^eth-get-balance: not an address: mixed case" (exn-message e))
     (check-regexp-match (regexp-quote wrong-checksum) (exn-message e)))
 
-  (test-case "anvil's storage value may be a number, sent as its word, and its code bytes"
+  (test-case "a slot read or set is a 256-bit word, refused before any request when it is not"
+    (for ([procedure+arguments (in-list `((,eth-get-storage-at (,addr 0 "latest"))
+                                          (,anvil-set-storage-at (,addr 0 ,zero-word))))])
+      (match-define (list procedure arguments) procedure+arguments)
+      (define name (format "~a" (object-name procedure)))
+      (check-equal? (sent-argument procedure 1 arguments max-word)
+                    (string-append "0x" (make-string 64 #\f))
+                    name)
+      (for ([slot (in-list (list (add1 max-word) -1 "0x0"))])
+        (check-true (refused-before-any-call? procedure 1 arguments slot) name))))
+
+  (test-case "anvil sends a storage value given as a number as its word, and code given as bytes"
     (for ([value (list 255 word-255 0 zero-word)]
           [sent (list word-255 word-255 zero-word zero-word)])
       (check-equal? (sent-argument anvil-set-storage-at 2 (list addr 0 zero-word) value) sent

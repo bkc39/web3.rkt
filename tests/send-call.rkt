@@ -87,6 +87,17 @@
                   (list (list (hasheq 'from anvil-alice 'to anvil-bob) "latest")))
     (check-equal? (watched-calls signer) '(address)))
 
+  (struct addressless ()
+    #:methods gen:signer
+    [(define (signer-address _signer) (error 'addressless "no address"))
+     (define (signer-sign-digest _signer _digest) (error 'addressless "signs nothing"))])
+
+  (test-case "C2: a signer's address is read before any request, #:chain-id or not"
+    (for ([fields (list '() '(#:chain-id 31337))])
+      (define-values (e calls) (called fields #:from (addressless)))
+      (check-pred exn:fail? e (format "~s" fields))
+      (check-equal? calls '() (format "~s" fields))))
+
   (test-case "C3: #:block reaches the request"
     (for ([block (list 5 "pending" "earliest" 0)]
           [sent (list "0x5" "pending" "earliest" "0x0")])
@@ -111,10 +122,9 @@
       (called '()
               #:answers (answers "eth_call" (reverting "eth_call" (bytes->hex-string payload)))))
     (check-pred exn:fail:web3:rpc:revert? e)
-    (when (exn:fail:web3:rpc:revert? e)
-      (check-equal? (exn:fail:web3:rpc-method e) "eth_call")
-      (check-equal? (abi-revert-data (exn->abi-revert e)) payload)
-      (check-eq? (exn->abi-revert e) (exn:fail:web3:rpc:revert-revert e)))
+    (check-equal? (exn:fail:web3:rpc-method e) "eth_call")
+    (check-equal? (abi-revert-data (exn->abi-revert e)) payload)
+    (check-eq? (exn->abi-revert e) (exn:fail:web3:rpc:revert-revert e))
     (check-equal? (method-names calls) '("eth_call")))
 
   (test-case "C5: a revert is decoded against #:errors"
@@ -122,11 +132,10 @@
       (called `(#:errors (,insufficient-balance))
               #:answers (answers "eth_call" (reverting "eth_call"))))
     (check-pred exn:fail:web3:rpc:revert? e)
-    (when (exn:fail:web3:rpc:revert? e)
-      (define revert (exn->abi-revert e))
-      (check-equal? (abi-revert-name revert) "InsufficientBalance")
-      (check-equal? (abi-revert-arguments revert) '(0 5000))
-      (check-equal? (abi-revert-data revert) insufficient-payload)))
+    (define revert (exn->abi-revert e))
+    (check-equal? (abi-revert-name revert) "InsufficientBalance")
+    (check-equal? (abi-revert-arguments revert) '(0 5000))
+    (check-equal? (abi-revert-data revert) insufficient-payload))
 
   (test-case "C6: any other error from the node passes through unchanged"
     (define refusal
@@ -164,19 +173,21 @@
   (test-case "C8: wrong arguments blame the caller before any request, and show no key"
     (define node (mock-provider (answers)))
     (define wrong-checksum "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")
-    (define calls
-      (list (lambda () (call-transaction wrong-checksum anvil-bob #:provider node))
-            (lambda () (call-transaction anvil-alice wrong-checksum #:provider node))
-            (lambda () (call-transaction (filled-hash #\a) anvil-bob #:provider node))
-            (lambda () (call-transaction anvil-alice (filled-hash #\a) #:provider node))
-            (lambda () (call-transaction (integer->secret-key marker-integer) anvil-bob
-                                         #:provider node))
-            (lambda () (call-transaction marker-hex anvil-bob #:provider node))
-            (lambda () (call-transaction anvil-alice anvil-bob #:data "0x" #:provider node))
-            (lambda () (call-transaction anvil-alice anvil-bob #:block 'latest #:provider node))
-            (lambda () (call-transaction anvil-alice anvil-bob #:gas 1 #:provider node))
-            (lambda () (call-transaction anvil-alice #:provider node))))
-    (for ([call (in-list calls)])
+    (define refused-rows
+      `(((,wrong-checksum ,anvil-bob) ())
+        ((,anvil-alice ,wrong-checksum) ())
+        ((,(filled-hash #\a) ,anvil-bob) ())
+        ((,anvil-alice ,(filled-hash #\a)) ())
+        ((,(integer->secret-key marker-integer) ,anvil-bob) ())
+        ((,marker-hex ,anvil-bob) ())
+        ((,anvil-alice ,anvil-bob) (#:data "0x"))
+        ((,anvil-alice ,anvil-bob) (#:block latest))
+        ((,anvil-alice ,anvil-bob) (#:gas 1))
+        ((,anvil-alice) ())))
+    (for ([row (in-list refused-rows)])
+      (match-define (list positional fields) row)
+      (define (call)
+        (apply call-with-fields call-transaction (list* '#:provider node fields) positional))
       (check-blames-here (call))
       (check-no-leak (exn-message (with-handlers ([exn:fail? values]) (call)))))
     (define e

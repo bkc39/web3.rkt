@@ -135,7 +135,8 @@
       (check-equal? (map string-trim (drop-right (cdr got) 1)) (cdr lines) message)
       (check-regexp-match #rx"^  blaming: [^\n]*tests/refusals[.]rkt" (last got))
       (check-true (<= (length got) 6) message)
-      (check-false (regexp-match? #rx"->|contract from|expected:" message) message)))
+      (define after-who (regexp-replace #rx"^[^ ]*: " message ""))
+      (check-false (regexp-match? #rx"->|contract from|expected:" after-who) message)))
 
   (test-case "a refused address or hash says who, which argument, what and why, in a few lines"
     (for ([r (in-list rows)])
@@ -249,6 +250,86 @@
       (when e
         (check-false (string-contains? (exn-message e) "beef") (exn-message e))
         (check-false (regexp-match? #px"[0-9a-fA-F]{20}" (exn-message e)) (exn-message e)))))
+
+  (define key-bytes (string->bytes/latin-1 digits))
+  (define key-word (hex-string->bytes key))
+  (define key-number (string->number digits 16))
+  (define not-address "not an address: not 0x and 40 hex digits")
+  (define bytes-length-reason "not an address's bytes: not 20 bytes")
+  (define number-bound-reason "not an address's number: 2^160 or more")
+
+  (define conversion-rows
+    (append
+     (for*/list ([name+convert (in-list (list (cons "address->checksum-string"
+                                                    address->checksum-string)
+                                              (cons "address->bytes" address->bytes)
+                                              (cons "address->integer" address->integer)))]
+                 [bad+lines (in-list `((,typo ,checksum-reason ,(quoted typo))
+                                       (,key ,not-address "given: a string of 66 characters")
+                                       (42 "not an address: not a string"
+                                           "given: an exact integer")))])
+       (match-define (cons name convert) name+convert)
+       (match-define (list bad reason given) bad+lines)
+       (row (format "~a, ~a" name given)
+            (lambda () (convert bad))
+            (list (string-append name ": " reason) "argument: 1st" given)))
+     (list
+      (row "bytes->address given a key's 32 bytes"
+           (lambda () (bytes->address key-word))
+           `(,(string-append "bytes->address: " bytes-length-reason)
+             "argument: 1st" "given: a byte string of length 32"))
+      (row "bytes->address given 19 bytes"
+           (lambda () (bytes->address (make-bytes 19 1)))
+           `(,(string-append "bytes->address: " bytes-length-reason)
+             "argument: 1st" "given: a byte string of length 19"))
+      (row "bytes->address given 21 bytes"
+           (lambda () (bytes->address (make-bytes 21 1)))
+           `(,(string-append "bytes->address: " bytes-length-reason)
+             "argument: 1st" "given: a byte string of length 21"))
+      (row "address->bytes given 20 bytes"
+           (lambda () (address->bytes (make-bytes 20 1)))
+           '("address->bytes: not an address: not a string"
+             "argument: 1st" "given: a byte string of length 20"))
+      (row "address->integer given too few digits"
+           (lambda () (address->integer "0x123"))
+           `(,(string-append "address->integer: " not-address) "argument: 1st" ,(quoted "0x123")))
+      (row "bytes->address given a key's hex as bytes"
+           (lambda () (bytes->address key-bytes))
+           `(,(string-append "bytes->address: " bytes-length-reason)
+             "argument: 1st" "given: a byte string of length 64"))
+      (row "bytes->address given an address"
+           (lambda () (bytes->address typo))
+           `("bytes->address: not an address's bytes: not a byte string"
+             "argument: 1st" ,(quoted typo)))
+      (row "integer->address given a key's number"
+           (lambda () (integer->address key-number))
+           `(,(string-append "integer->address: " number-bound-reason)
+             "argument: 1st" "given: an exact integer"))
+      (row "integer->address given 2^160"
+           (lambda () (integer->address (expt 2 160)))
+           `(,(string-append "integer->address: " number-bound-reason)
+             "argument: 1st" "given: an exact integer"))
+      (row "integer->address given -1"
+           (lambda () (integer->address -1))
+           '("integer->address: not an address's number: negative"
+             "argument: 1st" "given: an exact integer"))
+      (row "integer->address given 1.0"
+           (lambda () (integer->address 1.0))
+           '("integer->address: not an address's number: not an exact integer"
+             "argument: 1st" "given: a value of another kind")))))
+
+  (test-case "the address conversions refuse in a few lines, a key's text, bytes or number unshown"
+    (define key-texts (list (number->string key-number) (format "~s" key-word)))
+    (for ([r (in-list conversion-rows)])
+      (match-define (row label thunk lines) r)
+      (define e (refusal thunk))
+      (check-short-refusal e lines label)
+      (when e
+        (define message (exn-message e))
+        (check-false (string-contains? (string-downcase message) digits) message)
+        (for ([text (in-list key-texts)])
+          (check-false (string-contains? message text) message))
+        (check-false (regexp-match? #px"[0-9]{20}|#\"" message) message))))
 
   (test-case "a key named in a refused object is one that could not be hex"
     (for ([key (in-list (list (string->symbol (substring key-text 2)) 'deadbeef '|0x1| 'x-y))])

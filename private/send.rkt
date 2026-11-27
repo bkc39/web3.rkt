@@ -467,11 +467,11 @@
                   (fill-order-errors order) (fill-order-provider order))))
 
 (define/filling (send-transaction who sender to order)
-  (cond
-    [(signer? sender) (signed-transaction-hash (send-raw who sender to order))]
-    [else
-     (define-values (tx-hash _gas) (send-from-node who sender to order))
-     tx-hash]))
+  (define-values (tx-hash _gas)
+    (if (signer? sender)
+        (values (signed-transaction-hash (send-raw who sender to order)) #f)
+        (send-from-node who sender to order)))
+  tx-hash)
 
 (define/filling (send-transaction/receipt who sender to order)
   (define-values (_tx-hash receipt)
@@ -484,11 +484,11 @@
 
 (define/filling (call-transaction who from to order #:block [block "latest"])
   (define provider (fill-order-provider order))
+  (define address (and from (sender-address who from)))
   (checked-rows who order)
   (when (fill-order-chain-id order)
     (node-chain-id who order provider))
-  (define tx
-    (fields-object (and from (sender-address who from)) (hash-set (fill-order->hash order) 'to to)))
+  (define tx (fields-object address (hash-set (fill-order->hash order) 'to to)))
   (define result
     (call-raising-reverts (fill-order-errors order)
                           (lambda () (eth-call tx block #:provider provider))))

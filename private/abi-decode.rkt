@@ -10,7 +10,7 @@
          (only-in racket/match match struct*)
          "../abi/type.rkt"
          (submod "../abi/type.rkt" private)
-         "../address.rkt"
+         (only-in "address.rkt" address-modulus bytes->address)
          "exn.rkt"
          "hex.rkt")
 
@@ -40,7 +40,6 @@
 
 (define word-modulus (expt 2 256))
 (define sign-bit (expt 2 255))
-(define address-modulus (expt 2 160))
 
 (define (raise-abi-decode-error who reason type offset [detail #f])
   (raise (exn:fail:web3:abi:decode
@@ -135,7 +134,7 @@
      (if (<= (- (expt 2 (sub1 n))) v (sub1 (expt 2 (sub1 n)))) v (non-canonical))]
     [(struct* abi-address ())
      (if (< word address-modulus)
-         (address->checksum-string (bytes->hex (subbytes data (+ at 12) word-end)))
+         (bytes->address (subbytes data (+ at 12) word-end))
          (non-canonical))]
     [(struct* abi-bool ())
      (case word

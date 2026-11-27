@@ -107,38 +107,40 @@
     (check-blames-here (address->checksum-string "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")))
 
   (test-case "an address is its 20 bytes and its number, and back in its EIP-55 form"
-    (for ([a (in-list vectors)])
-      (define bs (address->bytes a))
-      (check-equal? (bytes-length bs) 20 a)
-      (check-equal? (address->bytes (string-downcase a)) bs a)
-      (check-equal? (address->bytes (upcase-hex a)) bs a)
-      (check-equal? (bytes->address bs) a a)
-      (define n (address->integer a))
-      (check-equal? n (string->number (substring a 2) 16) a)
-      (check-equal? (address->integer (string-downcase a)) n a)
-      (check-equal? (integer->address n) a a))
-    (check-equal? (integer->address 0) zero-address)
-    (check-equal? (integer->address (sub1 (expt 2 160)))
-                  "0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF")
-    (check-equal? (integer->address 1) "0x0000000000000000000000000000000000000001")
-    (check-equal? (address->bytes zero-address) (make-bytes 20 0))
-    (check-equal? (address->integer zero-address) 0))
+    (for ([address (in-list vectors)])
+      (define address-bytes (address->bytes address))
+      (check-equal? (bytes-length address-bytes) 20 address)
+      (check-equal? (address->bytes (string-downcase address)) address-bytes address)
+      (check-equal? (address->bytes (upcase-hex address)) address-bytes address)
+      (check-equal? (bytes->address address-bytes) address address)
+      (define number (address->integer address))
+      (check-equal? number (string->number (substring address 2) 16) address)
+      (check-equal? (address->integer (string-downcase address)) number address)
+      (check-equal? (integer->address number) address address)))
 
-  (test-case "the conversions refuse what is not an address, 20 bytes or 160 bits"
-    (check-blames-here (bytes->address (make-bytes 19 1)))
-    (check-blames-here (bytes->address (make-bytes 21 1)))
-    (check-blames-here (bytes->address "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed"))
-    (check-blames-here (integer->address -1))
-    (check-blames-here (integer->address (expt 2 160)))
-    (check-blames-here (integer->address 1.0))
-    (check-blames-here (address->bytes "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD"))
-    (check-blames-here (address->bytes (make-bytes 20 1)))
-    (check-blames-here (address->integer "0x123"))
-    (check-blames-here (address->integer 42)))
+  (test-case "the least and greatest addresses, as numbers and as bytes"
+    (define bounds
+      `((0 ,zero-address ,(make-bytes 20 0))
+        (1 "0x0000000000000000000000000000000000000001" ,(bytes-append (make-bytes 19 0) #"\1"))
+        (,(sub1 (expt 2 160)) "0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF" ,(make-bytes 20 255))))
+    (for ([bound (in-list bounds)])
+      (match-define (list number address address-bytes) bound)
+      (check-equal? (integer->address number) address)
+      (check-equal? (address->integer address) number)
+      (check-equal? (bytes->address address-bytes) address)
+      (check-equal? (address->bytes address) address-bytes)))
 
-  (test-case "web3/address needs only racket/base libraries, keccak and web3/private/hex"
-    (define names (filter values (map module-name (import-closure 'web3/address))))
-    (check-equal? (filter (lambda (n) (member (collection n) '("net" "json"))) names) '())
-    (check-equal? (sort (remove-duplicates (filter (lambda (n) (equal? (collection n) "web3")) names))
-                        string<?)
-                  '("web3/address" "web3/private/hex"))))
+  (define (web3-modules root)
+    (define names (filter values (map module-name (import-closure root))))
+    (check-equal? (filter (lambda (name) (member (collection name) '("net" "json"))) names) '())
+    (sort (remove-duplicates (filter (lambda (name) (equal? (collection name) "web3")) names))
+          string<?))
+
+  (test-case "web3/private/address needs only racket/base libraries, keccak and web3/private/hex"
+    (check-equal? (web3-modules 'web3/private/address)
+                  '("web3/private/address" "web3/private/hex")))
+
+  (test-case "web3/address adds only the argument contracts and what they name"
+    (check-equal? (web3-modules 'web3/address)
+                  '("web3/address" "web3/private/address" "web3/private/argument"
+                    "web3/private/hex" "web3/private/signature" "web3/private/signer"))))
