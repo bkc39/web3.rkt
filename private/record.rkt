@@ -27,6 +27,7 @@
          byte-field
          check-asked
          check-block-asked
+         choice-field
          data-field
          define-node-record
          (struct-out field-kind)
@@ -40,6 +41,7 @@
          ratio-field
          read-field
          record-field
+         string-field
          uint64-field)
 
 (struct field-kind (name reader contract))
@@ -84,6 +86,14 @@
 (define (read-ratio who what v)
   (if (and (real? v) (<= 0 v 1)) v (raise-node-malformed who what v)))
 
+(define (read-string who what v)
+  (if (string? v) v (raise-node-malformed who what v)))
+
+(define (choice-field name choices)
+  (node-kind name
+             (lambda (who what v) (if (member v choices) v (raise-node-malformed who what v)))
+             (apply or/c choices)))
+
 (define quantity-field (node-kind 'quantity node-quantity->number uint256/c))
 (define ratio-field (node-kind 'ratio read-ratio (real-in 0 1)))
 (define uint64-field (natural-field 'uint64 64 uint64/c))
@@ -91,6 +101,7 @@
 (define byte-field (natural-field 'byte 8 byte?))
 (define bit-field (natural-field 'bit 1 (or/c 0 1)))
 (define boolean-field (node-kind 'boolean read-boolean boolean?))
+(define string-field (node-kind 'string read-string string?))
 (define address-field (node-kind 'address node-address->string checksum-address?))
 (define hash-field (node-kind 'hash node-hash->string hash-string/c))
 (define data-field (node-kind 'data node-data->bytes bytes?))
@@ -191,7 +202,6 @@
   #:with name->jsexpr (format-id #'name "~a->jsexpr" #'name)
   #:with name->list (format-id #'name "~a->list" #'name)
   (begin
-    (define row.kind-id row.kind) ...
     (struct name (row.field ... raw)
       #:name name-struct
       #:constructor-name new-name
@@ -209,6 +219,7 @@
          (check who detail record)
          record]
         [else (raise-node-malformed who (string-append noun detail) v)]))
+    (define row.kind-id row.kind) ...
     (define (name->jsexpr record)
       (name-raw record))
     (define (name->list record . more)

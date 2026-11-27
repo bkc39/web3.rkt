@@ -30,9 +30,11 @@
          "who.rkt")
 
 (provide call-object
+         call-order
          call-raising-reverts
          call-transaction
          call-transaction/who
+         define/filling
          estimate-gas
          fill-reason/c
          fill-reasons
@@ -484,14 +486,15 @@
 
 ;;;; calls
 
-(define/filling (call-transaction who from to order #:block [block "latest"])
+(define (call-order who from to order request)
   (define provider (fill-order-provider order))
   (checked-rows who order)
   (define address (and from (sender-address who from)))
   (when (fill-order-chain-id order)
     (node-chain-id who order provider))
   (define tx (fields-object address (hash-set (fill-order->hash order) 'to to)))
-  (define result
-    (call-raising-reverts (fill-order-errors order)
-                          (lambda () (eth-call tx block #:provider provider))))
-  (node-data->bytes who "return data" result))
+  (call-raising-reverts (fill-order-errors order) (lambda () (request tx provider))))
+
+(define/filling (call-transaction who from to order #:block [block "latest"])
+  (define (request tx provider) (eth-call tx block #:provider provider))
+  (node-data->bytes who "return data" (call-order who from to order request)))

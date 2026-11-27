@@ -1,0 +1,166 @@
+#lang racket/base
+
+;; Call traces and parity-style traces of calls and mined transactions on anvil.  Skipped when
+;; anvil is not available.
+
+(module+ test
+  (require racket/list
+           racket/match
+           rackunit
+           web3
+           "helpers/halts.rkt"
+           (only-in "util.rkt" anvil-alice raised word))
+
+  (define echo-runtime
+    (hex-string->bytes "0x6000358060005260f81c60ff14601c57602a60206000a160206000f35b60206000fd"))
+  (define echo-init (bytes-append (hex-string->bytes "0x602280600b6000396000f3") echo-runtime))
+  (define refused (bytes-append (bytes #xff) (make-bytes 31 7)))
+
+  (define (caller-of callee)
+    (string-append "366000600037" "60206000366000600073" (substring callee 2) "5af1"
+                   "503d600060003e3d6000f3"))
+
+  (define next-address
+    (let ([counter (box #x7ace00)])
+      (lambda ()
+        (set-box! counter (add1 (unbox counter)))
+        (integer->address (unbox counter)))))
+
+  (define (installed code)
+    (define address (next-address))
+    (anvil-set-code address (string-append "0x" code))
+    address)
+
+  (define (destination row)
+    (define target (halting-target row))
+    (if (address? target) target (installed target)))
+
+  (define (mined-failure to #:data data #:gas-limit gas)
+    (define e
+      (raised (lambda () (send-transaction/receipt anvil-alice to #:data data #:gas-limit gas))))
+    (check-pred exn:fail:web3:transaction? e)
+    (receipt-transaction-hash (exn:fail:web3:transaction-receipt e)))
+
+  (define (echo-cases echo)
+    (test-case "A1: a mined send's trace has the echoed word as its output"
+      (define receipt (send-transaction/receipt anvil-alice echo #:data (word 7)))
+      (define trace (transaction-call-trace (receipt-transaction-hash receipt)))
+      (check-equal? (call-trace-type trace) "CALL")
+      (check-equal? (call-trace-from trace) anvil-alice)
+      (check-equal? (call-trace-to trace) echo)
+      (check-equal? (call-trace-value trace) 0)
+      (check-equal? (call-trace-input trace) (word 7))
+      (check-equal? (call-trace-output trace) (word 7))
+      (check-equal? (call-trace-gas-used trace) (receipt-gas-used receipt))
+      (check-false (call-trace-error trace))
+      (check-false (call-trace-halt trace))
+      (check-equal? (call-trace-calls trace) '()))
+
+    (test-case "A2: a mined send that fails has the tracer's error and the revert data as output"
+      (define trace (transaction-call-trace (mined-failure echo #:data refused #:gas-limit 100000)))
+      (check-equal? (call-trace-error trace) "execution reverted")
+      (check-equal? (call-trace-output trace) refused)
+      (check-false (call-trace-halt trace)))
+
+    (test-case "A3: call-transaction/trace traces the call call-transaction makes"
+      (define trace (call-transaction/trace anvil-alice echo #:data (word 3)))
+      (check-equal? (call-trace-output trace) (call-transaction anvil-alice echo #:data (word 3)))
+      (check-false (call-trace-error trace))
+      (define created (call-transaction/trace #f #f #:data echo-init))
+      (check-equal? (call-trace-type created) "CREATE")
+      (check-equal? (call-trace-output created) echo-runtime))
+
+    (test-case "A4: anvil answers a call that reverts with a trace, not an error"
+      (define trace (call-transaction/trace anvil-alice echo #:data refused))
+      (check-equal? (call-trace-error trace) "execution reverted")
+      (check-equal? (call-trace-output trace) refused)
+      (check-pred exn:fail:web3:rpc:revert?
+                  (raised (lambda () (call-transaction anvil-alice echo #:data refused)))))
+
+    (test-case "A5: a contract that calls another has the inner call in call-trace-calls"
+      (define outer (installed (caller-of echo)))
+      (define receipt (send-transaction/receipt anvil-alice outer #:data (word 5)))
+      (define trace (transaction-call-trace (receipt-transaction-hash receipt)))
+      (check-equal? (call-trace-output trace) (word 5))
+      (match-define (list inner) (call-trace-calls trace))
+      (check-equal? (call-trace-from inner) outer)
+      (check-equal? (call-trace-to inner) echo)
+      (check-equal? (call-trace-input inner) (word 5))
+      (check-equal? (call-trace-output inner) (word 5))
+      (check-equal? (call-trace-calls inner) '())
+      (match-define (list called) (call-trace-calls (call-transaction/trace anvil-alice outer
+                                                                            #:data refused)))
+      (check-equal? (call-trace-error called) "execution reverted")
+      (check-equal? (call-trace-output called) refused))
+
+    (test-case "A6: trace-transaction and trace-call answer parity traces"
+      (define receipt (send-transaction/receipt anvil-alice echo #:data (word 9)))
+      (match-define (list (? hash? frame)) (trace-transaction (receipt-transaction-hash receipt)))
+      (check-equal? (hash-ref frame 'type) "call")
+      (check-equal? (hash-ref (hash-ref frame 'result) 'output) (bytes->hex-string (word 9)))
+      (check-equal? (hash-ref frame 'transactionHash) (receipt-transaction-hash receipt))
+      (define tx (hasheq 'from anvil-alice 'to echo 'data (bytes->hex-string (word 9))))
+      (define traced (trace-call tx '("trace") "latest"))
+      (check-equal? (hash-ref traced 'output) (bytes->hex-string (word 9)))
+      (check-pred list? (hash-ref traced 'trace))
+      (check-equal? (hash-ref traced 'vmTrace) 'null)
+      (define everything (trace-call tx '("trace" "vmTrace" "stateDiff") "latest"))
+      (check-pred hash? (hash-ref everything 'vmTrace))
+      (check-pred hash? (hash-ref everything 'stateDiff))
+      (match-define (list (? hash? reverted)) (hash-ref (trace-call (hash-set tx 'data
+                                                                              (bytes->hex-string
+                                                                               refused))
+                                                                    '("trace") "latest")
+                                                        'trace))
+      (check-equal? (hash-ref reverted 'error) "Reverted")))
+
+  (define (halt-cases)
+    (test-case "A7: a mined halt's trace names its halt"
+      (for ([row (in-list (append code-halts precompile-halts))])
+        (define words (halting-tracer row))
+        (define trace
+          (transaction-call-trace (mined-failure (destination row) #:data (halting-input row)
+                                                 #:gas-limit (halting-gas row))))
+        (check-equal? (call-trace-error trace) words)
+        (check-eq? (call-trace-halt trace) (halting-halt row) words)))
+
+    (test-case "A8: a call that halts is a trace that names its halt"
+      (for ([row (in-list (append code-halts precompile-halts))])
+        (define words (halting-tracer row))
+        (define trace
+          (call-transaction/trace anvil-alice (destination row) #:data (halting-input row)
+                                  #:gas-limit (halting-gas row)))
+        (check-equal? (call-trace-error trace) words)
+        (check-eq? (call-trace-halt trace) (halting-halt row) words)))
+
+    (test-case "A9: a creation that halts is a trace with no address"
+      (for ([row (in-list creation-halts)])
+        (define words (halting-tracer row))
+        (define trace
+          (call-transaction/trace anvil-alice #f
+                                  #:data (hex-string->bytes (string-append "0x"
+                                                                           (halting-target row)))))
+        (check-equal? (call-trace-type trace) "CREATE" words)
+        (check-false (call-trace-to trace) words)
+        (check-equal? (call-trace-output trace) #"" words)
+        (check-eq? (call-trace-halt trace) (halting-halt row) words)))
+
+    (test-case "A10: a halt in a nested static call is in the inner frame"
+      (for ([inner (in-list (list (installed store-one) (installed pay-one-wei)))])
+        (define outer (installed (static-call-to inner)))
+        (define receipt (send-transaction/receipt anvil-alice outer #:gas-limit 200000))
+        (define trace (transaction-call-trace (receipt-transaction-hash receipt)))
+        (check-false (call-trace-halt trace))
+        (match-define (list static) (call-trace-calls trace))
+        (check-equal? (call-trace-type static) "STATICCALL")
+        (check-false (call-trace-value static))
+        (check-eq? (call-trace-halt static) 'write-protection))))
+
+  (cond
+    [(not (current-anvil-path))
+     (displayln "skipping trace anvil tests: anvil not found")]
+    [else
+     (with-anvil ()
+       (define-values (echo _deployed) (deploy-contract/receipt echo-init #:from anvil-alice))
+       (echo-cases echo)
+       (halt-cases))]))

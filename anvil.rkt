@@ -1,7 +1,7 @@
 #lang racket/base
 
-;; Local development nodes: anvil's own RPC methods, debug tracing, and
-;; starting / stopping an anvil process.
+;; Local development nodes: anvil's own RPC methods, debug tracing (from
+;; trace.rkt), and starting / stopping an anvil process.
 ;;
 ;;   (with-anvil ()                       ; fresh node, current-provider set
 ;;     (eth-accounts))
@@ -10,18 +10,17 @@
 ;;   (with-provider (anvil-provider node) ...)
 ;;   (stop-anvil node)
 
-(require json
-         racket/contract
+(require racket/contract
          racket/file
          (only-in racket/match match)
          racket/tcp
          syntax/parse/define
          "eth.rkt"
-         (only-in "private/argument.rkt" address/c hash-argument/c)
-         (only-in "private/eth-params.rkt" transaction-object/c)
+         (only-in "private/argument.rkt" address/c)
          (only-in "private/field-contracts.rkt" uint256/c)
          (only-in "private/hex.rkt" bytes->hex natural->bytes)
-         "rpc.rkt")
+         "rpc.rkt"
+         (only-in "trace.rkt" debug-trace-call debug-trace-transaction))
 
 (provide anvil-set-code
          anvil-set-balance
@@ -69,13 +68,6 @@
   #:result-transform void)
 (define-jsonrpc-endpoint evm_snapshot (-> hex-string?))
 (define-jsonrpc-endpoint evm_revert (-> hex-string? boolean?))
-
-;; Struct-log traces (pc, op, gas, gasCost, stack, ...).  Options follow
-;; geth's tracer config, e.g. (hasheq 'enableMemory #t 'disableStack #f).
-(define-jsonrpc-endpoint debug_traceCall
-  (-> transaction-object/c [block-param/c block-param->string] (and/c hash? jsexpr?) hash?))
-(define-jsonrpc-endpoint debug_traceTransaction
-  (-> hash-argument/c (and/c hash? jsexpr?) hash?))
 
 ;;;; processes
 
