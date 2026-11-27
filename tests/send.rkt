@@ -279,8 +279,8 @@
     (check-equal? (exn-message e) "eth_maxPriorityFeePerGas: unexpected result \"x\""))
 
   (define send-names
-    '(call-transaction fill-transaction send-signed-transaction send-signed-transaction/receipt
-                       send-transaction send-transaction/receipt
+    '(call-transaction estimate-transaction fill-transaction send-signed-transaction
+                       send-signed-transaction/receipt send-transaction send-transaction/receipt
                        exn:fail:web3:fill exn:fail:web3:fill? exn:fail:web3:fill-reason
                        struct:exn:fail:web3:fill))
 

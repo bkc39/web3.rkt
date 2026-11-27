@@ -10,10 +10,11 @@
            (only-in web3/private/send
                     [call-transaction unchecked-call]
                     [send-transaction unchecked-send])
+           (only-in "helpers/call-objects.rkt" call-object-rows)
            "helpers/mock.rkt"
            (only-in "helpers/secrets.rkt" check-no-leak marker-hex marker-integer)
            (only-in "helpers/signers.rkt" watched watched-calls)
-           (only-in "util.rkt" anvil-alice anvil-bob anvil-carol check-blames-here filled-hash
+           (only-in "util.rkt" anvil-alice anvil-bob check-blames-here filled-hash
                     insufficient-balance))
 
   (define returned (make-bytes 32 7))
@@ -33,35 +34,8 @@
                #:when (equal? (first call) method))
       (rest call)))
 
-  (define storage-key (make-bytes 32 1))
-
-  (define object-rows
-    `((() ,anvil-alice ,anvil-bob #hasheq((from . ,anvil-alice) (to . ,anvil-bob)))
-      (() #f ,anvil-bob #hasheq((to . ,anvil-bob)))
-      (() ,(string-downcase anvil-alice) ,(string-downcase anvil-bob)
-          #hasheq((from . ,anvil-alice) (to . ,anvil-bob)))
-      ((#:data #"\x60\x80") ,anvil-alice #f #hasheq((from . ,anvil-alice) (data . "0x6080")))
-      ((#:data #"" #:value 0) ,anvil-alice ,anvil-bob
-                              #hasheq((from . ,anvil-alice) (to . ,anvil-bob)))
-      ((#:value 5 #:gas-limit 30000) #f ,anvil-bob
-       #hasheq((to . ,anvil-bob) (value . "0x5") (gas . "0x7530")))
-      ((#:type 0 #:gas-price 7 #:nonce 0) ,anvil-alice ,anvil-bob
-       #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (type . "0x0") (gasPrice . "0x7")
-               (nonce . "0x0")))
-      ((#:access-list ()) ,anvil-alice ,anvil-bob
-       #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (accessList . ())))
-      ((#:value 1 #:data #"\1\2" #:nonce 3 #:gas-limit 30000 #:chain-id 31337 #:type 2
-        #:max-priority-fee-per-gas 1 #:max-fee-per-gas 2
-        #:access-list ((,(string-downcase anvil-carol) ,storage-key)))
-       ,anvil-alice ,anvil-bob
-       #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (value . "0x1") (data . "0x0102")
-               (nonce . "0x3") (gas . "0x7530") (chainId . "0x7a69") (type . "0x2")
-               (maxPriorityFeePerGas . "0x1") (maxFeePerGas . "0x2")
-               (accessList . (#hasheq((address . ,anvil-carol)
-                                      (storageKeys . (,(bytes->hex-string storage-key))))))))))
-
   (test-case "C1: the call carries the fields given and nothing else"
-    (for ([row (in-list object-rows)])
+    (for ([row (in-list call-object-rows)])
       (match-define (list fields from to object) row)
       (define name (format "~s ~s ~s" fields from to))
       (define-values (result calls) (called fields #:from from #:to to))

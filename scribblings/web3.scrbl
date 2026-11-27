@@ -2393,6 +2393,23 @@ raises @racket[exn:fail:web3:rpc:revert] decoded against @racket[errors], as for
               (call-transaction signer recipient #:provider reverting)))
           (abi-revert-data (exn->abi-revert e))]}
 
+@defproc/filling[(estimate-transaction [from (or/c #f address? signer?)]
+                                       [to (or/c #f address?)])
+                 #:more ([#:block block block-param/c "latest"])
+                 exact-nonnegative-integer?]{
+The gas the node estimates for the call @racket[call-transaction] makes with the same arguments:
+@tt{eth_estimateGas} of the same transaction object at @racket[block].  Arguments are checked as
+@racket[call-transaction] checks them, a signer gives its address and nothing is signed.  A
+@racket[gas-limit] given is the most the estimate may use.  A revert raises
+@racket[exn:fail:web3:rpc:revert] decoded against @racket[errors]; other errors from the node
+pass through unchanged, and @racket[exn->halt] reads the halt of one that names a halt.  An
+answer that is not a quantity below 2@superscript{64} raises @racket[exn:fail:web3].
+
+@examples[#:eval send-eval
+          (define estimating (mock-provider (hash "eth_estimateGas" "0x5830")))
+          (estimate-transaction signer recipient #:data (word->bytes 42) #:provider estimating)
+          (mock-provider-calls estimating)]}
+
 @defstruct*[(exn:fail:web3:fill exn:fail:web3) ([reason (or/c 'chain-id 'no-base-fee 'fee-cap)])]{
 A transaction the node's answers cannot complete: a @racket[#:chain-id] other than the node's, a
 type 2 transaction on a chain without a base fee, or a @racket[#:max-fee-per-gas] below the
