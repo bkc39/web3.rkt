@@ -26,6 +26,7 @@ racket examples/00-provider.rkt
 | `13-signers.rkt` | a local key and a node account as signers: each one's EIP-191 signature verifies, and both sign the same transaction |
 | `14-sending.rkt` | a key the node does not hold: a contract deploy and send, an ether transfer |
 | `15-blocks.rkt` | a block of three kinds of transfer, its transactions, one rebuilt and its sender recovered, a fee history |
+| `16-raw-contract.rkt` | hand-assembled code with no ABI: deployed from a key, called with raw bytes, a revert's bytes, a halt as a symbol, a send's trace and its gas beside the estimate |
 
 03, 04, 05 and 09 to 12 need no node; the others start their own local
 [anvil](https://book.getfoundry.sh/anvil/), so nothing here touches a real
