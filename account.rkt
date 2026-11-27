@@ -20,7 +20,7 @@
                   secret-key?)
          (only-in racket/match define-match-expander match-define)
          (only-in "address.rkt" address->checksum-string checksum-address?)
-         (only-in (submod "address.rkt" private) digest->address)
+         (only-in "private/address.rkt" digest->address)
          "private/exn.rkt"
          (only-in "private/hex.rkt" bytes->natural)
          (only-in "private/argument.rkt" address/c)

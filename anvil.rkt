@@ -13,11 +13,14 @@
 (require json
          racket/contract
          racket/file
+         (only-in racket/match match)
          racket/tcp
          syntax/parse/define
          "eth.rkt"
          (only-in "private/argument.rkt" address/c hash-argument/c)
          (only-in "private/eth-params.rkt" transaction-object/c)
+         (only-in "private/field-contracts.rkt" uint256/c)
+         (only-in "private/hex.rkt" bytes->hex natural->bytes)
          "rpc.rkt")
 
 (provide anvil-set-code
@@ -39,13 +42,24 @@
 
 ;;;; anvil / hardhat-style methods
 
-(define-jsonrpc-endpoint anvil_setCode (-> address/c hex-string? void?)
+(define (code->hex code)
+  (match code
+    [(? bytes?) (bytes->hex code)]
+    [(? string?) code]))
+
+(define (storage-value->hex value)
+  (match value
+    [(? exact-integer?) (bytes->hex (natural->bytes value 32))]
+    [(? string?) value]))
+
+(define-jsonrpc-endpoint anvil_setCode (-> address/c [(or/c hex-string? bytes?) code->hex] void?)
   #:result-transform void)
 (define-jsonrpc-endpoint anvil_setBalance
   (-> address/c [exact-nonnegative-integer? number->hex-string] void?)
   #:result-transform void)
 (define-jsonrpc-endpoint anvil_setStorageAt
-  (-> address/c [exact-nonnegative-integer? number->hex-string] hex-string? void?)
+  (-> address/c [storage-slot/c number->hex-string]
+      [(or/c hex-string? uint256/c) storage-value->hex] void?)
   #:result-transform void)
 (define-jsonrpc-endpoint anvil_mine (-> void?)
   #:result-transform void)

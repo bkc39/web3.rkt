@@ -7,7 +7,7 @@
            web3/abi/type
            web3/address
            "abi-gen.rkt"
-           "modules.rkt"
+           (only-in "modules.rkt" collection direct-imports import-closure module-name)
            "util.rkt")
 
   ;; The eight from EIP-55, then two from cast to-check-sum-address.
@@ -106,9 +106,61 @@
     (check-blames-here (address->checksum-string "5aaeb6053f3e94c9b9a09f33669435e7ef1beaed"))
     (check-blames-here (address->checksum-string "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")))
 
-  (test-case "web3/address needs only racket/base libraries, keccak and web3/private/hex"
-    (define names (filter values (map module-name (import-closure 'web3/address))))
-    (check-equal? (filter (lambda (n) (member (collection n) '("net" "json"))) names) '())
-    (check-equal? (sort (remove-duplicates (filter (lambda (n) (equal? (collection n) "web3")) names))
-                        string<?)
-                  '("web3/address" "web3/private/hex"))))
+  (test-case "an address is its 20 bytes and its number, and back in its EIP-55 form"
+    (for ([address (in-list vectors)])
+      (define address-bytes (address->bytes address))
+      (check-equal? (bytes-length address-bytes) 20 address)
+      (check-equal? (address->bytes (string-downcase address)) address-bytes address)
+      (check-equal? (address->bytes (upcase-hex address)) address-bytes address)
+      (check-equal? (bytes->address address-bytes) address address)
+      (define number (address->integer address))
+      (check-equal? number (string->number (substring address 2) 16) address)
+      (check-equal? (address->integer (string-downcase address)) number address)
+      (check-equal? (integer->address number) address address)))
+
+  (test-case "the least and greatest addresses, as numbers and as bytes"
+    (define bounds
+      `((0 ,zero-address ,(make-bytes 20 0))
+        (1 "0x0000000000000000000000000000000000000001" ,(bytes-append (make-bytes 19 0) #"\1"))
+        (,(sub1 (expt 2 160)) "0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF" ,(make-bytes 20 255))))
+    (for ([bound (in-list bounds)])
+      (match-define (list number address address-bytes) bound)
+      (check-equal? (integer->address number) address)
+      (check-equal? (address->integer address) number)
+      (check-equal? (bytes->address address-bytes) address)
+      (check-equal? (address->bytes address) address-bytes)))
+
+  (test-case "each procedure of web3/address is named for itself"
+    (define procedures
+      `((,address? address?)
+        (,address->bytes address->bytes)
+        (,address->checksum-string address->checksum-string)
+        (,address->integer address->integer)
+        (,bytes->address bytes->address)
+        (,checksum-address? checksum-address?)
+        (,integer->address integer->address)))
+    (for ([row (in-list procedures)])
+      (match-define (list procedure name) row)
+      (check-equal? (object-name procedure) name (symbol->string name))))
+
+  (define (sorted-names names)
+    (sort (remove-duplicates names) string<?))
+
+  (define (web3-modules root)
+    (define names (filter values (map module-name (import-closure root))))
+    (check-equal? (filter (lambda (name) (member (collection name) '("net" "json" "libsecp256k1")))
+                          names)
+                  '())
+    (sorted-names (filter (lambda (name) (equal? (collection name) "web3")) names)))
+
+  (test-case "web3/private/address needs only racket/base, keccak and web3/private/hex"
+    (define self (module-path-index-resolve (module-path-index-join 'web3/private/address #f) #t))
+    (check-equal? (sorted-names (map module-name (direct-imports self)))
+                  '("keccak/main" "racket/base" "web3/private/hex"))
+    (check-equal? (web3-modules 'web3/private/address)
+                  '("web3/private/address" "web3/private/hex")))
+
+  (test-case "web3/address adds only the argument contracts and what they name, not libsecp256k1"
+    (check-equal? (web3-modules 'web3/address)
+                  '("web3/address" "web3/private/address" "web3/private/argument"
+                    "web3/private/hex" "web3/private/signature" "web3/private/signer"))))

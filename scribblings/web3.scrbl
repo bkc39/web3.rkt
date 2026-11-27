@@ -7,7 +7,7 @@
                     racket/generic
                     racket/match
                     racket/runtime-path
-                    web3
+                    (except-in web3 keccak256)
                     web3/abi
                     web3/account
                     web3/abi/description
@@ -121,7 +121,9 @@
 @(define hash-string-contract @racket[(and/c string? #px"^0x[0-9a-f]{64}$")])
 @(define hash-argument-contract @racket[(and/c string? #px"^0x[0-9a-fA-F]{64}$")])
 
-@(define-syntax-parse-rule (defproc/filling (name:id positional ...) result:expr body ...)
+@(define-syntax-parse-rule (defproc/filling (name:id positional ...)
+                             (~optional (~seq #:more (more ...)) #:defaults ([(more 1) '()]))
+                             result:expr body ...)
    (defproc (name positional ...
              [#:value value uint256/c 0]
              [#:data data bytes? #""]
@@ -134,7 +136,8 @@
              [#:max-fee-per-gas max-fee-per-gas (or/c #f uint256/c) #f]
              [#:access-list access-list (or/c #f access-list/c) #f]
              [#:errors errors (listof (or/c string? abi-signature?)) '()]
-             [#:provider provider (or/c #f provider?) (current-provider)])
+             [#:provider provider (or/c #f provider?) (current-provider)]
+             more ...)
      result
      body ...))
 
@@ -1168,7 +1171,7 @@ since the Merge and answer with an error.}
                     [#:provider provider (or/c #f provider?) (current-provider)])
          hex-string?]{
 Keccak-256 of @racket[data], computed by the node.  To hash locally, use
-@racketidfont{keccak256} from the @tt{keccak} package.}
+@racketidfont{keccak256}, which @racketmodname[web3] provides.}
 
 @subsection{State}
 
@@ -1185,7 +1188,7 @@ The balance of @racket[address] in wei.}
 The number of transactions sent from @racket[address]: its next nonce.}
 
 @defproc[(eth-get-storage-at [address address?]
-                             [slot exact-nonnegative-integer?]
+                             [slot storage-slot/c]
                              [block block-param/c]
                              [#:provider provider (or/c #f provider?) (current-provider)])
          hex-string?]{
@@ -1662,6 +1665,27 @@ Whether @racket[v] is an address string in its EIP-55 form.
 @examples[#:eval abi-eval
           (checksum-address? "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed")
           (checksum-address? "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed")]}
+
+@deftogether[(@defproc[(address->bytes [address address?]) bytes?]
+              @defproc[(bytes->address
+                        [address-bytes (and/c bytes? (property/c bytes-length (=/c 20)))])
+                       checksum-address?])]{
+An address as its 20 bytes, and 20 bytes as an address in its EIP-55 form.
+
+@examples[#:eval abi-eval
+          (address->bytes "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed")
+          (bytes->address (make-bytes 20 255))]}
+
+@deftogether[(@defproc[(address->integer [address address?]) exact-nonnegative-integer?]
+              @defproc[(integer->address [number (integer-in 0 (sub1 (expt 2 160)))])
+                       checksum-address?])]{
+An address as the number its 20 bytes are in big-endian order, and such a number as an address in
+its EIP-55 form.
+
+@examples[#:eval abi-eval
+          (address->integer "0x000000000000000000000000000000000000002A")
+          (integer->address 1)
+          (eval:error (integer->address (expt 2 160)))]}
 
 @section[#:tag "accounts"]{Accounts and Signatures}
 
@@ -2188,8 +2212,8 @@ signature by its address of what was asked.}
 
 @defmodule[web3/send]
 
-Completing transactions from a node, signing them with a signer, and sending them.  No error
-here shows a signer or a key.
+Completing transactions from a node, signing them with a signer, sending them, and calling with
+them.  No error here shows a signer or a key.
 
 @defproc/filling[(fill-transaction [from (or/c address? signer?)]
                                    [to (or/c #f address?)])
@@ -2240,15 +2264,19 @@ another hash raises one.  Waiting and failures are as for @racket[contract-send]
 Each call reads the pending nonce, so sends in a row from one signer get consecutive nonces.
 Sends from one signer in several threads at once may get the same one.}
 
-@deftogether[(@defproc/filling[(send-transaction [from address?]
+@deftogether[(@defproc/filling[(send-transaction [from (or/c address? signer?)]
                                                  [to (or/c #f address?)])
                                #,hash-string-contract]
               @defproc/filling[(send-transaction/receipt
-                                [from address?]
+                                [from (or/c address? signer?)]
                                 [to (or/c #f address?)])
                                receipt?])]{
-A transaction from @racket[from], an account the node holds, to @racket[to] (@racket[#f] creates a
-contract), signed and sent by the node with @tt{eth_sendTransaction}, returning its hash, or with
+From a signer, these are @racket[send-signed-transaction] and
+@racket[send-signed-transaction/receipt] with the same arguments: a @racket[node-signer] too signs
+with @tt{eth_signTransaction}, and the transaction is sent raw.
+
+From an address, an account the node holds, the transaction to @racket[to] (@racket[#f] creates a
+contract) is signed and sent by the node with @tt{eth_sendTransaction}, returning its hash, or with
 @racket[send-transaction/receipt] its receipt once mined.  The fields given are sent, with
 @racket[from] and @racket[to] checksummed; a nonce and fees not given are left to the node.  When
 @racket[type], or the fee fields given, make the transaction type 0 or 1, as for
@@ -2272,6 +2300,35 @@ a failed transaction is replayed without its nonce and fees.
           (send-transaction "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" recipient
                             #:value (ether->wei "1.5") #:provider node-account)
           (mock-provider-calls node-account)]}
+
+@defproc/filling[(call-transaction [from (or/c #f address? signer?)]
+                                   [to (or/c #f address?)])
+                 #:more ([#:block block block-param/c "latest"])
+                 bytes?]{
+The return data of @tt{eth_call} of the transaction from @racket[from] to @racket[to]
+(@racket[#f] runs @racket[data] as creation code) at @racket[block].  A signer gives its address
+and signs nothing; @racket[#f] sends no sender.  The call carries only the fields given, less a
+@racket[value] of 0 and empty @racket[data]; nothing is estimated or looked up, but a
+@racket[chain-id] given is checked against the node's.  Fields of a type other than
+@racket[type], or of two types, raise @racket[exn:fail:contract] before any request.  A revert
+raises @racket[exn:fail:web3:rpc:revert] decoded against @racket[errors], as for
+@racket[contract-call]; other errors from the node pass through unchanged.
+
+@examples[#:eval send-eval
+          (define echo
+            (mock-provider
+             (hash "eth_call"
+                   "0x000000000000000000000000000000000000000000000000000000000000002a")))
+          (call-transaction #f recipient #:data (word->bytes 42) #:provider echo)
+          (mock-provider-calls echo)
+          (define reverting
+            (mock-provider
+             (lambda (method params)
+               (raise-rpc-error method 3 "execution reverted" "0xdeadbeef"))))
+          (define e
+            (with-handlers ([exn:fail:web3:rpc:revert? values])
+              (call-transaction signer recipient #:provider reverting)))
+          (abi-revert-data (exn->abi-revert e))]}
 
 @defstruct*[(exn:fail:web3:fill exn:fail:web3) ([reason (or/c 'chain-id 'no-base-fee 'fee-cap)])]{
 A transaction the node's answers cannot complete: a @racket[#:chain-id] other than the node's, a
@@ -2512,7 +2569,10 @@ raised; a byte string is hashed as given.
 
 @examples[#:eval abi-eval
           (bytes->hex-string (function-selector "transfer(address, uint)"))
-          (eval:error (function-selector "foo"))]}
+          (eval:error (function-selector "foo"))]
+
+@racket[(require web3)] also provides @racketidfont{keccak256}, the same binding as
+the @tt{keccak} package's, so requiring it from both is no conflict.}
 
 @defproc[(word->bytes [n (integer-in 0 (sub1 (expt 2 256)))]) bytes?]{
 @racket[n] as a 32-byte big-endian word.}
@@ -3486,10 +3546,10 @@ methods.  They need a node that implements them, such as one started
 with @racket[start-anvil].
 
 @defproc[(anvil-set-code [address address?]
-                         [code hex-string?]
+                         [code (or/c hex-string? bytes?)]
                          [#:provider provider (or/c #f provider?) (current-provider)])
          void?]{
-Replaces the code at @racket[address].}
+Replaces the code at @racket[address] with @racket[code], as hex or as bytes.}
 
 @defproc[(anvil-set-balance [address address?]
                             [wei exact-nonnegative-integer?]
@@ -3498,12 +3558,12 @@ Replaces the code at @racket[address].}
 Sets the balance of @racket[address].}
 
 @defproc[(anvil-set-storage-at [address address?]
-                               [slot exact-nonnegative-integer?]
-                               [value hex-string?]
+                               [slot storage-slot/c]
+                               [value (or/c hex-string? uint256/c)]
                                [#:provider provider (or/c #f provider?) (current-provider)])
          void?]{
-Sets storage @racket[slot] of @racket[address] to the 32-byte
-@racket[value].}
+Sets storage @racket[slot] of @racket[address] to @racket[value]: 32 bytes of hex, or a number,
+sent as its 32-byte word.}
 
 @defproc[(anvil-mine [#:provider provider (or/c #f provider?) (current-provider)])
          void?]{

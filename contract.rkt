@@ -11,7 +11,7 @@
          (only-in (submod "abi/event.rkt" internal) event-where/c)
          (only-in (submod "abi/event-type.rkt" private) spec->abi-event/who)
          "address.rkt"
-         (only-in (submod "address.rkt" private) digest->address)
+         (only-in "private/address.rkt" digest->address)
          (only-in "eth/receipt.rkt" receipt?)
          "event.rkt"
          (only-in "rlp.rkt" natural->rlp-scalar rlp-encode)

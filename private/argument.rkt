@@ -23,7 +23,7 @@
          (only-in racket/match == match match-define)
          (only-in racket/string string-join string-prefix? string-trim)
          (only-in setup/path-to-relative path->relative-string/library)
-         (only-in "../address.rkt" address?)
+         (only-in "address.rkt" address?)
          (only-in "hex.rkt" address-hex-string? hash-hex-pattern hash-hex-string?)
          (only-in "signature.rkt" signature?)
          (only-in "signer.rkt" signer?))

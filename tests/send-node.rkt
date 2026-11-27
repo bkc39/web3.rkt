@@ -4,10 +4,16 @@
   (require (only-in racket/contract exn:fail:contract:blame?)
            racket/list
            racket/match
+           (only-in racket/string string-split)
            rackunit
+           (only-in libsecp256k1 integer->secret-key)
            web3
+           (only-in web3/private/send
+                    [fill-transaction unchecked-fill]
+                    [send-transaction unchecked-send]
+                    [send-transaction/receipt unchecked-send/receipt])
            "helpers/mock.rkt"
-           (only-in "helpers/signers.rkt" signer0)
+           (only-in "helpers/signers.rkt" signer0 watched watched-calls)
            (only-in "util.rkt" anvil-alice anvil-bob anvil-carol check-blames-here filled-hash
                     insufficient-balance))
 
@@ -126,10 +132,26 @@
                     name)))
 
   (test-case "S1: the keywords are fill-transaction's"
-    (define (keywords procedure)
-      (call-with-values (lambda () (procedure-keywords procedure)) list))
-    (check-equal? (keywords send-transaction) (keywords fill-transaction))
-    (check-equal? (keywords send-transaction/receipt) (keywords fill-transaction)))
+    (define-values (fill-required fill-allowed) (procedure-keywords unchecked-fill))
+    (check-not-false (memq '#:gas-limit fill-allowed))
+    (for ([procedure (list unchecked-send unchecked-send/receipt)])
+      (define-values (required allowed) (procedure-keywords procedure))
+      (check-equal? required fill-required (format "~a" (object-name procedure)))
+      (check-equal? allowed fill-allowed (format "~a" (object-name procedure))))
+    (for ([procedure (list send-transaction send-transaction/receipt)])
+      (define name (format "~a" (object-name procedure)))
+      (define e
+        (with-handlers ([exn:fail:contract? values])
+          (procedure anvil-alice anvil-bob #:block "latest" #:provider (mock-provider (hash)))
+          #f))
+      (check-pred exn:fail:contract? e name)
+      (match (and e (regexp-match #rx"expected: keywords ([^\n]*)" (exn-message e)))
+        [(list _ listed)
+         (define keywords
+           (for/list ([word (in-list (string-split listed " or "))])
+             (string->keyword (substring word 2))))
+         (check-equal? (sort keywords keyword<?) fill-allowed name)]
+        [_ (fail (format "~a: no list of keywords in ~s" name (and e (exn-message e))))])))
 
   (test-case "S2: fields of two types are refused before any request"
     (for* ([procedure (list send-transaction send-transaction/receipt)]
@@ -212,16 +234,41 @@
   (test-case "S8: wrong arguments blame the caller"
     (parameterize ([current-provider (mock-provider (node-answers))])
       (for ([procedure (list send-transaction send-transaction/receipt)])
-        (define e (with-handlers ([exn:fail? values]) (procedure signer0 anvil-bob)))
+        (define e
+          (with-handlers ([exn:fail? values]) (procedure (integer->secret-key 7) anvil-bob)))
         (check-pred exn:fail:contract:blame? e)
-        (check-regexp-match #rx": not an address: not a string\n.*\n  given: a signer\n"
-                            (exn-message e))
+        (check-regexp-match
+         (string-append ": not an address or a signer: neither a string nor a signer\n"
+                        "  argument: 1st\n  given: a secret key\n")
+         (exn-message e))
         (check-blames-here (procedure 42 anvil-bob))
         (check-blames-here (procedure anvil-alice "bob"))
         (check-blames-here (procedure anvil-alice))
         (check-blames-here (procedure anvil-alice anvil-bob #:value -1))
         (check-blames-here (procedure anvil-alice anvil-bob #:data "0x"))
         (check-blames-here (procedure anvil-alice anvil-bob #:gas 1)))))
+
+  (define (results->jsexpr results)
+    (for/list ([result (in-list results)])
+      (if (receipt? result) (receipt->jsexpr result) result)))
+
+  (test-case "S13: a signer's send is signed here and sent raw, an address's is the node's"
+    (define answers (hash-set (filling) "eth_sendTransaction" tx-hash))
+    (for ([procedure (list send-transaction send-transaction/receipt)]
+          [signed (list send-signed-transaction send-signed-transaction/receipt)])
+      (define name (format "~a" (object-name procedure)))
+      (define signer (watched))
+      (define-values (result calls) (sent procedure '(#:value 5) #:from signer #:answers answers))
+      (define-values (expected expected-calls)
+        (sent signed '(#:value 5) #:from (watched) #:answers answers))
+      (check-equal? (results->jsexpr result) (results->jsexpr expected) name)
+      (check-equal? calls expected-calls name)
+      (check-not-false (member "eth_sendRawTransaction" (method-names calls)) name)
+      (check-false (member "eth_sendTransaction" (method-names calls)) name)
+      (check-not-false (memq 'digest (watched-calls signer)) name)
+      (define-values (_by-address address-calls) (sent procedure '(#:value 5) #:answers answers))
+      (check-not-false (member "eth_sendTransaction" (method-names address-calls)) name)
+      (check-false (member "eth_sendRawTransaction" (method-names address-calls)) name)))
 
   (test-case "a mixed-case address with a wrong checksum is refused before any request"
     (define wrong-checksum "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")

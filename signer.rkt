@@ -8,7 +8,7 @@
                   message->bytes
                   sign-digest/who)
          (only-in "address.rkt" checksum-address?)
-         (only-in (submod "address.rkt" private) address->checksum-string)
+         (only-in "private/address.rkt" address->checksum-string)
          (only-in "eth.rkt" eth-sign eth-sign-transaction)
          "private/exn.rkt"
          (only-in "private/hex.rkt" address-hex-string? bytes->hex hex->bytes hex-data-string?)

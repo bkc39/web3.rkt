@@ -254,6 +254,48 @@
       (check-pred exn:fail:web3:transaction? e)
       (check-equal? (receipt-status (exn:fail:web3:transaction-receipt e)) 0)))
 
+  (define echo-runtime
+    (hex-string->bytes "0x6000358060005260f81c60ff14601c57602a60206000a160206000f35b60206000fd"))
+  (define echo-init (bytes-append (hex-string->bytes "0x602280600b6000396000f3") echo-runtime))
+
+  (define (call-cases)
+    (define-values (echo _deployed) (deploy-contract/receipt echo-init #:from account1))
+
+    (test-case "T1: call-transaction calls a contract with no ABI, bytes in and bytes out"
+      (define calldata (word->bytes 42))
+      (check-equal? (call-transaction #f echo #:data calldata) calldata)
+      (check-equal? (call-transaction account3 echo #:data calldata) calldata)
+      (check-equal? (call-transaction (local-signer key1) echo #:data calldata #:block "pending")
+                    calldata)
+      (check-equal? (call-transaction #f echo) (make-bytes 32 0)))
+
+    (test-case "T2: a call that reverts raises exn:fail:web3:rpc:revert carrying the revert data"
+      (define calldata (bytes-append (bytes #xff) (make-bytes 31 7)))
+      (define e
+        (with-handlers ([exn:fail:web3:rpc:revert? values])
+          (call-transaction account3 echo #:data calldata)))
+      (check-pred exn:fail:web3:rpc:revert? e)
+      (check-equal? (exn:fail:web3:rpc-method e) "eth_call")
+      (check-equal? (abi-revert-data (exn->abi-revert e)) calldata))
+
+    (test-case "T3: a call to #f runs its data as creation code"
+      (check-equal? (call-transaction #f #f #:data echo-init) echo-runtime)
+      (check-equal? (call-transaction account3 #f #:data echo-init) echo-runtime))
+
+    (test-case "T4: send-transaction/receipt from a local signer is mined from its address"
+      (define signer (local-signer key3))
+      (define nonce (pending (signer-address signer)))
+      (define receipt (send-transaction/receipt signer echo #:data (word->bytes 7)))
+      (check-equal? (receipt-status receipt) 1)
+      (check-equal? (receipt-from receipt) (signer-address signer))
+      (check-equal? (pending (signer-address signer)) (add1 nonce))
+      (match-define (list echoed) (receipt-logs receipt))
+      (check-equal? (log-address echoed) echo)
+      (check-equal? (log-topics echoed) (list (bytes->hex-string (word->bytes 42))))
+      (check-equal? (log-data echoed) (word->bytes 7))
+      (define tx-hash (send-transaction signer echo #:data (word->bytes 8)))
+      (check-equal? (receipt-from (wait-for-receipt tx-hash)) (signer-address signer))))
+
   (define (berlin-cases)
     (test-case "N6: before London a fill is legacy, or EIP-2930 with an access list"
       (define signer (local-signer key2))
@@ -297,7 +339,8 @@
      (with-anvil ()
        (ether-cases)
        (contract-cases)
-       (refusal-cases))
+       (refusal-cases)
+       (call-cases))
      (with-anvil (#:hardfork "berlin")
        (berlin-cases))
      (with-anvil (#:args '("--accounts" "0"))
