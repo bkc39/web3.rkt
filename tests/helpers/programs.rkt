@@ -5,6 +5,7 @@
 
 (provide caller-of
          calls-itself
+         creation-prefix
          echo-init
          echo-runtime
          push-address)
@@ -43,7 +44,9 @@
                    after-jump
                    (list jumpdest revert-word)))))
 
-(define echo-init (bytes-append (program return-34-bytes-of-code-after) echo-runtime))
+(define creation-prefix (program return-34-bytes-of-code-after))
+
+(define echo-init (bytes-append creation-prefix echo-runtime))
 
 (define copy-calldata "366000600037")
 (define word-out-calldata-in "60206000366000")

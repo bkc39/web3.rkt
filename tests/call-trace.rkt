@@ -13,11 +13,12 @@
            (prefix-in trace: (only-in web3/trace debug-trace-call debug-trace-transaction))
            (only-in (submod web3/eth/call-trace internal) call-trace-fields)
            (only-in (submod web3/trace internal) call-tracer-options)
+           (only-in "helpers/call-objects.rkt" call-object-rows)
            "helpers/mock.rkt"
            (only-in "helpers/records.rkt"
                     check-fields check-in-web3-and-manual message-of provided-accessors)
            (only-in "modules.rkt" exported-names import-closure module-name)
-           (only-in "util.rkt" anvil-alice anvil-bob anvil-carol check-blames-here filled-hash
+           (only-in "util.rkt" anvil-alice anvil-bob check-blames-here filled-hash
                     raised word))
 
   (define caller (integer->address #xca11e))
@@ -301,33 +302,6 @@
       (check-false (exn:fail:contract? e) (~s answer))
       (check-regexp-match message (exn-message e))))
 
-  (define storage-key (make-bytes 32 1))
-
-  (define object-rows
-    `((() ,anvil-alice ,anvil-bob #hasheq((from . ,anvil-alice) (to . ,anvil-bob)))
-      (() #f ,anvil-bob #hasheq((to . ,anvil-bob)))
-      (() ,(string-downcase anvil-alice) ,(string-downcase anvil-bob)
-          #hasheq((from . ,anvil-alice) (to . ,anvil-bob)))
-      ((#:data #"\x60\x80") ,anvil-alice #f #hasheq((from . ,anvil-alice) (data . "0x6080")))
-      ((#:data #"" #:value 0) ,anvil-alice ,anvil-bob
-                              #hasheq((from . ,anvil-alice) (to . ,anvil-bob)))
-      ((#:value 5 #:gas-limit 30000) #f ,anvil-bob
-       #hasheq((to . ,anvil-bob) (value . "0x5") (gas . "0x7530")))
-      ((#:type 0 #:gas-price 7 #:nonce 0) ,anvil-alice ,anvil-bob
-       #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (type . "0x0") (gasPrice . "0x7")
-               (nonce . "0x0")))
-      ((#:access-list ()) ,anvil-alice ,anvil-bob
-       #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (accessList . ())))
-      ((#:value 1 #:data #"\1\2" #:nonce 3 #:gas-limit 30000 #:chain-id 31337 #:type 2
-        #:max-priority-fee-per-gas 1 #:max-fee-per-gas 2
-        #:access-list ((,(string-downcase anvil-carol) ,storage-key)))
-       ,anvil-alice ,anvil-bob
-       #hasheq((from . ,anvil-alice) (to . ,anvil-bob) (value . "0x1") (data . "0x0102")
-               (nonce . "0x3") (gas . "0x7530") (chainId . "0x7a69") (type . "0x2")
-               (maxPriorityFeePerGas . "0x1") (maxFeePerGas . "0x2")
-               (accessList . (#hasheq((address . ,anvil-carol)
-                                      (storageKeys . (,(bytes->hex-string storage-key))))))))))
-
   (define (sent-params procedure method fields from to)
     (define-values (_result calls)
       (run-mock (traced-by method) (lambda () (call-with-fields procedure fields from to))))
@@ -336,7 +310,7 @@
       (rest call)))
 
   (test-case "T10: call-transaction/trace sends the object call-transaction sends"
-    (for ([row (in-list object-rows)])
+    (for ([row (in-list call-object-rows)])
       (match-define (list fields from to object) row)
       (define name (~s fields from to))
       (define called (sent-params call-transaction "eth_call" fields from to))

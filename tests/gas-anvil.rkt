@@ -18,7 +18,7 @@
     (receipt-gas-used (call-with-fields send-transaction/receipt fields anvil-alice to)))
 
   (define (estimate to data)
-    (eth-estimate-gas (hasheq 'from anvil-alice 'to to 'data (bytes->hex-string data))))
+    (estimate-transaction anvil-alice to #:data data))
 
   (define (floored-cases fork)
     (test-case (~a "O1: on " fork ", a send with calldata to no code uses the larger of the two")

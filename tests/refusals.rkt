@@ -67,6 +67,18 @@
           (lambda () (call-transaction (integer->secret-key 7) anvil-bob))
           '("call-transaction: not an address or a signer: neither a string nor a signer"
             "argument: 1st" "given: a secret key"))
+     (row "estimate-transaction's from"
+          (lambda () (estimate-transaction typo anvil-bob))
+          `(,(string-append "estimate-transaction: " sender-checksum-reason)
+            "argument: 1st" ,(quoted typo)))
+     (row "estimate-transaction's to"
+          (lambda () (estimate-transaction anvil-alice typo))
+          `(,(string-append "estimate-transaction: " checksum-reason)
+            "argument: 2nd" ,(quoted typo)))
+     (row "a secret key where estimate-transaction's from goes"
+          (lambda () (estimate-transaction (integer->secret-key 7) anvil-bob))
+          '("estimate-transaction: not an address or a signer: neither a string nor a signer"
+            "argument: 1st" "given: a secret key"))
      (row "contract-call's #:from"
           (lambda () (contract-call anvil-bob "f()()" #:from typo))
           `(,(string-append "contract-call: " sender-checksum-reason)
@@ -205,6 +217,7 @@
       (check-hidden (lambda () (send-transaction secret anvil-bob #:value 1)) secret given)
       (check-hidden (lambda () (fill-transaction secret anvil-bob)) secret given)
       (check-hidden (lambda () (call-transaction secret anvil-bob)) secret given)
+      (check-hidden (lambda () (estimate-transaction secret anvil-bob)) secret given)
       (check-hidden (lambda () (contract-call anvil-bob "f()()" #:from secret)) secret given)
       (check-hidden (lambda () (c-f anvil-bob 1 #:from secret)) secret given)
       (check-hidden (lambda () (eth-get-transaction-receipt secret)) secret given)))
